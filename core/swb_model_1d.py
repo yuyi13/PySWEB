@@ -1,0 +1,291 @@
+import sys
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from core.soil_hydra_funs import setup_richards_matrix
+from core.soil_hydra_funs import solve_soil_moisture
+
+def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_mm=None):
+    """
+    Compute per-layer root fraction using the Jackson et al. (1996) beta profile.
+
+    F(z) = 1 - beta^z (z in cm). Fraction in a layer [z_top,z_bot] is F(z_bot)-F(z_top)
+    which simplifies to beta^{z_top} - beta^{z_bot}. Typical beta ~ 0.95-0.98.
+
+    Parameters
+    ----------
+    soil_properties : dict
+        Must contain 'layer_depth' (cumulative depth to layer bottoms, mm).
+    beta : float, optional
+        Root beta parameter; if None, looks for 'root_beta' in soil_properties,
+        else defaults to 0.97.
+    max_root_depth_mm : float, optional
+        Maximum rooting depth in mm; if None, looks for 'max_root_depth' in soil_properties.
+
+    Returns
+    -------
+    np.ndarray
+        Length N array of root fractions that sum to 1 across layers within rooting depth.
+    """
+    layer_depth_mm = np.asarray(soil_properties['layer_depth'], dtype=float)
+    num_layers = len(layer_depth_mm)
+
+    if beta is None:
+        beta = float(soil_properties.get('root_beta', 0.96))
+    beta = min(max(beta, 0.90), 0.995)  # keep in a reasonable range
+
+    if max_root_depth_mm is None:
+        max_root_depth_mm = soil_properties.get('max_root_depth', None)
+    if max_root_depth_mm is not None:
+        max_root_depth_mm = float(max_root_depth_mm)
+
+    # depths in cm for the Jackson formulation
+    layer_bot_cm = layer_depth_mm / 10.0
+    layer_top_cm = np.concatenate(([0.0], layer_bot_cm[:-1]))
+
+    # Apply rooting depth cap if provided
+    if max_root_depth_mm is not None:
+        root_cap_cm = max_root_depth_mm / 10.0
+        layer_bot_cm = np.minimum(layer_bot_cm, root_cap_cm)
+        layer_top_cm = np.minimum(layer_top_cm, root_cap_cm)
+
+    # Fraction in each layer: beta^{z_top} - beta^{z_bot}
+    # Layers fully below max_root_depth will have zero thickness and contribute 0.
+    root_frac = np.power(beta, layer_top_cm) - np.power(beta, layer_bot_cm)
+
+    # Zero-out any negative numerical noise and renormalize
+    root_frac = np.clip(root_frac, 0.0, None)
+    total = root_frac.sum()
+    if total <= 0:
+        # fallback: all roots in top layer
+        root_frac = np.zeros(num_layers)
+        root_frac[0] = 1.0
+    else:
+        root_frac = root_frac / total
+
+    return root_frac
+
+def _as_layer_factor(value, num_layers, name):
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        return np.full(num_layers, float(arr))
+    if arr.shape != (num_layers,):
+        raise ValueError(f"{name} must be scalar or length {num_layers}.")
+    return arr
+
+def _resolve_sm_bounds(soil_properties):
+    porosity = np.asarray(soil_properties['porosity'], dtype=float)
+    wilting_point = np.asarray(soil_properties['wilting_point'], dtype=float)
+    num_layers = porosity.size
+
+    sm_max_factor = _as_layer_factor(soil_properties.get('sm_max_factor', 1.0), num_layers, "sm_max_factor")
+    sm_min_factor = _as_layer_factor(soil_properties.get('sm_min_factor', 1.0), num_layers, "sm_min_factor")
+
+    sm_max_bound = porosity * sm_max_factor
+    sm_min_bound = wilting_point * sm_min_factor
+    return sm_min_bound, sm_max_bound
+
+def soil_water_balance_1d(precip_data, 
+                          et_data,
+                          soil_properties, 
+                          time,
+                          time_step=1.0, 
+                          initial_soil_moisture=None, 
+                          evap_fraction=None,
+                          infil_coeff=0.3, 
+                          diff_factor=2e5,
+                          transpiration_data=None):
+    """
+    Run soil water balance model for 1D time series data (no spatial dimensions)
+    
+    Parameters:
+    -----------
+    precip_data : pandas.DataFrame or pandas.Series or numpy.ndarray
+        Precipitation data [mm/day] as a time series
+    et_data : pandas.DataFrame or pandas.Series or numpy.ndarray
+        Actual evapotranspiration data [mm/day] as a time series
+    transpiration_data : pandas.DataFrame or pandas.Series or numpy.ndarray, optional
+        Plant transpiration [mm/day] as a time series. If provided, ET partitioning uses
+        transpiration_data directly and does not use evap_fraction.
+    time : pandas.DatetimeIndex or array-like
+        Time index for the data
+    soil_properties : dict
+        Dictionary of soil parameters including layer depths in mm
+        Optional:
+        - sm_max_factor: scalar or per-layer multiplier for porosity (upper SM bound)
+        - sm_min_factor: scalar or per-layer multiplier for wilting point (lower SM bound)
+    time_step : float
+        Time step in days (default: 1.0 day)
+    initial_soil_moisture : numpy.ndarray, optional
+        Initial soil moisture for each layer. If None, will initialize 
+        with the midpoint between the SM lower/upper bounds.
+    evap_fraction : float, optional
+        Legacy fallback: fraction of ET allocated to surface evaporation.
+        Used only when transpiration_data is not provided.
+    infil_coeff : float
+        Infiltration rate for the top layer [mm/day] (default: 0.3)
+    diff_factor : float
+        Diffusivity scaling factor (default: 2e5)
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame containing soil moisture for each layer and time step,
+        with the provided time index
+    """
+    
+    # Handle different input types for precipitation and ET data
+    if isinstance(precip_data, pd.DataFrame):
+        precip_values = precip_data.iloc[:, 0].values  # Take first column
+    elif isinstance(precip_data, pd.Series):
+        precip_values = precip_data.values
+    else:
+        precip_values = np.array(precip_data).flatten()
+    
+    if isinstance(et_data, pd.DataFrame):
+        et_values = et_data.iloc[:, 0].values  # Take first column
+    elif isinstance(et_data, pd.Series):
+        et_values = et_data.values
+    else:
+        et_values = np.array(et_data).flatten()
+
+    transp_values = None
+    if transpiration_data is not None:
+        if isinstance(transpiration_data, pd.DataFrame):
+            transp_values = transpiration_data.iloc[:, 0].values
+        elif isinstance(transpiration_data, pd.Series):
+            transp_values = transpiration_data.values
+        else:
+            transp_values = np.array(transpiration_data).flatten()
+    
+    # Convert time to pandas DatetimeIndex if it isn't already
+    if not isinstance(time, pd.DatetimeIndex):
+        time_index = pd.to_datetime(time)
+    else:
+        time_index = time
+    
+    # Ensure all inputs have the same length
+    assert len(precip_values) == len(et_values), "Precipitation and ET data must have the same length"
+    assert len(time_index) == len(precip_values), "Time index must have the same length as precipitation and ET data"
+    if transp_values is not None:
+        assert len(transp_values) == len(et_values), "Transpiration and ET data must have the same length"
+    
+    # Extract dimensions
+    num_layers = len(soil_properties['layer_depth'])
+    num_times = len(precip_values)
+
+    sm_min_bound, sm_max_bound = _resolve_sm_bounds(soil_properties)
+    soil_props = dict(soil_properties)
+    soil_props["sm_min_bound"] = sm_min_bound
+    soil_props["sm_max_bound"] = sm_max_bound
+    
+    # Create output array for soil moisture
+    soil_moisture_array = np.zeros((num_times, num_layers))
+    
+    # Create a realistic root distribution profile using Jackson beta profile
+    # Avoid thickness-proportional allocation that biases lower thick layers
+    root_distribution = _compute_root_distribution_beta(
+        soil_props,
+        beta=soil_props.get('root_beta', None),
+        max_root_depth_mm=soil_props.get('max_root_depth', None)
+    )
+
+    # Initialize soil moisture (middle of available water capacity)
+    if initial_soil_moisture is None:
+        current_soil_moisture = np.zeros(num_layers)
+        for l in range(num_layers):
+            current_soil_moisture[l] = sm_min_bound[l] + 0.5 * (sm_max_bound[l] - sm_min_bound[l])
+    else:
+        current_soil_moisture = np.array(initial_soil_moisture)
+    
+    # Store initial soil moisture for first timestep
+    soil_moisture_array[0, :] = current_soil_moisture
+    
+    # Main time loop
+    for t in range(num_times):
+        # Get precipitation and ET for this time step
+        precip_t = precip_values[t]
+        et_t = et_values[t]
+        transp_t_in = transp_values[t] if transp_values is not None else np.nan
+        
+        # Skip computation for missing values
+        if np.isnan(precip_t) or np.isnan(et_t) or (transp_values is not None and np.isnan(transp_t_in)):
+            if t < num_times - 1:
+                soil_moisture_array[t+1, :] = soil_moisture_array[t, :]  # Maintain previous value
+            continue
+        
+        et_t = max(0.0, float(et_t))
+        if transp_values is not None:
+            # Primary path: transpiration provided externally (e.g., SSEBop T = ET * Tc).
+            transp_t = float(np.clip(transp_t_in, 0.0, et_t))
+            evap_t = et_t - transp_t
+        else:
+            # Backward-compatible fallback for legacy callers.
+            evap_frac = 0.3 if evap_fraction is None else float(evap_fraction)
+            evap_frac = min(max(evap_frac, 0.0), 1.0)
+            evap_t = et_t * evap_frac
+            transp_t = et_t - evap_t
+        
+        # Initialize ET by layer array
+        et_by_layer = np.zeros(num_layers)
+        
+        # 1. Distribute evaporation to top layer
+        et_by_layer[0] = evap_t
+
+        # 2. Distribute transpiration across layers using root distribution
+        transp_by_layer = transp_t * root_distribution
+        et_by_layer += transp_by_layer
+        
+        # 3. Adjust ET to not exceed available water in each layer
+        for l in range(num_layers):
+            # Maximum possible ET is limited by available water above wilting point
+            available_for_et = max(0, (current_soil_moisture[l] - sm_min_bound[l]) * 
+                                  soil_props['layer_thickness'][l])
+            et_by_layer[l] = min(et_by_layer[l], available_for_et / time_step)
+        
+        # Set up boundary fluxes (mm/day)
+        boundary_fluxes = {
+            'infiltration': precip_t,  # mm/day
+            'evapotranspiration': et_by_layer  # mm/day for each layer
+        }
+        
+        # Calculate matrix coefficients for Richards equation
+        matrix_coeffs = setup_richards_matrix(
+            current_soil_moisture,
+            soil_props,
+            boundary_fluxes,
+            infil_coeff = infil_coeff,
+            diff_factor = diff_factor
+        )
+        
+        # Solve for updated soil moisture
+        result = solve_soil_moisture(
+            current_soil_moisture,
+            matrix_coeffs,
+            time_step,
+            soil_props
+        )
+        
+        # Update current soil moisture
+        current_soil_moisture = result['soil_moisture']
+        
+        # Store soil moisture for next time step
+        if t < num_times - 1:
+            soil_moisture_array[t+1, :] = current_soil_moisture
+    
+    # Create column names for each layer
+    layer_columns = [f'layer_{i+1}' for i in range(num_layers)]
+    
+    # Convert to DataFrame with proper time index and layer columns
+    soil_moisture_df = pd.DataFrame(
+        soil_moisture_array, 
+        index=time_index,
+        columns=layer_columns
+    )
+    
+    return soil_moisture_df
