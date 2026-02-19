@@ -66,9 +66,11 @@ EXTENT="147.20, -35.10, 147.30, -35.00" # North Wagga
 
 SM_RES="0.00025"
 DEFAULT_INFIL_COEFF="0.3"
-DEFAULT_DIFF_FACTOR="200000.0"
+DEFAULT_DIFF_FACTOR="1000.0"
 DEFAULT_SM_MAX_FACTOR="1.0"
 DEFAULT_SM_MIN_FACTOR="1.0"
+CALIB_DIFF_MIN="0.0"
+CALIB_DIFF_MAX="10000.0"
 
 # Forcing and reference inputs.
 RAIN_ROOT="/g/data/yx97/EO_collections/SILO"
@@ -416,6 +418,7 @@ if [[ "${RUN_CALIB}" == "true" ]]; then
   else
     print_status "STEP 2/3" "Running domain-wide calibration against SMAP-DS..."
     print_status "STEP 2/3" "Calibration range: ${CALIB_START_DATE} to ${CALIB_END_DATE}"
+    print_status "STEP 2/3" "Calibration diff bounds (mm): ${CALIB_DIFF_MIN} to ${CALIB_DIFF_MAX}"
     print_status "STEP 2/3" "Workers: ${N_WORKERS}"
     if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
       print_status "STEP 2/3" "Calibration inputs are sourced from model-period preprocessing."
@@ -436,6 +439,7 @@ if [[ "${RUN_CALIB}" == "true" ]]; then
         --soil-dir "${PREPROCESS_OUT_DIR}" \
         --smap-ssm "${CALIB_SMAP_SSM_FILE}" \
         --date-range "${CALIB_START_DATE}" "${CALIB_END_DATE}" \
+        --diff-bounds "${CALIB_DIFF_MIN}" "${CALIB_DIFF_MAX}" \
         --workers "${N_WORKERS}" \
         --output "${CALIB_OUTPUT}"
   fi

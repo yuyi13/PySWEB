@@ -98,7 +98,7 @@ def soil_water_balance_1d(precip_data,
                           initial_soil_moisture=None, 
                           evap_fraction=None,
                           infil_coeff=0.3, 
-                          diff_factor=2e5,
+                          diff_factor=1e3,
                           transpiration_data=None):
     """
     Run soil water balance model for 1D time series data (no spatial dimensions)
@@ -130,7 +130,7 @@ def soil_water_balance_1d(precip_data,
     infil_coeff : float
         Infiltration rate for the top layer [mm/day] (default: 0.3)
     diff_factor : float
-        Diffusivity scaling factor (default: 2e5)
+        Diffusivity scaling factor (default: 1e3)
 
     Returns:
     --------

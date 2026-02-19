@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import inspect
 import sys
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
@@ -299,7 +300,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for differential evolution objective evaluation.")
     parser.add_argument("--infil-bounds", nargs=2, type=float, default=(0.1, 1.0), help="Bounds for infil_coeff.")
-    parser.add_argument("--diff-bounds", nargs=2, type=float, default=(100.0, 1e6), help="Bounds for diff_factor.")
+    parser.add_argument(
+        "--diff-bounds",
+        nargs=2,
+        type=float,
+        default=(0.0, 1e4),
+        help="Bounds for diff_factor (mm).",
+    )
     parser.add_argument(
         "--sm-max-bounds",
         nargs=2,
@@ -464,6 +471,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         tuple(args.sm_max_bounds),
         tuple(args.sm_min_bounds),
     ]
+    de_x0 = np.array([0.3, 1e3, 1.0, 1.0], dtype=float)
+    for idx, (low, high) in enumerate(bounds):
+        de_x0[idx] = float(np.clip(de_x0[idx], low, high))
     de_popsize = 10
     de_population_size = de_popsize * len(bounds)
     de_workers = max(1, min(args.workers, de_population_size))
@@ -473,6 +483,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         flush=True,
     )
     print("  objective: RMSE between domain-mean simulated and observed SMAP-DS SSM", flush=True)
+    print(
+        f"  optimizer seed x0: infil_coeff={de_x0[0]:.6g}, diff_factor={de_x0[1]:.6g}, "
+        f"sm_max_factor={de_x0[2]:.6g}, sm_min_factor={de_x0[3]:.6g}",
+        flush=True,
+    )
+    de_extra = {}
+    if "x0" in inspect.signature(differential_evolution).parameters:
+        de_extra["x0"] = de_x0
     result = differential_evolution(
         _objective_function,
         bounds,
@@ -500,6 +518,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         disp=False,
         workers=de_workers,
         updating="deferred" if de_workers > 1 else "immediate",
+        **de_extra,
     )
 
     best_params = result.x

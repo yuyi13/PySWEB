@@ -229,7 +229,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--time-step", type=float, default=1.0, help="Model time step in days.")
     parser.add_argument("--infil-coeff", type=float, default=0.3, help="Infiltration coefficient for the top layer.")
-    parser.add_argument("--diff-factor", type=float, default=2e5, help="Diffusivity scaling factor.")
+    parser.add_argument("--diff-factor", type=float, default=1e3, help="Diffusivity scaling factor (mm).")
     parser.add_argument(
         "--sm-max-factor",
         type=float,

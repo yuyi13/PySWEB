@@ -26,7 +26,7 @@ def calculate_hydraulic_properties(soil_moisture, soil_properties, layer, diff_f
     layer : int
         Soil layer index
     diff_factor : float
-        Calibration factor that relates K to D (default is 1e4)
+        Calibration factor that relates K to D (default is 1e3)
 
     Returns:
     --------
@@ -97,17 +97,17 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
     # Calculate layer thicknesses and distance between layer midpoints
     # Note: layer_depth and layer_thickness are in mm now
     layer_thickness = np.zeros(num_layers)
-    distance_between_layers = np.zeros(num_layers-1)
-    
+    distance_between_layers = np.zeros(num_layers - 1)
+
     for i in range(num_layers):
         if i == 0:  # Python is 0-indexed
             layer_thickness[i] = soil_properties['layer_depth'][i]
         else:
-            layer_thickness[i] = soil_properties['layer_depth'][i] - soil_properties['layer_depth'][i-1]
-        
-        if i < num_layers - 1:
-            # Distance between midpoints of adjacent layers
-            distance_between_layers[i] = (layer_thickness[i] + layer_thickness[i+1]) / 2
+            layer_thickness[i] = soil_properties['layer_depth'][i] - soil_properties['layer_depth'][i - 1]
+
+    if num_layers > 1:
+        # Compute interface spacing only after all layer thicknesses are known.
+        distance_between_layers[:] = 0.5 * (layer_thickness[:-1] + layer_thickness[1:])
     
     # Calculate fluxes and matrix coefficients
     drainage_soil_bot = 0.0
