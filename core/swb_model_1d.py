@@ -10,6 +10,55 @@ if str(REPO_ROOT) not in sys.path:
 from core.soil_hydra_funs import setup_richards_matrix
 from core.soil_hydra_funs import solve_soil_moisture
 
+_DEFAULT_NDVI_ROOT_QUANTILES = (0.2, 0.4, 0.6, 0.8, 1.0)
+_DEFAULT_NDVI_ROOT_DEPTHS_CM = (5.0, 15.0, 30.0, 60.0, 100.0)
+
+
+def _resolve_root_depth_from_ndvi(soil_properties):
+    ndvi_value = soil_properties.get("ndvi", None)
+    if ndvi_value is None:
+        return None
+
+    ndvi_arr = np.asarray(ndvi_value, dtype=float).reshape(-1)
+    ndvi_valid = ndvi_arr[np.isfinite(ndvi_arr)]
+    if ndvi_valid.size == 0:
+        return None
+    ndvi_scalar = float(ndvi_valid.mean())
+
+    quantiles = np.asarray(
+        soil_properties.get("ndvi_root_quantiles", _DEFAULT_NDVI_ROOT_QUANTILES),
+        dtype=float,
+    ).reshape(-1)
+    if quantiles.size == 0:
+        return None
+
+    depth_values_mm = soil_properties.get("ndvi_root_depths_mm", None)
+    if depth_values_mm is None:
+        depth_values_cm = np.asarray(
+            soil_properties.get("ndvi_root_depths_cm", _DEFAULT_NDVI_ROOT_DEPTHS_CM),
+            dtype=float,
+        ).reshape(-1)
+        depth_values_mm = depth_values_cm * 10.0
+    else:
+        depth_values_mm = np.asarray(depth_values_mm, dtype=float).reshape(-1)
+
+    if depth_values_mm.size != quantiles.size:
+        return None
+
+    order = np.argsort(quantiles)
+    quantiles = quantiles[order]
+    depth_values_mm = depth_values_mm[order]
+
+    ndvi_clipped = float(np.clip(ndvi_scalar, quantiles[0], quantiles[-1]))
+    idx = int(np.searchsorted(quantiles, ndvi_clipped, side="left"))
+    idx = min(max(idx, 0), depth_values_mm.size - 1)
+
+    root_depth_mm = float(depth_values_mm[idx])
+    if not np.isfinite(root_depth_mm) or root_depth_mm <= 0.0:
+        return None
+    return root_depth_mm
+
+
 def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_mm=None):
     """
     Compute per-layer root fraction using the Jackson et al. (1996) beta profile.
@@ -25,7 +74,9 @@ def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_m
         Root beta parameter; if None, looks for 'root_beta' in soil_properties,
         else defaults to 0.97.
     max_root_depth_mm : float, optional
-        Maximum rooting depth in mm; if None, looks for 'max_root_depth' in soil_properties.
+        Maximum rooting depth in mm. If None, looks for 'max_root_depth' in
+        soil_properties, then derives depth from NDVI quantile mapping if
+        'ndvi' is available.
 
     Returns
     -------
@@ -41,6 +92,8 @@ def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_m
 
     if max_root_depth_mm is None:
         max_root_depth_mm = soil_properties.get('max_root_depth', None)
+    if max_root_depth_mm is None:
+        max_root_depth_mm = _resolve_root_depth_from_ndvi(soil_properties)
     if max_root_depth_mm is not None:
         max_root_depth_mm = float(max_root_depth_mm)
 

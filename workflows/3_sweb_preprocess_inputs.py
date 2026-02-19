@@ -693,6 +693,7 @@ def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Ti
         if not path.exists():
             raise FileNotFoundError(f"ET file not found: {path}")
         print(f"ET file: {path}", flush=True)
+        has_ndvi = False
         with xr.open_dataset(path) as ds:
             if args.t_var not in ds:
                 raise KeyError(
@@ -704,6 +705,13 @@ def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Ti
                     raise KeyError(f"Variable '{args.e_var}' not found in ET dataset: {path}")
             elif args.et_var not in ds:
                 raise KeyError(f"Variable '{args.et_var}' not found in ET dataset: {path}")
+            has_ndvi = args.ndvi_var in ds
+        if not has_ndvi:
+            print(
+                f"Warning: NDVI variable '{args.ndvi_var}' not found in ET dataset: {path}; "
+                "skipping NDVI output.",
+                flush=True,
+            )
 
         extent = tuple(args.extent) if args.extent else None
         tasks = [
@@ -713,6 +721,8 @@ def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Ti
             tasks.append((args.e_var, "e", "Daily soil evaporation", "mm day-1"))
         else:
             tasks.append((args.et_var, "et", "Daily evapotranspiration", "mm day-1"))
+        if has_ndvi:
+            tasks.append((args.ndvi_var, "ndvi", "Daily NDVI", "1"))
 
         components: Dict[str, xr.DataArray] = {}
         if args.workers > 1 and len(tasks) > 1:
@@ -1124,6 +1134,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--e-var", help="Variable name for daily soil evaporation in --et-file NetCDF (if set, et=e+t).")
     parser.add_argument("--et-var", default="Evap_tavg", help="Band name to extract from ET GeoTIFFs.")
     parser.add_argument("--t-var", default="T", help="Variable name for daily transpiration in --et-file NetCDF.")
+    parser.add_argument("--ndvi-var", default="ndvi_interp", help="Variable name for daily NDVI in --et-file NetCDF.")
     parser.add_argument("--tc-var", default="Tc", help="Deprecated compatibility argument; transpiration coefficient is no longer generated.")
     parser.add_argument("--et-filename-pattern", help="ET filename pattern with {year}, {month}, {day} placeholders.")
 
@@ -1195,6 +1206,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         t_output = output_dir / f"t_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"
         write_dataarray(et_components["t"], t_output)
         print(f"Wrote {t_output}", flush=True)
+    if "ndvi" in et_components:
+        ndvi_output = output_dir / f"ndvi_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"
+        write_dataarray(et_components["ndvi"], ndvi_output)
+        print(f"Wrote {ndvi_output}", flush=True)
 
     print("Processing soil properties…", flush=True)
     soil_arrays = process_soil_properties(args, grid)

@@ -109,6 +109,7 @@ def _extract_props_from_arrays(
     lat_idx: int,
     lon_idx: int,
     root_beta: float,
+    ndvi_value: float,
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
@@ -117,7 +118,7 @@ def _extract_props_from_arrays(
 ) -> Dict[str, np.ndarray]:
     layer_bottoms = np.asarray(layer_bottoms_mm, dtype=float)
     thickness = _build_layer_thickness(layer_bottoms)
-    return {
+    props = {
         "layer_depth": layer_bottoms,
         "layer_thickness": thickness,
         "porosity": soil_arrays["porosity"][:, lat_idx, lon_idx].astype(float, copy=False),
@@ -126,13 +127,15 @@ def _extract_props_from_arrays(
         "b_coefficient": soil_arrays["b_coefficient"][:, lat_idx, lon_idx].astype(float, copy=False),
         "conductivity_sat": soil_arrays["conductivity_sat"][:, lat_idx, lon_idx].astype(float, copy=False),
         "root_beta": float(root_beta),
-        "max_root_depth": float(layer_bottoms[-1]),
         "drainage_slope": float(drainage_slope),
         "drainage_upper_limit": float(drainage_upper_limit),
         "drainage_lower_limit": float(drainage_lower_limit),
         "sm_max_factor": float(sm_max_factor),
         "sm_min_factor": float(sm_min_factor),
     }
+    if np.isfinite(ndvi_value):
+        props["ndvi"] = float(ndvi_value)
+    return props
 
 
 def _parse_dates(args: argparse.Namespace) -> Tuple[pd.Timestamp, pd.Timestamp]:
@@ -158,14 +161,14 @@ def _compute_rmse(
     time_index: pd.DatetimeIndex,
     soil_values: Dict[str, np.ndarray],
     soil_valid: np.ndarray,
+    ndvi_mean_vals: Optional[np.ndarray],
     layer_bottoms_mm: Sequence[float],
     surface_layer_idx: int,
-    root_beta: float,
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
 ) -> Tuple[float, int]:
-    infil_coeff, diff_factor, sm_max_factor, sm_min_factor = params
+    infil_coeff, diff_factor, sm_max_factor, sm_min_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
 
     obs_mask = np.isfinite(smap_vals) & soil_valid[None, :, :]
@@ -187,12 +190,17 @@ def _compute_rmse(
             if not np.any(obs_mask[:, lat_idx, lon_idx]):
                 continue
 
+            ndvi_value = np.nan
+            if ndvi_mean_vals is not None:
+                ndvi_value = float(ndvi_mean_vals[lat_idx, lon_idx])
+
             soil_props = _extract_props_from_arrays(
                 soil_values,
                 layer_bottoms_mm,
                 lat_idx,
                 lon_idx,
                 root_beta,
+                ndvi_value,
                 drainage_slope,
                 drainage_upper_limit,
                 drainage_lower_limit,
@@ -244,9 +252,9 @@ def _objective_function(
     time_index: pd.DatetimeIndex,
     soil_values: Dict[str, np.ndarray],
     soil_valid: np.ndarray,
+    ndvi_mean_vals: Optional[np.ndarray],
     layer_bottoms_mm: Sequence[float],
     surface_layer_idx: int,
-    root_beta: float,
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
@@ -260,9 +268,9 @@ def _objective_function(
         time_index,
         soil_values,
         soil_valid,
+        ndvi_mean_vals,
         layer_bottoms_mm,
         surface_layer_idx,
-        root_beta,
         drainage_slope,
         drainage_upper_limit,
         drainage_lower_limit,
@@ -278,6 +286,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--et-var", default="et", help="Variable name for evapotranspiration.")
     parser.add_argument("--t", required=True, help="NetCDF file with transpiration (mm day-1).")
     parser.add_argument("--t-var", default="t", help="Variable name for transpiration.")
+    parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
+    parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
     parser.add_argument("--soil-dir", required=True, help="Directory containing soil NetCDFs.")
     parser.add_argument("--smap-ssm", required=True, help="NetCDF file with SMAP-DS SSM on model grid.")
     parser.add_argument("--smap-var", default="smap_ssm", help="Variable name for SMAP-DS SSM.")
@@ -294,7 +304,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-iter", type=int, default=30, help="Maximum iterations for optimization.")
     parser.add_argument("--surface-depth", type=float, default=50.0, help="Depth of surface observation (mm).")
-    parser.add_argument("--root-beta", type=float, default=0.96, help="Root distribution beta parameter.")
+    parser.add_argument("--root-beta", type=float, default=0.96, help="Initial root_beta value for optimizer seeding.")
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
@@ -320,6 +330,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=float,
         default=(0.1, 1.0),
         help="Bounds for sm_min_factor (multiplier on wilting point).",
+    )
+    parser.add_argument(
+        "--beta-bounds",
+        nargs=2,
+        type=float,
+        default=(0.90, 0.995),
+        help="Bounds for root_beta.",
     )
     parser.add_argument(
         "--layer-bottoms-mm",
@@ -375,6 +392,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     et = _load_single_variable(Path(args.et), args.et_var)
     t = _load_single_variable(Path(args.t), args.t_var)
     smap = _load_single_variable(Path(args.smap_ssm), args.smap_var)
+    ndvi = None
+    if args.ndvi:
+        ndvi = _load_single_variable(Path(args.ndvi), args.ndvi_var)
 
     if "time" not in precip.coords:
         raise ValueError("Precipitation data must include a 'time' coordinate.")
@@ -382,11 +402,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise ValueError("ET data must include a 'time' coordinate.")
     if "time" not in t.coords:
         raise ValueError("Transpiration data must include a 'time' coordinate.")
+    if ndvi is not None and "time" not in ndvi.coords:
+        raise ValueError("NDVI data must include a 'time' coordinate.")
 
     precip = precip.sel(time=slice(start, end))
     et = et.sel(time=precip.coords["time"])
     t = t.sel(time=precip.coords["time"])
     smap = smap.sel(time=precip.coords["time"])
+    if ndvi is not None:
+        ndvi = ndvi.sel(time=precip.coords["time"])
 
     lat_dim = args.lat_dim
     lon_dim = args.lon_dim
@@ -405,13 +429,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     et = et.transpose("time", lat_dim, lon_dim)
     t = t.transpose("time", lat_dim, lon_dim)
     smap = smap.transpose("time", lat_dim, lon_dim)
+    if ndvi is not None:
+        ndvi = ndvi.transpose("time", lat_dim, lon_dim)
 
     if args.sm_res:
         precip = _coarsen_to_target(precip, lat_dim, lon_dim, args.sm_res)
         et = _coarsen_to_target(et, lat_dim, lon_dim, args.sm_res)
         t = _coarsen_to_target(t, lat_dim, lon_dim, args.sm_res)
         smap = _coarsen_to_target(smap, lat_dim, lon_dim, args.sm_res)
-        precip, et, t, smap = xr.align(precip, et, t, smap, join="inner")
+        if ndvi is not None:
+            ndvi = _coarsen_to_target(ndvi, lat_dim, lon_dim, args.sm_res)
+            precip, et, t, smap, ndvi = xr.align(precip, et, t, smap, ndvi, join="inner")
+        else:
+            precip, et, t, smap = xr.align(precip, et, t, smap, join="inner")
 
     soil_dir = Path(args.soil_dir).expanduser().resolve()
     print("Loading soil inputs...", flush=True)
@@ -431,12 +461,23 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     et_vals = et.values.astype(float, copy=False)
     t_vals = t.values.astype(float, copy=False)
     smap_vals = smap.values.astype(float, copy=False)
+    ndvi_mean_vals: Optional[np.ndarray] = None
+    if ndvi is not None:
+        ndvi_vals = ndvi.values.astype(float, copy=False)
+        valid_counts = np.sum(np.isfinite(ndvi_vals), axis=0)
+        ndvi_sums = np.nansum(ndvi_vals, axis=0)
+        ndvi_mean_vals = np.full(valid_counts.shape, np.nan, dtype=float)
+        np.divide(ndvi_sums, valid_counts, out=ndvi_mean_vals, where=valid_counts > 0)
 
     n_time, n_lat, n_lon = precip_vals.shape
     print("Calibration setup:", flush=True)
     print(f"  precip: {Path(args.precip).expanduser().resolve()} (var={args.precip_var})", flush=True)
     print(f"  et: {Path(args.et).expanduser().resolve()} (var={args.et_var})", flush=True)
     print(f"  t: {Path(args.t).expanduser().resolve()} (var={args.t_var})", flush=True)
+    if args.ndvi:
+        print(f"  ndvi: {Path(args.ndvi).expanduser().resolve()} (var={args.ndvi_var})", flush=True)
+    else:
+        print("  ndvi: not provided (max root depth fallback will be used)", flush=True)
     print(f"  smap_ssm: {Path(args.smap_ssm).expanduser().resolve()} (var={args.smap_var})", flush=True)
     print(f"  soil_dir: {soil_dir}", flush=True)
     print(
@@ -457,7 +498,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         f"infil_coeff={tuple(args.infil_bounds)}, "
         f"diff_factor={tuple(args.diff_bounds)}, "
         f"sm_max_factor={tuple(args.sm_max_bounds)}, "
-        f"sm_min_factor={tuple(args.sm_min_bounds)}",
+        f"sm_min_factor={tuple(args.sm_min_bounds)}, "
+        f"root_beta={tuple(args.beta_bounds)}",
         flush=True,
     )
     print(
@@ -470,8 +512,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         tuple(args.diff_bounds),
         tuple(args.sm_max_bounds),
         tuple(args.sm_min_bounds),
+        tuple(args.beta_bounds),
     ]
-    de_x0 = np.array([0.3, 1e3, 1.0, 1.0], dtype=float)
+    de_x0 = np.array([0.3, 1e3, 1.0, 1.0, float(args.root_beta)], dtype=float)
     for idx, (low, high) in enumerate(bounds):
         de_x0[idx] = float(np.clip(de_x0[idx], low, high))
     de_popsize = 10
@@ -485,7 +528,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     print("  objective: RMSE between domain-mean simulated and observed SMAP-DS SSM", flush=True)
     print(
         f"  optimizer seed x0: infil_coeff={de_x0[0]:.6g}, diff_factor={de_x0[1]:.6g}, "
-        f"sm_max_factor={de_x0[2]:.6g}, sm_min_factor={de_x0[3]:.6g}",
+        f"sm_max_factor={de_x0[2]:.6g}, sm_min_factor={de_x0[3]:.6g}, "
+        f"root_beta={de_x0[4]:.6g}",
         flush=True,
     )
     de_extra = {}
@@ -502,9 +546,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             time_index,
             soil_values,
             soil_valid,
+            ndvi_mean_vals,
             layer_bottoms_mm,
             surface_layer_idx,
-            args.root_beta,
             args.drainage_slope,
             args.drainage_upper_limit,
             args.drainage_lower_limit,
@@ -531,9 +575,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         time_index,
         soil_values,
         soil_valid,
+        ndvi_mean_vals,
         layer_bottoms_mm,
         surface_layer_idx,
-        args.root_beta,
         args.drainage_slope,
         args.drainage_upper_limit,
         args.drainage_lower_limit,
@@ -545,7 +589,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     with output_path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["infil_coeff", "diff_factor", "sm_max_factor", "sm_min_factor", "rmse", "n_obs"]
+            ["infil_coeff", "diff_factor", "sm_max_factor", "sm_min_factor", "root_beta", "rmse", "n_obs"]
         )
         writer.writerow(
             [
@@ -553,6 +597,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 f"{best_params[1]:.6g}",
                 f"{best_params[2]:.6g}",
                 f"{best_params[3]:.6g}",
+                f"{best_params[4]:.6g}",
                 f"{final_rmse:.6g}",
                 str(int(n_obs)),
             ]

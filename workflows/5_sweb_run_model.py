@@ -161,7 +161,6 @@ def prepare_soil_property_grids(
         "b_coefficient": _to_numpy("b_coefficient"),
         "conductivity_sat": _to_numpy("conductivity_sat"),
         "root_beta": np.full((lat_count, lon_count), args.root_beta, dtype=float),
-        "max_root_depth": np.full((lat_count, lon_count), float(layer_bottoms_mm[-1]), dtype=float),
         "drainage_slope": np.full((lat_count, lon_count), args.drainage_slope, dtype=float),
         "drainage_upper_limit": np.full((lat_count, lon_count), args.drainage_upper_limit, dtype=float),
         "drainage_lower_limit": np.full((lat_count, lon_count), args.drainage_lower_limit, dtype=float),
@@ -217,6 +216,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--et-var", default="et", help="Variable name for evapotranspiration.")
     parser.add_argument("--t", required=True, help="NetCDF file with transpiration (mm day-1).")
     parser.add_argument("--t-var", default="t", help="Variable name for transpiration.")
+    parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
+    parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
     parser.add_argument("--lat-dim", default="lat", help="Latitude dimension name.")
     parser.add_argument("--lon-dim", default="lon", help="Longitude dimension name.")
     parser.add_argument("--start-date", type=str, help="Optional simulation start date (YYYY-MM-DD).")
@@ -332,6 +333,7 @@ def _compute_row_soil_moisture(
     precip_values: np.ndarray,
     et_values: np.ndarray,
     t_values: np.ndarray,
+    ndvi_mean_values: Optional[np.ndarray],
     soil_grids: Dict[str, np.ndarray],
     param_values: Optional[Dict[str, np.ndarray]],
     time_index: pd.DatetimeIndex,
@@ -355,6 +357,11 @@ def _compute_row_soil_moisture(
         soil_props = extract_soil_properties_for_cell(soil_grids, lat_idx, lon_idx)
         if has_invalid_soil_values(soil_props):
             continue
+
+        if ndvi_mean_values is not None:
+            ndvi_value = float(ndvi_mean_values[lat_idx, lon_idx])
+            if np.isfinite(ndvi_value):
+                soil_props["ndvi"] = ndvi_value
 
         if param_values is not None:
             infil_coeff = float(param_values["infil_coeff"][lat_idx, lon_idx])
@@ -394,6 +401,7 @@ def _init_process_run_worker(
     precip_values: np.ndarray,
     et_values: np.ndarray,
     t_values: np.ndarray,
+    ndvi_mean_values: Optional[np.ndarray],
     soil_grids: Dict[str, np.ndarray],
     param_values: Optional[Dict[str, np.ndarray]],
     time_index: pd.DatetimeIndex,
@@ -406,6 +414,7 @@ def _init_process_run_worker(
         "precip_values": precip_values,
         "et_values": et_values,
         "t_values": t_values,
+        "ndvi_mean_values": ndvi_mean_values,
         "soil_grids": soil_grids,
         "param_values": param_values,
         "time_index": time_index,
@@ -420,6 +429,7 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
     precip_values = state["precip_values"]
     et_values = state["et_values"]
     t_values = state["t_values"]
+    ndvi_mean_values = state["ndvi_mean_values"]
     soil_grids = state["soil_grids"]
     param_values = state["param_values"]
     time_index = state["time_index"]
@@ -434,6 +444,7 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
         precip_values=precip_values,
         et_values=et_values,
         t_values=t_values,
+        ndvi_mean_values=ndvi_mean_values,
         soil_grids=soil_grids,
         param_values=param_values,
         time_index=time_index,
@@ -457,8 +468,14 @@ def main() -> None:
     precip = load_forcing(Path(args.precip).expanduser(), args.precip_var, args.start_date, args.end_date)
     et = load_forcing(Path(args.et).expanduser(), args.et_var, args.start_date, args.end_date)
     t = load_forcing(Path(args.t).expanduser(), args.t_var, args.start_date, args.end_date)
+    ndvi = None
+    if args.ndvi:
+        ndvi = load_forcing(Path(args.ndvi).expanduser(), args.ndvi_var, args.start_date, args.end_date)
 
-    precip, et, t = xr.align(precip, et, t, join="inner")
+    if ndvi is not None:
+        precip, et, t, ndvi = xr.align(precip, et, t, ndvi, join="inner")
+    else:
+        precip, et, t = xr.align(precip, et, t, join="inner")
 
     soil_arrays, soil_paths = load_soil_arrays(args)
     ensure_matching_grid(precip, soil_arrays, args.lat_dim, args.lon_dim)
@@ -492,6 +509,13 @@ def main() -> None:
     precip_values = precip.values.astype(float, copy=False)
     et_values = et.values.astype(float, copy=False)
     t_values = t.values.astype(float, copy=False)
+    ndvi_mean_values: Optional[np.ndarray] = None
+    if ndvi is not None:
+        ndvi_values = ndvi.values.astype(float, copy=False)
+        valid_counts = np.sum(np.isfinite(ndvi_values), axis=0)
+        ndvi_sums = np.nansum(ndvi_values, axis=0)
+        ndvi_mean_values = np.full(valid_counts.shape, np.nan, dtype=float)
+        np.divide(ndvi_sums, valid_counts, out=ndvi_mean_values, where=valid_counts > 0)
 
     if args.nan_to_zero:
         precip_values = np.nan_to_num(precip_values, nan=0.0)
@@ -520,6 +544,7 @@ def main() -> None:
                 precip_values=precip_values,
                 et_values=et_values,
                 t_values=t_values,
+                ndvi_mean_values=ndvi_mean_values,
                 soil_grids=soil_grids,
                 param_values=param_values,
                 time_index=time_index,
@@ -552,6 +577,7 @@ def main() -> None:
                 precip_values,
                 et_values,
                 t_values,
+                ndvi_mean_values,
                 soil_grids,
                 param_values,
                 time_index,
@@ -669,6 +695,9 @@ def main() -> None:
         "layer_bottoms_mm": np.asarray(soil_grids["layer_depth"], dtype=float).tolist(),
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),
     }
+    attrs["root_beta"] = float(args.root_beta)
+    if args.ndvi:
+        attrs["ndvi_source"] = str(Path(args.ndvi).expanduser().resolve())
     if args.param_grid:
         attrs["parameter_grid"] = str(param_path)
     else:
