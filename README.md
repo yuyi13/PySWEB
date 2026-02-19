@@ -23,6 +23,10 @@ PySWEB/
 │   ├── gee_downloader.py                  # Earth Engine data download utilities
 │   └── thomas_solve_tridiagonal_matrix.py # Tridiagonal solver utility
 │
+├── visualisation/                         # Plotting and visualisation helpers
+│   ├── plot_time_series.py                # Time-series extraction + plots for SSEBop and SWEB outputs
+│   └── plot_heatmap.py                    # Heatmap plotting for SWEB layers (optionally with SSEBop forcing panel)
+│
 ├── README.md
 └── SWEB_logo.png
 ```
@@ -45,6 +49,16 @@ bash ssebop_runner_landsat.sh <run_subdir>
 
 # Step B: SWEB workflow (preprocess + calibrate + final run)
 bash sweb_domain_runner.sh <run_subdir>
+
+# Step C: Plot extracted time series from SSEBop + SWEB outputs
+python ../visualisation/plot_time_series.py \
+  --run-subdir <run_subdir> \
+  --output /g/data/ym05/sweb_model/figures/<run_subdir>_timeseries.png
+
+# Step D: Plot SWEB layer heatmap (optional SSEBop top panel)
+python ../visualisation/plot_heatmap.py \
+  --run-subdir <run_subdir> \
+  --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap.png
 ```
 
 Both wrapper scripts currently include environment-specific default paths (for example `/g/data/...`) near the top of each script. Update those values before running on another machine or filesystem.
@@ -54,6 +68,8 @@ Both wrapper scripts currently include environment-specific default paths (for e
 - From SWEB preprocess (`3_sweb_preprocess_inputs.py`): `rain_daily_*.nc`, `et_daily_*.nc`, `t_daily_*.nc`, `soil_*.nc`, and optionally `smap_ssm_daily_*.nc`.
 - From calibration (`4_sweb_calib_domain.py`): CSV with calibrated domain parameters.
 - From SWEB run (`5_sweb_run_model.py`): consolidated RZSM NetCDF, optionally split into burn-in and post-burn products by `sweb_domain_runner.sh`.
+- From visualisation helpers (`visualisation/plot_time_series.py`, `visualisation/plot_heatmap.py`):
+  PNG plots and optional extracted CSV tables.
 
 ## Requirements
 - Python 3.9+
