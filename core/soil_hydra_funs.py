@@ -289,8 +289,20 @@ def solve_soil_moisture(soil_moisture, matrix_coeffs, time_step, soil_properties
     new_soil_moisture[-1] = min(new_soil_moisture[-1], sm_max_bound[-1])
     drain_extra = excess_bottom * thickness[-1]  # mm
 
-    # Enforce lower bounds (avoid negative or below-residual values)
-    new_soil_moisture = np.maximum(new_soil_moisture, sm_min_bound)
+    # Enforce lower bounds with buffered relaxation so states approach the minimum
+    # smoothly instead of sticking to a hard floor.
+    sm_min_relax_tau_days = float(soil_properties.get('sm_min_relax_tau_days', 20.0))
+    if np.isfinite(sm_min_relax_tau_days) and sm_min_relax_tau_days > 0.0:
+        prev_for_relax = np.maximum(soil_moisture, sm_min_bound)
+        decay = np.exp(-time_step / sm_min_relax_tau_days)
+        relaxed_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
+        below_min = new_soil_moisture < sm_min_bound
+        new_soil_moisture[below_min] = np.maximum(new_soil_moisture[below_min], relaxed_floor[below_min])
+    else:
+        new_soil_moisture = np.maximum(new_soil_moisture, sm_min_bound)
+
+    # Soil moisture cannot be negative.
+    new_soil_moisture = np.maximum(new_soil_moisture, 0.0)
 
     return {
         'soil_moisture': new_soil_moisture,

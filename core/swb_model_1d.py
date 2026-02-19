@@ -81,13 +81,20 @@ def _as_layer_factor(value, num_layers, name):
 def _resolve_sm_bounds(soil_properties):
     porosity = np.asarray(soil_properties['porosity'], dtype=float)
     wilting_point = np.asarray(soil_properties['wilting_point'], dtype=float)
+    layer_depth = np.asarray(soil_properties['layer_depth'], dtype=float)
     num_layers = porosity.size
+
+    if layer_depth.size != num_layers:
+        raise ValueError("layer_depth length must match porosity/wilting_point length.")
 
     sm_max_factor = _as_layer_factor(soil_properties.get('sm_max_factor', 1.0), num_layers, "sm_max_factor")
     sm_min_factor = _as_layer_factor(soil_properties.get('sm_min_factor', 1.0), num_layers, "sm_min_factor")
+    sm_min_factor_max_depth_mm = float(soil_properties.get('sm_min_factor_max_depth_mm', 150.0))
 
     sm_max_bound = porosity * sm_max_factor
-    sm_min_bound = wilting_point * sm_min_factor
+    sm_min_bound = wilting_point.copy()
+    shallow_mask = layer_depth <= sm_min_factor_max_depth_mm
+    sm_min_bound[shallow_mask] = wilting_point[shallow_mask] * sm_min_factor[shallow_mask]
     return sm_min_bound, sm_max_bound
 
 def soil_water_balance_1d(precip_data, 
@@ -119,6 +126,9 @@ def soil_water_balance_1d(precip_data,
         Optional:
         - sm_max_factor: scalar or per-layer multiplier for porosity (upper SM bound)
         - sm_min_factor: scalar or per-layer multiplier for wilting point (lower SM bound)
+          applied only to layers with bottom depth <= sm_min_factor_max_depth_mm
+        - sm_min_factor_max_depth_mm: depth threshold (mm) for applying sm_min_factor
+        - sm_min_relax_tau_days: e-folding time (days) for buffered approach to lower bounds
     time_step : float
         Time step in days (default: 1.0 day)
     initial_soil_moisture : numpy.ndarray, optional
@@ -242,9 +252,17 @@ def soil_water_balance_1d(precip_data,
         et_by_layer += transp_by_layer
         
         # 3. Adjust ET to not exceed available water in each layer
+        sm_min_relax_tau_days = float(soil_props.get('sm_min_relax_tau_days', 20.0))
+        if np.isfinite(sm_min_relax_tau_days) and sm_min_relax_tau_days > 0.0:
+            decay = np.exp(-time_step / sm_min_relax_tau_days)
+            prev_for_relax = np.maximum(current_soil_moisture, sm_min_bound)
+            et_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
+        else:
+            et_floor = sm_min_bound
+
         for l in range(num_layers):
-            # Maximum possible ET is limited by available water above wilting point
-            available_for_et = max(0, (current_soil_moisture[l] - sm_min_bound[l]) * 
+            # Maximum possible ET is limited by available water above the buffered floor.
+            available_for_et = max(0, (current_soil_moisture[l] - et_floor[l]) *
                                   soil_props['layer_thickness'][l])
             et_by_layer[l] = min(et_by_layer[l], available_for_et / time_step)
         
