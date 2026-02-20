@@ -4,16 +4,17 @@ Extract and plot SWEB layer heatmaps, with an optional SSEBop forcing panel.
 
 Examples
 --------
-Domain-mean heatmap from a shared run subdirectory:
-    python visualisation/plot_heatmap.py \
-      --run-subdir Boonaldoon \
-      --output /g/data/ym05/sweb_model/figures/Boonaldoon_heatmap.png
-
-Point heatmap (nearest grid cell):
+Point heatmap (nearest grid cell; default mode):
     python visualisation/plot_heatmap.py \
       --run-subdir Boonaldoon \
       --lat -29.50 --lon 149.39 \
       --output ./Boonaldoon_heatmap_point.png
+
+Domain-mean heatmap (optional mode):
+    python visualisation/plot_heatmap.py \
+      --run-subdir Boonaldoon \
+      --domain-mean \
+      --output /g/data/ym05/sweb_model/figures/Boonaldoon_heatmap.png
 """
 
 from __future__ import annotations
@@ -129,7 +130,9 @@ def _default_title(args: argparse.Namespace) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Plot SWEB layer heatmaps with optional SSEBop panel.")
+    parser = argparse.ArgumentParser(
+        description="Plot SWEB layer heatmaps with optional SSEBop panel (point mode by default)."
+    )
     parser.add_argument("--run-subdir", help="Run subdirectory under default output roots.")
 
     parser.add_argument("--sweb-path", help="SWEB NetCDF file or run directory.")
@@ -150,6 +153,11 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--lat", type=float, help="Latitude for nearest-cell extraction.")
     parser.add_argument("--lon", type=float, help="Longitude for nearest-cell extraction.")
+    parser.add_argument(
+        "--domain-mean",
+        action="store_true",
+        help="Use domain-mean extraction (optional override for default point-based mode).",
+    )
     parser.add_argument("--start-date", type=_parse_timestamp, help="Start date filter (YYYY-MM-DD).")
     parser.add_argument("--end-date", type=_parse_timestamp, help="End date filter (YYYY-MM-DD).")
 
@@ -169,8 +177,15 @@ def parse_args() -> argparse.Namespace:
 
     if not args.run_subdir and not args.sweb_path:
         parser.error("Provide --run-subdir or --sweb-path.")
-    if (args.lat is None) ^ (args.lon is None):
-        parser.error("Provide both --lat and --lon for point extraction.")
+    if args.domain_mean:
+        if args.lat is not None or args.lon is not None:
+            parser.error("--domain-mean cannot be combined with --lat/--lon.")
+    else:
+        if args.lat is None or args.lon is None:
+            parser.error(
+                "Point mode is default: provide both --lat and --lon, "
+                "or pass --domain-mean for domain-wide extraction."
+            )
     if args.start_date is not None and args.end_date is not None and args.end_date < args.start_date:
         parser.error("--end-date must be on or after --start-date.")
     if args.sample_step < 1:
@@ -180,6 +195,8 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
+    extract_lat = None if args.domain_mean else args.lat
+    extract_lon = None if args.domain_mean else args.lon
 
     sweb_path = _resolve_product_path(
         explicit_path=args.sweb_path,
@@ -196,8 +213,8 @@ def main():
         requested_vars=args.sweb_vars,
         start_date=args.start_date,
         end_date=args.end_date,
-        lat=args.lat,
-        lon=args.lon,
+        lat=extract_lat,
+        lon=extract_lon,
     )
     if sweb.data.empty:
         raise ValueError("No SWEB data available after extraction/date filtering.")
@@ -218,8 +235,8 @@ def main():
             requested_vars=[args.ssebop_var],
             start_date=args.start_date,
             end_date=args.end_date,
-            lat=args.lat,
-            lon=args.lon,
+            lat=extract_lat,
+            lon=extract_lon,
         )
         if not ssebop.data.empty:
             column = ssebop.data.columns[0]
