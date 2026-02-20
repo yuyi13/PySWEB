@@ -724,7 +724,8 @@ def main() -> None:
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),
     }
     attrs["root_beta"] = float(args.root_beta)
-    attrs["use_ndvi_root_depth"] = bool(args.use_ndvi_root_depth)
+    # NetCDF global attrs do not accept Python bool with the netCDF4 backend.
+    attrs["use_ndvi_root_depth"] = int(bool(args.use_ndvi_root_depth))
     if ndvi is not None:
         attrs["ndvi_source"] = str(Path(args.ndvi).expanduser().resolve())
     if args.param_grid:

@@ -335,14 +335,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--sm-max-bounds",
         nargs=2,
         type=float,
-        default=(1.0, 1.5),
+        default=(1.0, 1.25),
         help="Bounds for sm_max_factor (multiplier on porosity).",
     )
     parser.add_argument(
         "--sm-min-bounds",
         nargs=2,
         type=float,
-        default=(0.1, 1.0),
+        default=(0.75, 1.0),
         help="Bounds for sm_min_factor (multiplier on wilting point).",
     )
     parser.add_argument(
@@ -546,7 +546,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ]
     de_x0 = np.array([0.3, 1e3, 1.0, 1.0, float(args.root_beta)], dtype=float)
     for idx, (low, high) in enumerate(bounds):
-        de_x0[idx] = float(np.clip(de_x0[idx], low, high))
+        x0_i = float(np.clip(de_x0[idx], low, high))
+        # Keep x0 strictly inside open bounds when possible. SciPy may reject
+        # boundary-equal x0 after internal scaling due to floating-point noise.
+        if np.isfinite(low) and np.isfinite(high) and high > low:
+            if x0_i <= low:
+                x0_i = float(np.nextafter(low, high))
+            elif x0_i >= high:
+                x0_i = float(np.nextafter(high, low))
+        de_x0[idx] = x0_i
     de_popsize = 10
     de_population_size = de_popsize * len(bounds)
     de_workers = max(1, min(args.workers, de_population_size))

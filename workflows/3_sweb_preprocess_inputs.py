@@ -213,7 +213,7 @@ def _crop_raster_to_grid(da: xr.DataArray, grid: TargetGrid, buffer_pixels: int 
     )
 
 
-def _reproject_to_template(data: xr.DataArray, grid: TargetGrid, resampling: Resampling = Resampling.nearest) -> xr.DataArray:
+def _reproject_to_template(data: xr.DataArray, grid: TargetGrid, resampling: Resampling = Resampling.bilinear) -> xr.DataArray:
     if grid.lat_dim in data.dims and grid.lon_dim in data.dims:
         lat_name = grid.lat_dim
         lon_name = grid.lon_dim
@@ -840,7 +840,7 @@ def _load_soil_raster(path: Path, grid: TargetGrid) -> np.ndarray:
         raise FileNotFoundError(f"Soil raster not found: {path}")
     da = rioxarray.open_rasterio(path, masked=True).squeeze(drop=True)
     da = _crop_raster_to_grid(da, grid, buffer_pixels=2)
-    da = _reproject_to_template(da, grid, resampling=Resampling.nearest)
+    da = _reproject_to_template(da, grid, resampling=Resampling.bilinear)
     return np.asarray(da.values, dtype=float)
 
 
@@ -1019,7 +1019,7 @@ def _load_smap_raster(path: Path, grid: TargetGrid, dtype: str, band_choice: str
     da = rioxarray.open_rasterio(path, masked=True).squeeze(drop=True)
     if "band" not in da.dims:
         da = _crop_raster_to_grid(da, grid, buffer_pixels=2)
-        da = _reproject_to_template(da, grid, resampling=Resampling.nearest)
+        da = _reproject_to_template(da, grid, resampling=Resampling.bilinear)
         return da.astype(dtype)
 
     band_values = da.coords["band"].values.tolist()
@@ -1027,7 +1027,7 @@ def _load_smap_raster(path: Path, grid: TargetGrid, dtype: str, band_choice: str
     for band_value in band_values:
         band_da = da.sel(band=band_value)
         band_da = _crop_raster_to_grid(band_da, grid, buffer_pixels=2)
-        band_da = _reproject_to_template(band_da, grid, resampling=Resampling.nearest)
+        band_da = _reproject_to_template(band_da, grid, resampling=Resampling.bilinear)
         band_layers.append(band_da)
 
     if band_choice == "mean":
