@@ -59,7 +59,12 @@ def _resolve_root_depth_from_ndvi(soil_properties):
     return root_depth_mm
 
 
-def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_mm=None):
+def _compute_root_distribution_beta(
+    soil_properties,
+    beta=None,
+    max_root_depth_mm=None,
+    use_ndvi_root_depth=False,
+):
     """
     Compute per-layer root fraction using the Jackson et al. (1996) beta profile.
 
@@ -72,11 +77,13 @@ def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_m
         Must contain 'layer_depth' (cumulative depth to layer bottoms, mm).
     beta : float, optional
         Root beta parameter; if None, looks for 'root_beta' in soil_properties,
-        else defaults to 0.97.
+        else defaults to 0.961 (crop average; Jackson et al., 1996).
     max_root_depth_mm : float, optional
         Maximum rooting depth in mm. If None, looks for 'max_root_depth' in
-        soil_properties, then derives depth from NDVI quantile mapping if
-        'ndvi' is available.
+        soil_properties.
+    use_ndvi_root_depth : bool, optional
+        If True and max_root_depth_mm is not provided, derive rooting depth
+        from NDVI quantile mapping when 'ndvi' is available. Default is False.
 
     Returns
     -------
@@ -87,12 +94,12 @@ def _compute_root_distribution_beta(soil_properties, beta=None, max_root_depth_m
     num_layers = len(layer_depth_mm)
 
     if beta is None:
-        beta = float(soil_properties.get('root_beta', 0.96))
+        beta = float(soil_properties.get('root_beta', 0.961))
     beta = min(max(beta, 0.90), 0.995)  # keep in a reasonable range
 
     if max_root_depth_mm is None:
         max_root_depth_mm = soil_properties.get('max_root_depth', None)
-    if max_root_depth_mm is None:
+    if max_root_depth_mm is None and bool(use_ndvi_root_depth):
         max_root_depth_mm = _resolve_root_depth_from_ndvi(soil_properties)
     if max_root_depth_mm is not None:
         max_root_depth_mm = float(max_root_depth_mm)
@@ -177,11 +184,16 @@ def soil_water_balance_1d(precip_data,
     soil_properties : dict
         Dictionary of soil parameters including layer depths in mm
         Optional:
+        - use_ndvi_root_depth: if True, allow NDVI-based root depth cap when
+          max_root_depth is not provided (default: False)
         - sm_max_factor: scalar or per-layer multiplier for porosity (upper SM bound)
         - sm_min_factor: scalar or per-layer multiplier for wilting point (lower SM bound)
           applied only to layers with bottom depth <= sm_min_factor_max_depth_mm
         - sm_min_factor_max_depth_mm: depth threshold (mm) for applying sm_min_factor
         - sm_min_relax_tau_days: e-folding time (days) for buffered approach to lower bounds
+        - rhs_diffusion_enabled: include Fortran-style explicit diffusion-gradient RHS flux
+        - rhs_diffusion_limiter_enabled: constrain RHS diffusion by donor/receiver storage
+        - rhs_diffusion_abs_cap_mm_day: optional hard cap for RHS diffusion flux magnitude
     time_step : float
         Time step in days (default: 1.0 day)
     initial_soil_moisture : numpy.ndarray, optional
@@ -255,7 +267,8 @@ def soil_water_balance_1d(precip_data,
     root_distribution = _compute_root_distribution_beta(
         soil_props,
         beta=soil_props.get('root_beta', None),
-        max_root_depth_mm=soil_props.get('max_root_depth', None)
+        max_root_depth_mm=soil_props.get('max_root_depth', None),
+        use_ndvi_root_depth=bool(soil_props.get('use_ndvi_root_depth', False)),
     )
 
     # Initialize soil moisture (middle of available water capacity)
@@ -331,7 +344,8 @@ def soil_water_balance_1d(precip_data,
             soil_props,
             boundary_fluxes,
             infil_coeff = infil_coeff,
-            diff_factor = diff_factor
+            diff_factor = diff_factor,
+            time_step = time_step,
         )
         
         # Solve for updated soil moisture

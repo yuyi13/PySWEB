@@ -709,7 +709,7 @@ def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Ti
         if not has_ndvi:
             print(
                 f"Warning: NDVI variable '{args.ndvi_var}' not found in ET dataset: {path}; "
-                "skipping NDVI output.",
+                "skipping NDVI output (optional for downstream NDVI root-depth capping).",
                 flush=True,
             )
 
@@ -1134,7 +1134,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--e-var", help="Variable name for daily soil evaporation in --et-file NetCDF (if set, et=e+t).")
     parser.add_argument("--et-var", default="Evap_tavg", help="Band name to extract from ET GeoTIFFs.")
     parser.add_argument("--t-var", default="T", help="Variable name for daily transpiration in --et-file NetCDF.")
-    parser.add_argument("--ndvi-var", default="ndvi_interp", help="Variable name for daily NDVI in --et-file NetCDF.")
+    parser.add_argument(
+        "--ndvi-var",
+        default="ndvi_interp",
+        help=(
+            "Variable name for daily NDVI in --et-file NetCDF "
+            "(used only when downstream workflows enable NDVI root-depth capping)."
+        ),
+    )
     parser.add_argument("--tc-var", default="Tc", help="Deprecated compatibility argument; transpiration coefficient is no longer generated.")
     parser.add_argument("--et-filename-pattern", help="ET filename pattern with {year}, {month}, {day} placeholders.")
 

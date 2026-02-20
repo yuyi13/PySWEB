@@ -115,6 +115,7 @@ def _extract_props_from_arrays(
     drainage_lower_limit: float,
     sm_max_factor: float,
     sm_min_factor: float,
+    use_ndvi_root_depth: bool,
 ) -> Dict[str, np.ndarray]:
     layer_bottoms = np.asarray(layer_bottoms_mm, dtype=float)
     thickness = _build_layer_thickness(layer_bottoms)
@@ -132,8 +133,9 @@ def _extract_props_from_arrays(
         "drainage_lower_limit": float(drainage_lower_limit),
         "sm_max_factor": float(sm_max_factor),
         "sm_min_factor": float(sm_min_factor),
+        "use_ndvi_root_depth": bool(use_ndvi_root_depth),
     }
-    if np.isfinite(ndvi_value):
+    if bool(use_ndvi_root_depth) and np.isfinite(ndvi_value):
         props["ndvi"] = float(ndvi_value)
     return props
 
@@ -167,6 +169,7 @@ def _compute_rmse(
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
+    use_ndvi_root_depth: bool,
 ) -> Tuple[float, int]:
     infil_coeff, diff_factor, sm_max_factor, sm_min_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
@@ -206,6 +209,7 @@ def _compute_rmse(
                 drainage_lower_limit,
                 sm_max_factor,
                 sm_min_factor,
+                use_ndvi_root_depth,
             )
 
             try:
@@ -258,6 +262,7 @@ def _objective_function(
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
+    use_ndvi_root_depth: bool,
 ) -> float:
     rmse, _ = _compute_rmse(
         params,
@@ -274,6 +279,7 @@ def _objective_function(
         drainage_slope,
         drainage_upper_limit,
         drainage_lower_limit,
+        use_ndvi_root_depth,
     )
     return rmse
 
@@ -288,6 +294,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--t-var", default="t", help="Variable name for transpiration.")
     parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
     parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
+    parser.add_argument(
+        "--use-ndvi-root-depth",
+        action="store_true",
+        help=(
+            "Enable NDVI-constrained root depth capping. Disabled by default, so "
+            "Jackson beta uptake spans all layers unless max_root_depth is set."
+        ),
+    )
     parser.add_argument("--soil-dir", required=True, help="Directory containing soil NetCDFs.")
     parser.add_argument("--smap-ssm", required=True, help="NetCDF file with SMAP-DS SSM on model grid.")
     parser.add_argument("--smap-var", default="smap_ssm", help="Variable name for SMAP-DS SSM.")
@@ -304,17 +318,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-iter", type=int, default=30, help="Maximum iterations for optimization.")
     parser.add_argument("--surface-depth", type=float, default=50.0, help="Depth of surface observation (mm).")
-    parser.add_argument("--root-beta", type=float, default=0.96, help="Initial root_beta value for optimizer seeding.")
+    parser.add_argument("--root-beta", type=float, default=0.961, help="Initial root_beta value for optimizer seeding.")
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for differential evolution objective evaluation.")
-    parser.add_argument("--infil-bounds", nargs=2, type=float, default=(0.1, 1.0), help="Bounds for infil_coeff.")
+    parser.add_argument("--infil-bounds", nargs=2, type=float, default=(0.3, 1.0), help="Bounds for infil_coeff.")
     parser.add_argument(
         "--diff-bounds",
         nargs=2,
         type=float,
-        default=(0.0, 1e4),
+        default=(10, 1e4),
         help="Bounds for diff_factor (mm).",
     )
     parser.add_argument(
@@ -393,7 +407,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     t = _load_single_variable(Path(args.t), args.t_var)
     smap = _load_single_variable(Path(args.smap_ssm), args.smap_var)
     ndvi = None
-    if args.ndvi:
+    if args.use_ndvi_root_depth and args.ndvi:
         ndvi = _load_single_variable(Path(args.ndvi), args.ndvi_var)
 
     if "time" not in precip.coords:
@@ -474,10 +488,26 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     print(f"  precip: {Path(args.precip).expanduser().resolve()} (var={args.precip_var})", flush=True)
     print(f"  et: {Path(args.et).expanduser().resolve()} (var={args.et_var})", flush=True)
     print(f"  t: {Path(args.t).expanduser().resolve()} (var={args.t_var})", flush=True)
-    if args.ndvi:
-        print(f"  ndvi: {Path(args.ndvi).expanduser().resolve()} (var={args.ndvi_var})", flush=True)
+    if args.use_ndvi_root_depth and args.ndvi:
+        print(
+            f"  ndvi: {Path(args.ndvi).expanduser().resolve()} (var={args.ndvi_var}; "
+            "used for root-depth capping)",
+            flush=True,
+        )
+    elif args.use_ndvi_root_depth:
+        print(
+            "  ndvi: not provided (NDVI root-depth capping requested but unavailable; "
+            "running without NDVI cap)",
+            flush=True,
+        )
+    elif args.ndvi:
+        print(
+            f"  ndvi: {Path(args.ndvi).expanduser().resolve()} (var={args.ndvi_var}; "
+            "ignored because --use-ndvi-root-depth is not set)",
+            flush=True,
+        )
     else:
-        print("  ndvi: not provided (max root depth fallback will be used)", flush=True)
+        print("  ndvi root-depth capping: disabled (default)", flush=True)
     print(f"  smap_ssm: {Path(args.smap_ssm).expanduser().resolve()} (var={args.smap_var})", flush=True)
     print(f"  soil_dir: {soil_dir}", flush=True)
     print(
@@ -552,6 +582,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             args.drainage_slope,
             args.drainage_upper_limit,
             args.drainage_lower_limit,
+            args.use_ndvi_root_depth,
         ),
         maxiter=args.max_iter,
         popsize=de_popsize,
@@ -581,6 +612,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         args.drainage_slope,
         args.drainage_upper_limit,
         args.drainage_lower_limit,
+        args.use_ndvi_root_depth,
     )
 
     output_path = Path(args.output).expanduser().resolve()

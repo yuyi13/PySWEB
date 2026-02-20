@@ -218,6 +218,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--t-var", default="t", help="Variable name for transpiration.")
     parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
     parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
+    parser.add_argument(
+        "--use-ndvi-root-depth",
+        action="store_true",
+        help=(
+            "Enable NDVI-constrained root depth capping. Disabled by default, so "
+            "Jackson beta uptake spans all layers unless max_root_depth is provided."
+        ),
+    )
     parser.add_argument("--lat-dim", default="lat", help="Latitude dimension name.")
     parser.add_argument("--lon-dim", default="lon", help="Longitude dimension name.")
     parser.add_argument("--start-date", type=str, help="Optional simulation start date (YYYY-MM-DD).")
@@ -340,6 +348,7 @@ def _compute_row_soil_moisture(
     time_step: float,
     default_infil_coeff: float,
     default_diff_factor: float,
+    use_ndvi_root_depth: bool,
     emit_warnings: bool = True,
 ) -> np.ndarray:
     n_time = precip_values.shape[0]
@@ -358,7 +367,8 @@ def _compute_row_soil_moisture(
         if has_invalid_soil_values(soil_props):
             continue
 
-        if ndvi_mean_values is not None:
+        soil_props["use_ndvi_root_depth"] = bool(use_ndvi_root_depth)
+        if use_ndvi_root_depth and ndvi_mean_values is not None:
             ndvi_value = float(ndvi_mean_values[lat_idx, lon_idx])
             if np.isfinite(ndvi_value):
                 soil_props["ndvi"] = ndvi_value
@@ -408,6 +418,7 @@ def _init_process_run_worker(
     time_step: float,
     default_infil_coeff: float,
     default_diff_factor: float,
+    use_ndvi_root_depth: bool,
 ) -> None:
     global _PROCESS_RUN_STATE
     _PROCESS_RUN_STATE = {
@@ -421,6 +432,7 @@ def _init_process_run_worker(
         "time_step": time_step,
         "default_infil_coeff": default_infil_coeff,
         "default_diff_factor": default_diff_factor,
+        "use_ndvi_root_depth": bool(use_ndvi_root_depth),
     }
 
 
@@ -436,6 +448,7 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
     time_step = float(state["time_step"])
     default_infil_coeff = float(state["default_infil_coeff"])
     default_diff_factor = float(state["default_diff_factor"])
+    use_ndvi_root_depth = bool(state["use_ndvi_root_depth"])
     n_lon = int(np.asarray(precip_values).shape[2])
 
     row_soil_moisture = _compute_row_soil_moisture(
@@ -451,6 +464,7 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
         time_step=time_step,
         default_infil_coeff=default_infil_coeff,
         default_diff_factor=default_diff_factor,
+        use_ndvi_root_depth=use_ndvi_root_depth,
         emit_warnings=False,
     )
     return lat_idx, row_soil_moisture
@@ -469,8 +483,20 @@ def main() -> None:
     et = load_forcing(Path(args.et).expanduser(), args.et_var, args.start_date, args.end_date)
     t = load_forcing(Path(args.t).expanduser(), args.t_var, args.start_date, args.end_date)
     ndvi = None
-    if args.ndvi:
+    if args.use_ndvi_root_depth and args.ndvi:
         ndvi = load_forcing(Path(args.ndvi).expanduser(), args.ndvi_var, args.start_date, args.end_date)
+    elif args.use_ndvi_root_depth:
+        print(
+            "NDVI root-depth capping enabled but no NDVI file was provided; "
+            "running without NDVI cap.",
+            flush=True,
+        )
+    elif args.ndvi:
+        print(
+            "NDVI file provided but --use-ndvi-root-depth is not set; "
+            "NDVI will be ignored for rooting depth.",
+            flush=True,
+        )
 
     if ndvi is not None:
         precip, et, t, ndvi = xr.align(precip, et, t, ndvi, join="inner")
@@ -551,6 +577,7 @@ def main() -> None:
                 time_step=args.time_step,
                 default_infil_coeff=args.infil_coeff,
                 default_diff_factor=args.diff_factor,
+                use_ndvi_root_depth=args.use_ndvi_root_depth,
             )
             soil_moisture[:, :, lat_idx, :] = row_soil_moisture
             processed_cells += n_lon
@@ -584,6 +611,7 @@ def main() -> None:
                 args.time_step,
                 args.infil_coeff,
                 args.diff_factor,
+                args.use_ndvi_root_depth,
             ),
         ) as executor:
             futures = [
@@ -696,7 +724,8 @@ def main() -> None:
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),
     }
     attrs["root_beta"] = float(args.root_beta)
-    if args.ndvi:
+    attrs["use_ndvi_root_depth"] = bool(args.use_ndvi_root_depth)
+    if ndvi is not None:
         attrs["ndvi_source"] = str(Path(args.ndvi).expanduser().resolve())
     if args.param_grid:
         attrs["parameter_grid"] = str(param_path)
