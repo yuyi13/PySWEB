@@ -191,6 +191,8 @@ def soil_water_balance_1d(precip_data,
           applied only to layers with bottom depth <= sm_min_factor_max_depth_mm
         - sm_min_factor_max_depth_mm: depth threshold (mm) for applying sm_min_factor
         - sm_min_relax_tau_days: e-folding time (days) for buffered approach to lower bounds
+        - sm_min_relax_trigger_factor: trigger multiple on sm_min_bound; buffered
+          relaxation is applied only when layer moisture is at/below this threshold
         - rhs_diffusion_enabled: include Fortran-style explicit diffusion-gradient RHS flux
         - rhs_diffusion_limiter_enabled: constrain RHS diffusion by donor/receiver storage
         - rhs_diffusion_abs_cap_mm_day: optional hard cap for RHS diffusion flux magnitude
@@ -318,11 +320,18 @@ def soil_water_balance_1d(precip_data,
         et_by_layer += transp_by_layer
         
         # 3. Adjust ET to not exceed available water in each layer
-        sm_min_relax_tau_days = float(soil_props.get('sm_min_relax_tau_days', 20.0))
+        sm_min_relax_tau_days = float(soil_props.get('sm_min_relax_tau_days', 3.0))
+        sm_min_relax_trigger_factor = float(soil_props.get('sm_min_relax_trigger_factor', 1.25))
+        if not np.isfinite(sm_min_relax_trigger_factor):
+            sm_min_relax_trigger_factor = 1.25
+        sm_min_relax_trigger_factor = max(sm_min_relax_trigger_factor, 1.0)
         if np.isfinite(sm_min_relax_tau_days) and sm_min_relax_tau_days > 0.0:
             decay = np.exp(-time_step / sm_min_relax_tau_days)
             prev_for_relax = np.maximum(current_soil_moisture, sm_min_bound)
-            et_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
+            relaxed_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
+            relax_trigger = sm_min_bound * sm_min_relax_trigger_factor
+            relax_mask = prev_for_relax <= relax_trigger
+            et_floor = np.where(relax_mask, relaxed_floor, sm_min_bound)
         else:
             et_floor = sm_min_bound
 

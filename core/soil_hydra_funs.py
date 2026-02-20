@@ -390,15 +390,27 @@ def solve_soil_moisture(soil_moisture, matrix_coeffs, time_step, soil_properties
     new_soil_moisture[-1] = min(new_soil_moisture[-1], sm_max_bound[-1])
     drain_extra = excess_bottom * thickness[-1]  # mm
 
-    # Enforce lower bounds with buffered relaxation so states approach the minimum
-    # smoothly instead of sticking to a hard floor.
-    sm_min_relax_tau_days = float(soil_properties.get('sm_min_relax_tau_days', 20.0))
+    # Enforce lower bounds with buffered relaxation near the lower bound so
+    # states approach the minimum smoothly without over-damping wetter states.
+    sm_min_relax_tau_days = float(soil_properties.get('sm_min_relax_tau_days', 3.0))
+    sm_min_relax_trigger_factor = float(soil_properties.get('sm_min_relax_trigger_factor', 1.25))
+    if not np.isfinite(sm_min_relax_trigger_factor):
+        sm_min_relax_trigger_factor = 1.25
+    sm_min_relax_trigger_factor = max(sm_min_relax_trigger_factor, 1.0)
     if np.isfinite(sm_min_relax_tau_days) and sm_min_relax_tau_days > 0.0:
         prev_for_relax = np.maximum(soil_moisture, sm_min_bound)
         decay = np.exp(-time_step / sm_min_relax_tau_days)
         relaxed_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
+        relax_trigger = sm_min_bound * sm_min_relax_trigger_factor
+        relax_mask = prev_for_relax <= relax_trigger
         below_min = new_soil_moisture < sm_min_bound
-        new_soil_moisture[below_min] = np.maximum(new_soil_moisture[below_min], relaxed_floor[below_min])
+        apply_relax = below_min & relax_mask
+        new_soil_moisture[apply_relax] = np.maximum(
+            new_soil_moisture[apply_relax],
+            relaxed_floor[apply_relax],
+        )
+        hard_clamp = below_min & (~relax_mask)
+        new_soil_moisture[hard_clamp] = sm_min_bound[hard_clamp]
     else:
         new_soil_moisture = np.maximum(new_soil_moisture, sm_min_bound)
 
