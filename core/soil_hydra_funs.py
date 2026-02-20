@@ -58,8 +58,64 @@ def calculate_hydraulic_properties(soil_moisture, soil_properties, layer, diff_f
         'diffusivity': diffusivity
     }
 
+def _resolve_sm_bounds_for_diffusion_limiter(soil_properties, porosity):
+    sm_max_bound = np.asarray(soil_properties.get('sm_max_bound', porosity), dtype=float)
+    sm_min_bound = np.asarray(soil_properties.get('sm_min_bound', 0.0), dtype=float)
+
+    if sm_max_bound.ndim == 0:
+        sm_max_bound = np.full_like(porosity, float(sm_max_bound))
+    if sm_min_bound.ndim == 0:
+        sm_min_bound = np.full_like(porosity, float(sm_min_bound))
+
+    sm_min_bound = np.minimum(sm_min_bound, sm_max_bound)
+    return sm_min_bound, sm_max_bound
+
+def _limit_rhs_diffusive_interface_flux(
+    raw_flux,
+    upper_idx,
+    lower_idx,
+    soil_moisture,
+    sm_min_bound,
+    sm_max_bound,
+    layer_thickness,
+    time_step,
+    abs_cap_mm_day=None,
+):
+    """
+    Limit explicit RHS diffusive flux at a layer interface to available storage.
+
+    Positive flux means downward (upper -> lower). Negative flux means upward.
+    """
+    if not np.isfinite(raw_flux):
+        return 0.0
+
+    dt = max(float(time_step), 1.0e-12)
+    if raw_flux >= 0.0:
+        donor = upper_idx
+        receiver = lower_idx
+    else:
+        donor = lower_idx
+        receiver = upper_idx
+
+    donor_available = max(
+        0.0,
+        (soil_moisture[donor] - sm_min_bound[donor]) * layer_thickness[donor] / dt,
+    )
+    receiver_capacity = max(
+        0.0,
+        (sm_max_bound[receiver] - soil_moisture[receiver]) * layer_thickness[receiver] / dt,
+    )
+    flux_cap = min(donor_available, receiver_capacity)
+
+    if abs_cap_mm_day is not None and np.isfinite(abs_cap_mm_day) and abs_cap_mm_day > 0.0:
+        flux_cap = min(flux_cap, float(abs_cap_mm_day))
+
+    if raw_flux >= 0.0:
+        return min(raw_flux, flux_cap)
+    return max(raw_flux, -flux_cap)
+
 # Matrix Setup for Richards Equation
-def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil_coeff, diff_factor):
+def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil_coeff, diff_factor, time_step=1.0):
     """
     Set up the matrix coefficients for the Richards equation
     
@@ -71,6 +127,8 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
         Dictionary of soil parameters
     boundary_fluxes : dict
         Dictionary of boundary condition fluxes (infiltration, ET, etc.) [mm/day]
+    time_step : float, optional
+        Model time step [days] used by RHS diffusion limiter.
     
     Returns:
     --------
@@ -78,6 +136,12 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
         Dictionary containing matrix coefficients for the tridiagonal system
     """
     num_layers = len(soil_moisture)
+    porosity = np.asarray(soil_properties['porosity'], dtype=float)
+    sm_min_bound, sm_max_bound = _resolve_sm_bounds_for_diffusion_limiter(soil_properties, porosity)
+    rhs_diffusion_enabled = bool(soil_properties.get('rhs_diffusion_enabled', True))
+    rhs_diffusion_limiter_enabled = bool(soil_properties.get('rhs_diffusion_limiter_enabled', True))
+    rhs_diffusion_abs_cap = soil_properties.get('rhs_diffusion_abs_cap_mm_day', None)
+    time_step = max(float(time_step), 1.0e-12)
     
     # Initialize matrix coefficients
     mat_left1 = np.zeros(num_layers)  # Lower diagonal
@@ -108,6 +172,34 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
     if num_layers > 1:
         # Compute interface spacing only after all layer thicknesses are known.
         distance_between_layers[:] = 0.5 * (layer_thickness[:-1] + layer_thickness[1:])
+
+    # Fortran-style explicit diffusion-gradient term on RHS (with limiter).
+    interface_gradient = np.zeros(max(num_layers - 1, 0))
+    rhs_diffusive_flux_interface = np.zeros(max(num_layers - 1, 0))
+    interface_flux_downward = np.zeros(max(num_layers - 1, 0))
+    if num_layers > 1:
+        for i in range(num_layers - 1):
+            distance = max(distance_between_layers[i], 1.0e-12)
+            interface_gradient[i] = (soil_moisture[i] - soil_moisture[i + 1]) / distance
+
+            if rhs_diffusion_enabled:
+                raw_rhs_diff_flux = diffusivity[i] * interface_gradient[i]
+                if rhs_diffusion_limiter_enabled:
+                    rhs_diffusive_flux_interface[i] = _limit_rhs_diffusive_interface_flux(
+                        raw_rhs_diff_flux,
+                        i,
+                        i + 1,
+                        soil_moisture,
+                        sm_min_bound,
+                        sm_max_bound,
+                        layer_thickness,
+                        time_step,
+                        rhs_diffusion_abs_cap,
+                    )
+                else:
+                    rhs_diffusive_flux_interface[i] = raw_rhs_diff_flux
+
+            interface_flux_downward[i] = conductivity[i] + rhs_diffusive_flux_interface[i]
     
     # Calculate fluxes and matrix coefficients
     drainage_soil_bot = 0.0
@@ -116,13 +208,19 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
         if i == 0:
             # Top layer - surface boundary condition
             mat_left1[i] = 0  # No layer above the first one
-            mat_left3[i] = -diffusivity[i] / (distance_between_layers[i] * layer_thickness[i])
-            mat_left2[i] = -mat_left3[i]  # Conservation of mass
+            if num_layers > 1:
+                mat_left3[i] = -diffusivity[i] / (distance_between_layers[i] * layer_thickness[i])
+                mat_left2[i] = -mat_left3[i]  # Conservation of mass
+                flux_to_below = interface_flux_downward[i]
+            else:
+                mat_left3[i] = 0.0
+                mat_left2[i] = 0.0
+                flux_to_below = conductivity[i]
             
             # Right hand side includes infiltration and ET (all in mm/day)
             mat_right[i] = (boundary_fluxes['infiltration'] * infil_coeff - 
                            boundary_fluxes['evapotranspiration'][i] - 
-                           conductivity[i]) / layer_thickness[i]
+                           flux_to_below) / layer_thickness[i]
             
         elif i < num_layers - 1:
             # Middle layers
@@ -130,9 +228,9 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
             mat_left3[i] = -diffusivity[i] / (distance_between_layers[i] * layer_thickness[i])
             mat_left2[i] = -(mat_left1[i] + mat_left3[i])  # Conservation of mass
             
-            # Gravity-driven flux only on RHS; diffusion is handled implicitly via matrix terms.
-            flux_from_above = conductivity[i-1]
-            flux_to_below = conductivity[i]
+            # Fortran-style RHS includes gravity and explicit diffusion-gradient fluxes.
+            flux_from_above = interface_flux_downward[i-1]
+            flux_to_below = interface_flux_downward[i]
             mat_right[i] = (flux_from_above - flux_to_below - boundary_fluxes['evapotranspiration'][i]) / layer_thickness[i]
             
         else:
@@ -147,8 +245,8 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
             drainage_soil_bot = max(drainage_soil_bot, soil_properties['drainage_lower_limit'])
             
             # Flux at the bottom boundary (all in mm/day)
-            # Diffusion handled implicitly; RHS carries gravity and drainage terms only.
-            flux_from_above = conductivity[i-1]
+            # Fortran-style RHS includes explicit diffusion-gradient contribution from above.
+            flux_from_above = interface_flux_downward[i-1]
             mat_right[i] = (flux_from_above - drainage_soil_bot - boundary_fluxes['evapotranspiration'][i]) / layer_thickness[i]
 
     return {
@@ -156,7 +254,10 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
         'mat_left2': mat_left2,
         'mat_left3': mat_left3,
         'mat_right': mat_right,
-        'drainage_soil_bot': drainage_soil_bot
+        'drainage_soil_bot': drainage_soil_bot,
+        'interface_gradient': interface_gradient,
+        'rhs_diffusive_flux_interface': rhs_diffusive_flux_interface,
+        'interface_flux_downward': interface_flux_downward,
     }
 
 # Noah-MP version of the tridiagonal matrix solver
