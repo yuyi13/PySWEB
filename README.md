@@ -29,7 +29,8 @@ PySWEB/
 │
 ├── notebooks/                             # Example Jupyter notebooks
 │   ├── README.md                          # Notebook index and scope
-│   └── 01_plot_heatmap.ipynb              # Heatmap plotting walkthrough
+│   ├── 01_plot_heatmap.ipynb              # Heatmap plotting walkthrough
+│   └── 02_plot_time_series.ipynb          # Time-series plotting walkthrough
 │
 ├── README.md
 └── SWEB_logo.png
