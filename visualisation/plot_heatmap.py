@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
+from matplotlib.colors import LinearSegmentedColormap
 
 from plot_time_series import (
     DEFAULT_SSEBOP_ROOT,
@@ -56,20 +57,131 @@ def _validate_heatmap_vars(variables: Sequence[str]) -> List[str]:
     return sorted(layer_vars, key=_layer_index)
 
 
-def _layer_labels_from_attrs(nc_path: Path, layer_vars: Sequence[str]) -> List[str]:
+def _to_float(value: object) -> Optional[float]:
+    try:
+        casted = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(casted):
+        return None
+    return casted
+
+
+def _layer_layout_from_attrs(nc_path: Path, layer_vars: Sequence[str]) -> tuple[List[str], np.ndarray]:
     with xr.open_dataset(nc_path) as ds:
-        bottoms = [ds[var].attrs.get("depth_bottom_mm") for var in layer_vars]
+        bottoms = [_to_float(ds[var].attrs.get("depth_bottom_mm")) for var in layer_vars]
+        thicknesses = [_to_float(ds[var].attrs.get("layer_thickness_mm")) for var in layer_vars]
 
-    if all(value is not None for value in bottoms):
-        labels = []
-        top = 0.0
-        for bottom in bottoms:
-            bottom_value = float(bottom)
-            labels.append(f"{int(round(top))}-{int(round(bottom_value))} mm")
-            top = bottom_value
-        return labels
+    if all(value is not None and value > 0 for value in thicknesses):
+        layer_thickness_mm = np.asarray(thicknesses, dtype=float)
+    elif all(value is not None for value in bottoms):
+        derived = np.diff(np.array([0.0] + bottoms, dtype=float))
+        if np.any(derived <= 0):
+            layer_thickness_mm = np.ones(len(layer_vars), dtype=float)
+        else:
+            layer_thickness_mm = derived
+    else:
+        layer_thickness_mm = np.ones(len(layer_vars), dtype=float)
 
-    return [_format_var_label(name) for name in layer_vars]
+    y_edges = np.concatenate(([0.0], np.cumsum(layer_thickness_mm)))
+    labels = [
+        f"{int(round(y_edges[idx]))}-{int(round(y_edges[idx + 1]))} mm"
+        for idx in range(len(layer_vars))
+    ]
+    return labels, y_edges
+
+
+def _get_custom_colormap(cmap_name: str):
+    custom_cmaps = {
+        "nasa_soil": [
+            "#8B4513",
+            "#D2691E",
+            "#DEB887",
+            "#F0E68C",
+            "#90EE90",
+            "#20B2AA",
+            "#4169E1",
+            "#0000FF",
+        ],
+        "esa_soil": [
+            "#A0522D",
+            "#CD853F",
+            "#F4A460",
+            "#F5DEB3",
+            "#98FB98",
+            "#87CEEB",
+            "#4682B4",
+            "#191970",
+        ],
+        "fao_soil": [
+            "#B8860B",
+            "#DAA520",
+            "#F0E68C",
+            "#ADFF2F",
+            "#32CD32",
+            "#00CED1",
+            "#1E90FF",
+            "#0000CD",
+        ],
+        "nasa_precip": [
+            "#FFFFFF",
+            "#E6F3FF",
+            "#87CEEB",
+            "#4169E1",
+            "#0000FF",
+            "#0000CD",
+            "#4B0082",
+            "#8A2BE2",
+        ],
+        "esa_precip": [
+            "#F0F8FF",
+            "#B0E0E6",
+            "#87CEEB",
+            "#4682B4",
+            "#1E90FF",
+            "#0000FF",
+            "#0000CD",
+            "#191970",
+        ],
+        "fao_precip": [
+            "#FFFFFF",
+            "#E0F6FF",
+            "#87CEEB",
+            "#20B2AA",
+            "#1E90FF",
+            "#0000FF",
+            "#00008B",
+            "#4B0082",
+        ],
+        "custom_sm": [
+            "#FFFFFF",
+            "#CD853F",
+            "#FFA500",
+            "#FFFF00",
+            "#228B22",
+            "#00BFFF",
+            "#000080",
+            "#000000",
+        ],
+    }
+
+    if cmap_name == "custom_precip":
+        red_values = [255, 245, 180, 120, 20, 0, 0, 0, 255, 255, 255, 255, 255, 200, 120, 0]
+        green_values = [255, 245, 180, 120, 20, 216, 150, 102, 255, 200, 150, 100, 0, 0, 0, 0]
+        blue_values = [255, 255, 255, 255, 255, 195, 144, 102, 0, 0, 0, 0, 0, 0, 0, 0]
+        bom_colors = []
+        for idx in range(len(red_values)):
+            bom_colors.append((red_values[idx] / 255.0, green_values[idx] / 255.0, blue_values[idx] / 255.0))
+        return LinearSegmentedColormap.from_list("custom_precip", bom_colors, N=256)
+
+    if cmap_name in custom_cmaps:
+        return LinearSegmentedColormap.from_list(cmap_name, custom_cmaps[cmap_name], N=256)
+
+    try:
+        return plt.get_cmap(cmap_name)
+    except ValueError:
+        print(f"Warning: Colormap '{cmap_name}' not found, using default custom_sm.")
+        return LinearSegmentedColormap.from_list("custom_sm", custom_cmaps["custom_sm"], N=256)
 
 
 def _read_units(nc_path: Path, variable: str) -> str:
@@ -77,7 +189,7 @@ def _read_units(nc_path: Path, variable: str) -> str:
         return str(ds[variable].attrs.get("units", "")).strip()
 
 
-def _apply_time_ticks(ax: plt.Axes, index: pd.DatetimeIndex):
+def _apply_time_ticks(ax: plt.Axes, index: pd.DatetimeIndex, center_offset: float = 0.0):
     n_points = len(index)
     if n_points == 0:
         return
@@ -91,7 +203,7 @@ def _apply_time_ticks(ax: plt.Axes, index: pd.DatetimeIndex):
 
     label_fmt = "%Y-%m-%d" if n_points <= 120 else "%b %Y"
     labels = [index[pos].strftime(label_fmt) for pos in positions]
-    ax.set_xticks(positions)
+    ax.set_xticks(positions + center_offset)
     ax.set_xticklabels(labels, rotation=45, ha="right")
 
 
@@ -162,7 +274,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", type=_parse_timestamp, help="End date filter (YYYY-MM-DD).")
 
     parser.add_argument("--sample-step", type=int, default=1, help="Keep every Nth timestep for plotting.")
-    parser.add_argument("--cmap", default="YlGnBu", help="Matplotlib colormap for SWEB heatmap.")
+    parser.add_argument(
+        "--cmap",
+        default="custom_sm",
+        help=(
+            "Colormap for SWEB heatmap. Supports visualise.py names "
+            "(nasa_soil, esa_soil, fao_soil, custom_sm, etc.) and matplotlib colormaps."
+        ),
+    )
     parser.add_argument("--vmin", type=float, help="Optional lower bound for heatmap colour scale.")
     parser.add_argument("--vmax", type=float, help="Optional upper bound for heatmap colour scale.")
 
@@ -243,9 +362,10 @@ def main():
             ssebop_series = ssebop.data[column].reindex(heatmap_df.index)
             ssebop_units = _read_units(ssebop_path, column)
 
-    layer_labels = _layer_labels_from_attrs(sweb_path, layer_vars)
+    layer_labels, y_edges = _layer_layout_from_attrs(sweb_path, layer_vars)
     matrix = heatmap_df.to_numpy(dtype=float).T
-    x = np.arange(len(heatmap_df.index))
+    x_edges = np.arange(len(heatmap_df.index) + 1, dtype=float)
+    x_centers = x_edges[:-1] + 0.5
 
     if ssebop_series is not None:
         fig, (ax_top, ax_heat) = plt.subplots(
@@ -258,8 +378,14 @@ def main():
         valid = ~ssebop_series.isna()
         if valid.any():
             values = ssebop_series.values.astype(float)
-            ax_top.plot(x, values, color="#2B5876", linewidth=1.8, label=_format_var_label(args.ssebop_var))
-            ax_top.fill_between(x, values, 0.0, color="#6FA7C9", alpha=0.22)
+            ax_top.plot(
+                x_centers,
+                values,
+                color="#2B5876",
+                linewidth=1.8,
+                label=_format_var_label(args.ssebop_var),
+            )
+            ax_top.fill_between(x_centers, values, 0.0, color="#6FA7C9", alpha=0.22)
         else:
             ax_top.text(
                 0.02,
@@ -277,20 +403,22 @@ def main():
         fig, ax_heat = plt.subplots(1, 1, figsize=tuple(args.figsize))
         ax_top = None
 
-    heatmap = ax_heat.imshow(
+    heatmap = ax_heat.pcolormesh(
+        x_edges,
+        y_edges,
         matrix,
-        aspect="auto",
-        cmap=args.cmap,
-        origin="upper",
-        interpolation="nearest",
+        cmap=_get_custom_colormap(args.cmap),
+        shading="flat",
         vmin=args.vmin,
         vmax=args.vmax,
     )
-    ax_heat.set_yticks(np.arange(len(layer_vars)))
+    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+    ax_heat.set_yticks(y_centers)
     ax_heat.set_yticklabels(layer_labels)
-    ax_heat.set_ylabel("SWEB soil layers")
+    ax_heat.set_ylabel("SWEB soil layers (depth)")
     ax_heat.set_xlabel("Date")
-    _apply_time_ticks(ax_heat, heatmap_df.index)
+    ax_heat.invert_yaxis()
+    _apply_time_ticks(ax_heat, heatmap_df.index, center_offset=0.5)
 
     cbar = fig.colorbar(heatmap, ax=ax_heat, orientation="horizontal", shrink=0.8, pad=0.16)
     cbar.set_label("RZSM (m3 m-3)")
