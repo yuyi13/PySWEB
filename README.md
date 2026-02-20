@@ -27,6 +27,10 @@ PySWEB/
 │   ├── plot_time_series.py                # Time-series extraction + plots for SSEBop and SWEB outputs
 │   └── plot_heatmap.py                    # Heatmap plotting for SWEB layers (optionally with SSEBop forcing panel)
 │
+├── notebooks/                             # Example Jupyter notebooks
+│   ├── README.md                          # Notebook index and scope
+│   └── 01_plot_heatmap.ipynb              # Heatmap plotting walkthrough
+│
 ├── README.md
 └── SWEB_logo.png
 ```
@@ -58,7 +62,18 @@ python ../visualisation/plot_time_series.py \
 # Step D: Plot SWEB layer heatmap (optional SSEBop top panel)
 python ../visualisation/plot_heatmap.py \
   --run-subdir <run_subdir> \
+  --lat <latitude> --lon <longitude> \
   --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap.png
+
+# Optional: domain-wide heatmap instead of point mode
+python ../visualisation/plot_heatmap.py \
+  --run-subdir <run_subdir> \
+  --domain-mean \
+  --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap_domain.png
+
+# Step E: Run notebook examples
+cd ../notebooks
+jupyter notebook
 ```
 
 Both wrapper scripts currently include environment-specific default paths (for example `/g/data/...`) near the top of each script. Update those values before running on another machine or filesystem.
