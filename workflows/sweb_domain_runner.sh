@@ -388,6 +388,7 @@ fi
 MODEL_START_FMT=$(date -d "${MODEL_START_DATE}" +%Y%m%d)
 MODEL_END_FMT=$(date -d "${MODEL_END_DATE}" +%Y%m%d)
 MODEL_PRECIP_FILE="${PREPROCESS_OUT_DIR}/rain_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
+MODEL_EFFECTIVE_PRECIP_FILE="${PREPROCESS_OUT_DIR}/effective_precip_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
 MODEL_ET_FILE="${PREPROCESS_OUT_DIR}/et_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
 MODEL_T_FILE="${PREPROCESS_OUT_DIR}/t_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
 MODEL_SMAP_SSM_FILE="${PREPROCESS_OUT_DIR}/smap_ssm_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
@@ -395,17 +396,20 @@ MODEL_SMAP_SSM_FILE="${PREPROCESS_OUT_DIR}/smap_ssm_daily_${MODEL_START_FMT}_${M
 CALIB_START_FMT=$(date -d "${CALIB_START_DATE}" +%Y%m%d)
 CALIB_END_FMT=$(date -d "${CALIB_END_DATE}" +%Y%m%d)
 CALIB_PERIOD_PRECIP_FILE="${PREPROCESS_OUT_DIR}/rain_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
+CALIB_PERIOD_EFFECTIVE_PRECIP_FILE="${PREPROCESS_OUT_DIR}/effective_precip_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 CALIB_PERIOD_ET_FILE="${PREPROCESS_OUT_DIR}/et_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 CALIB_PERIOD_T_FILE="${PREPROCESS_OUT_DIR}/t_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 CALIB_PERIOD_SMAP_SSM_FILE="${PREPROCESS_OUT_DIR}/smap_ssm_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 
 if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
   CALIB_PRECIP_FILE="${MODEL_PRECIP_FILE}"
+  CALIB_EFFECTIVE_PRECIP_FILE="${MODEL_EFFECTIVE_PRECIP_FILE}"
   CALIB_ET_FILE="${MODEL_ET_FILE}"
   CALIB_T_FILE="${MODEL_T_FILE}"
   CALIB_SMAP_SSM_FILE="${MODEL_SMAP_SSM_FILE}"
 else
   CALIB_PRECIP_FILE="${CALIB_PERIOD_PRECIP_FILE}"
+  CALIB_EFFECTIVE_PRECIP_FILE="${CALIB_PERIOD_EFFECTIVE_PRECIP_FILE}"
   CALIB_ET_FILE="${CALIB_PERIOD_ET_FILE}"
   CALIB_T_FILE="${CALIB_PERIOD_T_FILE}"
   CALIB_SMAP_SSM_FILE="${CALIB_PERIOD_SMAP_SSM_FILE}"
@@ -430,8 +434,8 @@ if [[ "${RUN_CALIB}" == "true" ]]; then
         "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}" \
         "MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}" \
         python "${CALIB_SCRIPT}" \
-        --precip "${CALIB_PRECIP_FILE}" \
-        --precip-var "precipitation" \
+        --effective-precip "${CALIB_EFFECTIVE_PRECIP_FILE}" \
+        --effective-precip-var "effective_precipitation" \
         --et "${CALIB_ET_FILE}" \
         --et-var "et" \
         --t "${CALIB_T_FILE}" \
@@ -502,6 +506,8 @@ PY
       python "${RUNNER_SCRIPT}" \
       --precip "${MODEL_PRECIP_FILE}" \
       --precip-var "precipitation" \
+      --effective-precip "${MODEL_EFFECTIVE_PRECIP_FILE}" \
+      --effective-precip-var "effective_precipitation" \
       --et "${MODEL_ET_FILE}" \
       --et-var "et" \
       --t "${MODEL_T_FILE}" \

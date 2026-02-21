@@ -5,7 +5,7 @@ Calibrate SWEB parameters against domain-wide SMAP-DS surface soil moisture.
 Example
 -------
 python 4_sweb_calib_domain.py \
-    --precip /g/data/ym05/sweb_model/3_spatial_preprocess/rain_daily_20210101_20210131.nc \
+    --effective-precip /g/data/ym05/sweb_model/3_spatial_preprocess/effective_precip_daily_20210101_20210131.nc \
     --et /g/data/ym05/sweb_model/3_spatial_preprocess/et_daily_20210101_20210131.nc \
     --t /g/data/ym05/sweb_model/3_spatial_preprocess/t_daily_20210101_20210131.nc \
     --soil-dir /g/data/ym05/sweb_model/3_spatial_preprocess \
@@ -156,7 +156,7 @@ def _parse_dates(args: argparse.Namespace) -> Tuple[pd.Timestamp, pd.Timestamp]:
 
 def _compute_rmse(
     params: Sequence[float],
-    precip_vals: np.ndarray,
+    effective_precip_vals: np.ndarray,
     et_vals: np.ndarray,
     t_vals: np.ndarray,
     smap_vals: np.ndarray,
@@ -214,7 +214,7 @@ def _compute_rmse(
 
             try:
                 simulated = soil_water_balance_1d(
-                    precip_vals[:, lat_idx, lon_idx],
+                    effective_precip_vals[:, lat_idx, lon_idx],
                     et_vals[:, lat_idx, lon_idx],
                     soil_props,
                     time_index,
@@ -248,7 +248,7 @@ def _compute_rmse(
 
 def _objective_function(
     params: Sequence[float],
-    precip_vals: np.ndarray,
+    effective_precip_vals: np.ndarray,
     et_vals: np.ndarray,
     t_vals: np.ndarray,
     smap_vals: np.ndarray,
@@ -265,7 +265,7 @@ def _objective_function(
 ) -> float:
     rmse, _ = _compute_rmse(
         params,
-        precip_vals,
+        effective_precip_vals,
         et_vals,
         t_vals,
         smap_vals,
@@ -285,8 +285,12 @@ def _objective_function(
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Domain-wide calibration using SMAP-DS SSM.")
-    parser.add_argument("--precip", required=True, help="NetCDF file with precipitation (mm day-1).")
-    parser.add_argument("--precip-var", default="precipitation", help="Variable name for precipitation.")
+    parser.add_argument("--effective-precip", required=True, help="NetCDF file with effective precipitation (mm day-1).")
+    parser.add_argument(
+        "--effective-precip-var",
+        default="effective_precipitation",
+        help="Variable name for effective precipitation.",
+    )
     parser.add_argument("--et", required=True, help="NetCDF file with evapotranspiration (mm day-1).")
     parser.add_argument("--et-var", default="et", help="Variable name for evapotranspiration.")
     parser.add_argument("--t", required=True, help="NetCDF file with transpiration (mm day-1).")
@@ -400,7 +404,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     start, end = _parse_dates(args)
     print("Loading forcing data...", flush=True)
-    precip = _load_single_variable(Path(args.precip), args.precip_var)
+    effective_precip = _load_single_variable(Path(args.effective_precip), args.effective_precip_var)
     et = _load_single_variable(Path(args.et), args.et_var)
     t = _load_single_variable(Path(args.t), args.t_var)
     smap = _load_single_variable(Path(args.smap_ssm), args.smap_var)
@@ -408,8 +412,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.use_ndvi_root_depth and args.ndvi:
         ndvi = _load_single_variable(Path(args.ndvi), args.ndvi_var)
 
-    if "time" not in precip.coords:
-        raise ValueError("Precipitation data must include a 'time' coordinate.")
+    if "time" not in effective_precip.coords:
+        raise ValueError("Effective precipitation data must include a 'time' coordinate.")
     if "time" not in et.coords:
         raise ValueError("ET data must include a 'time' coordinate.")
     if "time" not in t.coords:
@@ -417,27 +421,27 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if ndvi is not None and "time" not in ndvi.coords:
         raise ValueError("NDVI data must include a 'time' coordinate.")
 
-    precip = precip.sel(time=slice(start, end))
-    et = et.sel(time=precip.coords["time"])
-    t = t.sel(time=precip.coords["time"])
-    smap = smap.sel(time=precip.coords["time"])
+    effective_precip = effective_precip.sel(time=slice(start, end))
+    et = et.sel(time=effective_precip.coords["time"])
+    t = t.sel(time=effective_precip.coords["time"])
+    smap = smap.sel(time=effective_precip.coords["time"])
     if ndvi is not None:
-        ndvi = ndvi.sel(time=precip.coords["time"])
+        ndvi = ndvi.sel(time=effective_precip.coords["time"])
 
     lat_dim = args.lat_dim
     lon_dim = args.lon_dim
-    time_index = pd.to_datetime(precip.coords["time"].values).normalize()
+    time_index = pd.to_datetime(effective_precip.coords["time"].values).normalize()
 
-    if time_index.size != precip.sizes["time"]:
-        raise ValueError("Time coordinate length mismatch in precipitation data.")
-    if precip.sizes.get("time") != et.sizes.get("time"):
-        raise ValueError("Precipitation and ET time dimensions do not align.")
-    if precip.sizes.get("time") != t.sizes.get("time"):
-        raise ValueError("Precipitation and transpiration time dimensions do not align.")
-    if precip.sizes.get("time") != smap.sizes.get("time"):
+    if time_index.size != effective_precip.sizes["time"]:
+        raise ValueError("Time coordinate length mismatch in effective precipitation data.")
+    if effective_precip.sizes.get("time") != et.sizes.get("time"):
+        raise ValueError("Effective precipitation and ET time dimensions do not align.")
+    if effective_precip.sizes.get("time") != t.sizes.get("time"):
+        raise ValueError("Effective precipitation and transpiration time dimensions do not align.")
+    if effective_precip.sizes.get("time") != smap.sizes.get("time"):
         raise ValueError("SMAP-DS and forcing time dimensions do not align.")
 
-    precip = precip.transpose("time", lat_dim, lon_dim)
+    effective_precip = effective_precip.transpose("time", lat_dim, lon_dim)
     et = et.transpose("time", lat_dim, lon_dim)
     t = t.transpose("time", lat_dim, lon_dim)
     smap = smap.transpose("time", lat_dim, lon_dim)
@@ -445,15 +449,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         ndvi = ndvi.transpose("time", lat_dim, lon_dim)
 
     if args.sm_res:
-        precip = _coarsen_to_target(precip, lat_dim, lon_dim, args.sm_res)
+        effective_precip = _coarsen_to_target(effective_precip, lat_dim, lon_dim, args.sm_res)
         et = _coarsen_to_target(et, lat_dim, lon_dim, args.sm_res)
         t = _coarsen_to_target(t, lat_dim, lon_dim, args.sm_res)
         smap = _coarsen_to_target(smap, lat_dim, lon_dim, args.sm_res)
         if ndvi is not None:
             ndvi = _coarsen_to_target(ndvi, lat_dim, lon_dim, args.sm_res)
-            precip, et, t, smap, ndvi = xr.align(precip, et, t, smap, ndvi, join="inner")
+            effective_precip, et, t, smap, ndvi = xr.align(effective_precip, et, t, smap, ndvi, join="inner")
         else:
-            precip, et, t, smap = xr.align(precip, et, t, smap, join="inner")
+            effective_precip, et, t, smap = xr.align(effective_precip, et, t, smap, join="inner")
 
     soil_dir = Path(args.soil_dir).expanduser().resolve()
     print("Loading soil inputs...", flush=True)
@@ -469,7 +473,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     soil_values = {key: da.values for key, da in soil_arrays.items()}
     soil_valid = _soil_valid_mask(soil_arrays)
-    precip_vals = precip.values.astype(float, copy=False)
+    effective_precip_vals = effective_precip.values.astype(float, copy=False)
     et_vals = et.values.astype(float, copy=False)
     t_vals = t.values.astype(float, copy=False)
     smap_vals = smap.values.astype(float, copy=False)
@@ -481,9 +485,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         ndvi_mean_vals = np.full(valid_counts.shape, np.nan, dtype=float)
         np.divide(ndvi_sums, valid_counts, out=ndvi_mean_vals, where=valid_counts > 0)
 
-    n_time, n_lat, n_lon = precip_vals.shape
+    n_time, n_lat, n_lon = effective_precip_vals.shape
     print("Calibration setup:", flush=True)
-    print(f"  precip: {Path(args.precip).expanduser().resolve()} (var={args.precip_var})", flush=True)
+    print(
+        f"  effective_precip: {Path(args.effective_precip).expanduser().resolve()} "
+        f"(var={args.effective_precip_var})",
+        flush=True,
+    )
     print(f"  et: {Path(args.et).expanduser().resolve()} (var={args.et_var})", flush=True)
     print(f"  t: {Path(args.t).expanduser().resolve()} (var={args.t_var})", flush=True)
     if args.use_ndvi_root_depth and args.ndvi:
@@ -573,7 +581,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         _objective_function,
         bounds,
         args=(
-            precip_vals,
+            effective_precip_vals,
             et_vals,
             t_vals,
             smap_vals,
@@ -603,7 +611,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     best_params = result.x
     final_rmse, n_obs = _compute_rmse(
         best_params,
-        precip_vals,
+        effective_precip_vals,
         et_vals,
         t_vals,
         smap_vals,

@@ -6,6 +6,7 @@ Example
 -------
 python 5_sweb_run_model.py \\
     --precip /g/data/ym05/sweb_model/2_spatial_preprocess/rain_daily_20210101_20210131.nc \\
+    --effective-precip /g/data/ym05/sweb_model/2_spatial_preprocess/effective_precip_daily_20210101_20210131.nc \\
     --et /g/data/ym05/sweb_model/2_spatial_preprocess/et_daily_20210101_20210131.nc \\
     --t /g/data/ym05/sweb_model/2_spatial_preprocess/t_daily_20210101_20210131.nc \\
     --soil-dir /g/data/ym05/sweb_model/2_spatial_preprocess \\
@@ -210,8 +211,14 @@ def load_forcing(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Spatial soil water balance driver.")
-    parser.add_argument("--precip", required=True, help="NetCDF file with precipitation (mm day-1).")
+    parser.add_argument("--precip", required=True, help="NetCDF file with raw precipitation (mm day-1).")
     parser.add_argument("--precip-var", default="precipitation", help="Variable name for precipitation.")
+    parser.add_argument("--effective-precip", required=True, help="NetCDF file with effective precipitation (mm day-1).")
+    parser.add_argument(
+        "--effective-precip-var",
+        default="effective_precipitation",
+        help="Variable name for effective precipitation.",
+    )
     parser.add_argument("--et", required=True, help="NetCDF file with evapotranspiration (mm day-1).")
     parser.add_argument("--et-var", default="et", help="Variable name for evapotranspiration.")
     parser.add_argument("--t", required=True, help="NetCDF file with transpiration (mm day-1).")
@@ -336,7 +343,7 @@ def _maybe_resample(
 def _compute_row_soil_moisture(
     lat_idx: int,
     n_lon: int,
-    precip_values: np.ndarray,
+    effective_precip_values: np.ndarray,
     et_values: np.ndarray,
     t_values: np.ndarray,
     ndvi_mean_values: Optional[np.ndarray],
@@ -348,16 +355,20 @@ def _compute_row_soil_moisture(
     use_ndvi_root_depth: bool,
     emit_warnings: bool = True,
 ) -> np.ndarray:
-    n_time = precip_values.shape[0]
+    n_time = effective_precip_values.shape[0]
     n_layers = int(np.asarray(soil_grids["layer_depth"]).size)
     row_soil_moisture = np.full((n_time, n_layers, n_lon), np.nan, dtype=float)
 
     for lon_idx in range(n_lon):
-        precip_series = precip_values[:, lat_idx, lon_idx]
+        effective_precip_series = effective_precip_values[:, lat_idx, lon_idx]
         et_series = et_values[:, lat_idx, lon_idx]
         t_series = t_values[:, lat_idx, lon_idx]
 
-        if np.all(np.isnan(precip_series)) and np.all(np.isnan(et_series)) and np.all(np.isnan(t_series)):
+        if (
+            np.all(np.isnan(effective_precip_series))
+            and np.all(np.isnan(et_series))
+            and np.all(np.isnan(t_series))
+        ):
             continue
 
         soil_props = extract_soil_properties_for_cell(soil_grids, lat_idx, lon_idx)
@@ -379,7 +390,7 @@ def _compute_row_soil_moisture(
 
         try:
             result = soil_water_balance_1d(
-                precip_series,
+                effective_precip_series,
                 et_series,
                 soil_props,
                 time_index,
@@ -402,7 +413,7 @@ def _compute_row_soil_moisture(
 
 
 def _init_process_run_worker(
-    precip_values: np.ndarray,
+    effective_precip_values: np.ndarray,
     et_values: np.ndarray,
     t_values: np.ndarray,
     ndvi_mean_values: Optional[np.ndarray],
@@ -415,7 +426,7 @@ def _init_process_run_worker(
 ) -> None:
     global _PROCESS_RUN_STATE
     _PROCESS_RUN_STATE = {
-        "precip_values": precip_values,
+        "effective_precip_values": effective_precip_values,
         "et_values": et_values,
         "t_values": t_values,
         "ndvi_mean_values": ndvi_mean_values,
@@ -430,7 +441,7 @@ def _init_process_run_worker(
 
 def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
     state = _PROCESS_RUN_STATE
-    precip_values = state["precip_values"]
+    effective_precip_values = state["effective_precip_values"]
     et_values = state["et_values"]
     t_values = state["t_values"]
     ndvi_mean_values = state["ndvi_mean_values"]
@@ -440,12 +451,12 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
     time_step = float(state["time_step"])
     default_diff_factor = float(state["default_diff_factor"])
     use_ndvi_root_depth = bool(state["use_ndvi_root_depth"])
-    n_lon = int(np.asarray(precip_values).shape[2])
+    n_lon = int(np.asarray(effective_precip_values).shape[2])
 
     row_soil_moisture = _compute_row_soil_moisture(
         lat_idx=lat_idx,
         n_lon=n_lon,
-        precip_values=precip_values,
+        effective_precip_values=effective_precip_values,
         et_values=et_values,
         t_values=t_values,
         ndvi_mean_values=ndvi_mean_values,
@@ -470,6 +481,12 @@ def main() -> None:
 
     print("Loading forcing data…", flush=True)
     precip = load_forcing(Path(args.precip).expanduser(), args.precip_var, args.start_date, args.end_date)
+    effective_precip = load_forcing(
+        Path(args.effective_precip).expanduser(),
+        args.effective_precip_var,
+        args.start_date,
+        args.end_date,
+    )
     et = load_forcing(Path(args.et).expanduser(), args.et_var, args.start_date, args.end_date)
     t = load_forcing(Path(args.t).expanduser(), args.t_var, args.start_date, args.end_date)
     ndvi = None
@@ -489,12 +506,19 @@ def main() -> None:
         )
 
     if ndvi is not None:
-        precip, et, t, ndvi = xr.align(precip, et, t, ndvi, join="inner")
+        precip, effective_precip, et, t, ndvi = xr.align(precip, effective_precip, et, t, ndvi, join="inner")
     else:
-        precip, et, t = xr.align(precip, et, t, join="inner")
+        precip, effective_precip, et, t = xr.align(precip, effective_precip, et, t, join="inner")
+
+    precip = precip.transpose("time", args.lat_dim, args.lon_dim)
+    effective_precip = effective_precip.transpose("time", args.lat_dim, args.lon_dim)
+    et = et.transpose("time", args.lat_dim, args.lon_dim)
+    t = t.transpose("time", args.lat_dim, args.lon_dim)
+    if ndvi is not None:
+        ndvi = ndvi.transpose("time", args.lat_dim, args.lon_dim)
 
     soil_arrays, soil_paths = load_soil_arrays(args)
-    ensure_matching_grid(precip, soil_arrays, args.lat_dim, args.lon_dim)
+    ensure_matching_grid(effective_precip, soil_arrays, args.lat_dim, args.lon_dim)
 
     param_grids = None
     if args.param_grid:
@@ -515,11 +539,11 @@ def main() -> None:
             "diff_factor": np.asarray(param_grids["diff_factor"].values, dtype=float),
         }
 
-    time_index = pd.to_datetime(precip.coords["time"].values)
-    latitudes = precip.coords[args.lat_dim].values
-    longitudes = precip.coords[args.lon_dim].values
+    time_index = pd.to_datetime(effective_precip.coords["time"].values)
+    latitudes = effective_precip.coords[args.lat_dim].values
+    longitudes = effective_precip.coords[args.lon_dim].values
 
-    precip_values = precip.values.astype(float, copy=False)
+    effective_precip_values = effective_precip.values.astype(float, copy=False)
     et_values = et.values.astype(float, copy=False)
     t_values = t.values.astype(float, copy=False)
     ndvi_mean_values: Optional[np.ndarray] = None
@@ -531,11 +555,11 @@ def main() -> None:
         np.divide(ndvi_sums, valid_counts, out=ndvi_mean_values, where=valid_counts > 0)
 
     if args.nan_to_zero:
-        precip_values = np.nan_to_num(precip_values, nan=0.0)
+        effective_precip_values = np.nan_to_num(effective_precip_values, nan=0.0)
         et_values = np.nan_to_num(et_values, nan=0.0)
         t_values = np.nan_to_num(t_values, nan=0.0)
 
-    n_time, n_lat, n_lon = precip_values.shape
+    n_time, n_lat, n_lon = effective_precip_values.shape
     n_layers = soil_grids["layer_depth"].size
 
     total_cells = n_lat * n_lon
@@ -554,7 +578,7 @@ def main() -> None:
             row_soil_moisture = _compute_row_soil_moisture(
                 lat_idx=lat_idx,
                 n_lon=n_lon,
-                precip_values=precip_values,
+                effective_precip_values=effective_precip_values,
                 et_values=et_values,
                 t_values=t_values,
                 ndvi_mean_values=ndvi_mean_values,
@@ -587,7 +611,7 @@ def main() -> None:
             mp_context=mp_context,
             initializer=_init_process_run_worker,
             initargs=(
-                precip_values,
+                effective_precip_values,
                 et_values,
                 t_values,
                 ndvi_mean_values,
@@ -682,9 +706,42 @@ def main() -> None:
             "comment": "Sum of all rzsm_layer_* variables multiplied by layer thickness.",
         },
     )
+    precip_da = xr.DataArray(
+        precip.values.astype(storage_dtype, copy=False),
+        dims=("time", args.lat_dim, args.lon_dim),
+        coords={
+            "time": time_index,
+            args.lat_dim: latitudes,
+            args.lon_dim: longitudes,
+        },
+        name="precipitation",
+        attrs={
+            "long_name": "Daily precipitation",
+            "units": "mm day-1",
+        },
+    )
+    effective_precip_da = xr.DataArray(
+        effective_precip.values.astype(storage_dtype, copy=False),
+        dims=("time", args.lat_dim, args.lon_dim),
+        coords={
+            "time": time_index,
+            args.lat_dim: latitudes,
+            args.lon_dim: longitudes,
+        },
+        name="effective_precipitation",
+        attrs={
+            "long_name": "Daily effective precipitation",
+            "units": "mm day-1",
+            "method": "Smith (1992) CROPWAT monthly effective rainfall scaled by daily precipitation share",
+        },
+    )
 
     rzsm_all_da = _maybe_resample(rzsm_all_da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon)
     profile_da = _maybe_resample(profile_da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon)
+    precip_da = _maybe_resample(precip_da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon)
+    effective_precip_da = _maybe_resample(
+        effective_precip_da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon
+    )
 
     ds_rzsm = xr.Dataset()
     for layer_idx in range(n_layers):
@@ -700,6 +757,8 @@ def main() -> None:
         )
         ds_rzsm[var_name] = layer_da
     ds_rzsm["profile_sm"] = profile_da
+    ds_rzsm["precipitation"] = precip_da
+    ds_rzsm["effective_precipitation"] = effective_precip_da
 
     attrs = {
         "title": "Soil Water Balance Model Output (Consolidated RZSM)",
@@ -708,8 +767,10 @@ def main() -> None:
         "layer_bottoms_mm": np.asarray(soil_grids["layer_depth"], dtype=float).tolist(),
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),
         "effective_rainfall_method": (
-            "Smith (1992) CROPWAT monthly effective rainfall scaled to daily precipitation proportion"
+            "Precomputed from preprocessing using Smith (1992) CROPWAT monthly method"
         ),
+        "precipitation_source": str(Path(args.precip).expanduser().resolve()),
+        "effective_precipitation_source": str(Path(args.effective_precip).expanduser().resolve()),
     }
     attrs["root_beta"] = float(args.root_beta)
     # NetCDF global attrs do not accept Python bool with the netCDF4 backend.

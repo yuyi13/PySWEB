@@ -2,7 +2,7 @@
 """
 Preprocess spatial forcing and soil datasets into aligned NetCDF products.
 
-This script harmonises precipitation (monthly NetCDF), evapotranspiration (daily GeoTIFF),
+This script harmonises precipitation (daily NetCDF), evapotranspiration (daily GeoTIFF),
 and soil hydraulic property rasters (GeoTIFF) onto a common grid, extent, and time range.
 All processed outputs are written as NetCDF files that can be consumed by the spatial
 soil water balance driver.
@@ -52,6 +52,87 @@ def _pool_context():
         return mp.get_context("fork")
     except ValueError:
         return None
+
+
+def _compute_monthly_effective_rainfall_smith(monthly_precip_mm: np.ndarray) -> np.ndarray:
+    """
+    Compute Smith (1992)/CROPWAT monthly effective rainfall from monthly rainfall.
+    """
+    monthly = np.asarray(monthly_precip_mm, dtype=float)
+    monthly_eff = np.full_like(monthly, np.nan, dtype=float)
+    valid = np.isfinite(monthly)
+    if not np.any(valid):
+        return monthly_eff
+
+    p = np.maximum(monthly[valid], 0.0)
+    p_eff = np.empty_like(p)
+    low_mask = p <= 250.0
+    p_eff[low_mask] = p[low_mask] * (125.0 - 0.2 * p[low_mask]) / 125.0
+    p_eff[~low_mask] = 125.0 + 0.1 * p[~low_mask]
+    monthly_eff[valid] = np.clip(p_eff, 0.0, p)
+    return monthly_eff
+
+
+def compute_effective_precipitation_smith(rain: xr.DataArray, dtype: str) -> xr.DataArray:
+    """
+    Convert daily precipitation into daily effective precipitation via:
+    1) monthly Smith/CROPWAT effective rainfall, then
+    2) proportional redistribution to daily totals within each month.
+    """
+    if "time" not in rain.dims:
+        raise ValueError("Precipitation data must include a 'time' dimension.")
+    if rain.ndim != 3:
+        raise ValueError("Precipitation data must include exactly 3 dimensions (time, lat, lon).")
+    spatial_dims = [dim for dim in rain.dims if dim != "time"]
+    if len(spatial_dims) != 2:
+        raise ValueError("Precipitation data must include exactly two spatial dimensions.")
+    rain = rain.transpose("time", spatial_dims[0], spatial_dims[1])
+
+    rain_values = np.asarray(rain.values, dtype=float)
+
+    time_index = pd.to_datetime(rain.coords["time"].values)
+    month_codes = (time_index.year.to_numpy(dtype=int) * 100) + time_index.month.to_numpy(dtype=int)
+    _, inverse = np.unique(month_codes, return_inverse=True)
+
+    daily_valid = np.isfinite(rain_values)
+    daily_rain_nonneg = np.zeros_like(rain_values, dtype=float)
+    daily_rain_nonneg[daily_valid] = np.maximum(rain_values[daily_valid], 0.0)
+
+    daily_eff = np.full_like(rain_values, np.nan, dtype=float)
+    n_month = int(inverse.max()) + 1 if inverse.size else 0
+    for month_idx in range(n_month):
+        month_mask = inverse == month_idx
+        if not np.any(month_mask):
+            continue
+
+        month_daily = daily_rain_nonneg[month_mask, :, :]
+        month_valid = daily_valid[month_mask, :, :]
+
+        monthly_total = month_daily.sum(axis=0, dtype=float)
+        monthly_valid_count = month_valid.sum(axis=0)
+        monthly_total[monthly_valid_count == 0] = np.nan
+
+        monthly_eff = _compute_monthly_effective_rainfall_smith(monthly_total)
+        monthly_ratio = np.zeros_like(monthly_total, dtype=float)
+        valid_month = np.isfinite(monthly_total) & np.isfinite(monthly_eff) & (monthly_total > 0.0)
+        monthly_ratio[valid_month] = monthly_eff[valid_month] / monthly_total[valid_month]
+
+        month_daily_eff = month_daily * monthly_ratio[None, :, :]
+        month_daily_eff[~month_valid] = np.nan
+        daily_eff[month_mask, :, :] = month_daily_eff
+
+    effective = xr.DataArray(
+        daily_eff.astype(dtype, copy=False),
+        dims=rain.dims,
+        coords=rain.coords,
+        name="effective_precipitation",
+        attrs={
+            "long_name": "Daily effective precipitation",
+            "units": "mm day-1",
+            "method": "Smith (1992) CROPWAT monthly effective rainfall scaled by daily precipitation share",
+        },
+    )
+    return effective
 
 
 def _subset_to_extent(
@@ -1198,6 +1279,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     rain_output = output_dir / f"rain_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"
     write_dataarray(rain, rain_output)
     print(f"Wrote {rain_output}", flush=True)
+
+    print("Processing effective precipitation…", flush=True)
+    effective_precip = compute_effective_precipitation_smith(rain, args.dtype)
+    effective_precip_output = output_dir / f"effective_precip_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"
+    write_dataarray(effective_precip, effective_precip_output)
+    print(f"Wrote {effective_precip_output}", flush=True)
 
     print("Processing evapotranspiration…", flush=True)
     et_components = process_et(args, grid, dates)

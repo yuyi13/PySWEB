@@ -158,56 +158,6 @@ def _resolve_sm_bounds(soil_properties):
     return sm_min_bound, sm_max_bound
 
 
-def _compute_monthly_effective_rainfall_smith(monthly_precip_mm):
-    """
-    Compute CROPWAT/Smith (1992) monthly effective rainfall from monthly rainfall.
-    """
-    monthly = np.asarray(monthly_precip_mm, dtype=float).reshape(-1)
-    monthly_eff = np.full_like(monthly, np.nan, dtype=float)
-    valid = np.isfinite(monthly)
-    if not np.any(valid):
-        return monthly_eff
-
-    p = np.maximum(monthly[valid], 0.0)
-    p_eff = np.empty_like(p)
-    low_mask = p <= 250.0
-    p_eff[low_mask] = p[low_mask] * (125.0 - 0.2 * p[low_mask]) / 125.0
-    p_eff[~low_mask] = 125.0 + 0.1 * p[~low_mask]
-
-    # Keep effective rainfall physically bounded by total rainfall.
-    monthly_eff[valid] = np.clip(p_eff, 0.0, p)
-    return monthly_eff
-
-
-def _compute_daily_effective_rainfall_smith(precip_values, time_index):
-    """
-    Scale Smith (1992) monthly effective rainfall back to daily using daily
-    precipitation proportions within each month.
-    """
-    precip = np.asarray(precip_values, dtype=float).reshape(-1)
-    month_codes = (time_index.year.to_numpy(dtype=int) * 100) + time_index.month.to_numpy(dtype=int)
-    _, inverse = np.unique(month_codes, return_inverse=True)
-    n_month = int(inverse.max()) + 1 if inverse.size else 0
-
-    monthly_total = np.zeros(n_month, dtype=float)
-    monthly_valid_count = np.zeros(n_month, dtype=int)
-    daily_valid = np.isfinite(precip)
-    daily_precip_nonneg = np.zeros_like(precip, dtype=float)
-    daily_precip_nonneg[daily_valid] = np.maximum(precip[daily_valid], 0.0)
-    np.add.at(monthly_total, inverse[daily_valid], daily_precip_nonneg[daily_valid])
-    np.add.at(monthly_valid_count, inverse[daily_valid], 1)
-    monthly_total[monthly_valid_count == 0] = np.nan
-
-    monthly_eff = _compute_monthly_effective_rainfall_smith(monthly_total)
-    monthly_ratio = np.zeros(n_month, dtype=float)
-    valid_month = np.isfinite(monthly_total) & np.isfinite(monthly_eff) & (monthly_total > 0.0)
-    monthly_ratio[valid_month] = monthly_eff[valid_month] / monthly_total[valid_month]
-
-    daily_eff = np.full_like(precip, np.nan, dtype=float)
-    daily_eff[daily_valid] = daily_precip_nonneg[daily_valid] * monthly_ratio[inverse[daily_valid]]
-    return daily_eff
-
-
 def soil_water_balance_1d(precip_data, 
                           et_data,
                           soil_properties, 
@@ -223,7 +173,7 @@ def soil_water_balance_1d(precip_data,
     Parameters:
     -----------
     precip_data : pandas.DataFrame or pandas.Series or numpy.ndarray
-        Precipitation data [mm/day] as a time series
+        Effective precipitation/infiltration forcing [mm/day] as a time series.
     et_data : pandas.DataFrame or pandas.Series or numpy.ndarray
         Actual evapotranspiration data [mm/day] as a time series
     transpiration_data : pandas.DataFrame or pandas.Series or numpy.ndarray, optional
@@ -264,7 +214,7 @@ def soil_water_balance_1d(precip_data,
         with the provided time index
     """
     
-    # Handle different input types for precipitation and ET data
+    # Handle different input types for effective precipitation and ET data.
     if isinstance(precip_data, pd.DataFrame):
         precip_values = precip_data.iloc[:, 0].values  # Take first column
     elif isinstance(precip_data, pd.Series):
@@ -295,15 +245,11 @@ def soil_water_balance_1d(precip_data,
         time_index = time
     
     # Ensure all inputs have the same length
-    assert len(precip_values) == len(et_values), "Precipitation and ET data must have the same length"
-    assert len(time_index) == len(precip_values), "Time index must have the same length as precipitation and ET data"
+    assert len(precip_values) == len(et_values), "Effective precipitation and ET data must have the same length"
+    assert len(time_index) == len(precip_values), "Time index must have the same length as effective precipitation and ET data"
     if transp_values is not None:
         assert len(transp_values) == len(et_values), "Transpiration and ET data must have the same length"
 
-    # Convert rainfall into effective rainfall using monthly CROPWAT/Smith (1992)
-    # and reallocate it back to daily values by each day's rainfall proportion.
-    effective_precip_values = _compute_daily_effective_rainfall_smith(precip_values, time_index)
-    
     # Extract dimensions
     num_layers = len(soil_properties['layer_depth'])
     num_times = len(precip_values)
@@ -338,17 +284,17 @@ def soil_water_balance_1d(precip_data,
     
     # Main time loop
     for t in range(num_times):
-        # Get precipitation and ET for this time step
-        precip_t = precip_values[t]
-        eff_precip_t = effective_precip_values[t]
+        # Get effective precipitation/infiltration and ET for this time step.
+        eff_precip_t = precip_values[t]
         et_t = et_values[t]
         transp_t_in = transp_values[t] if transp_values is not None else np.nan
         
         # Skip computation for missing values
-        if np.isnan(precip_t) or np.isnan(et_t) or (transp_values is not None and np.isnan(transp_t_in)):
+        if np.isnan(eff_precip_t) or np.isnan(et_t) or (transp_values is not None and np.isnan(transp_t_in)):
             if t < num_times - 1:
                 soil_moisture_array[t+1, :] = soil_moisture_array[t, :]  # Maintain previous value
             continue
+        eff_precip_t = max(0.0, float(eff_precip_t))
         
         et_t = max(0.0, float(et_t))
         if transp_values is not None:
@@ -396,7 +342,7 @@ def soil_water_balance_1d(precip_data,
         
         # Set up boundary fluxes (mm/day)
         boundary_fluxes = {
-            'infiltration': eff_precip_t,  # mm/day (Smith/CROPWAT effective rainfall)
+            'infiltration': eff_precip_t,  # mm/day
             'evapotranspiration': et_by_layer  # mm/day for each layer
         }
         
