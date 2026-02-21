@@ -171,7 +171,7 @@ def _compute_rmse(
     drainage_lower_limit: float,
     use_ndvi_root_depth: bool,
 ) -> Tuple[float, int]:
-    infil_coeff, diff_factor, sm_max_factor, sm_min_factor, root_beta = params
+    diff_factor, sm_max_factor, sm_min_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
 
     obs_mask = np.isfinite(smap_vals) & soil_valid[None, :, :]
@@ -220,7 +220,6 @@ def _compute_rmse(
                     time_index,
                     time_step=1.0,
                     initial_soil_moisture=None,
-                    infil_coeff=infil_coeff,
                     diff_factor=diff_factor,
                     transpiration_data=t_vals[:, lat_idx, lon_idx],
                 )
@@ -323,7 +322,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for differential evolution objective evaluation.")
-    parser.add_argument("--infil-bounds", nargs=2, type=float, default=(0.3, 1.0), help="Bounds for infil_coeff.")
     parser.add_argument(
         "--diff-bounds",
         nargs=2,
@@ -525,7 +523,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     )
     print(
         "  bounds: "
-        f"infil_coeff={tuple(args.infil_bounds)}, "
         f"diff_factor={tuple(args.diff_bounds)}, "
         f"sm_max_factor={tuple(args.sm_max_bounds)}, "
         f"sm_min_factor={tuple(args.sm_min_bounds)}, "
@@ -538,13 +535,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         flush=True,
     )
     bounds = [
-        tuple(args.infil_bounds),
         tuple(args.diff_bounds),
         tuple(args.sm_max_bounds),
         tuple(args.sm_min_bounds),
         tuple(args.beta_bounds),
     ]
-    de_x0 = np.array([0.3, 1e3, 1.0, 1.0, float(args.root_beta)], dtype=float)
+    de_x0 = np.array([1e3, 1.0, 1.0, float(args.root_beta)], dtype=float)
     for idx, (low, high) in enumerate(bounds):
         x0_i = float(np.clip(de_x0[idx], low, high))
         # Keep x0 strictly inside open bounds when possible. SciPy may reject
@@ -565,9 +561,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     )
     print("  objective: RMSE between domain-mean simulated and observed SMAP-DS SSM", flush=True)
     print(
-        f"  optimizer seed x0: infil_coeff={de_x0[0]:.6g}, diff_factor={de_x0[1]:.6g}, "
-        f"sm_max_factor={de_x0[2]:.6g}, sm_min_factor={de_x0[3]:.6g}, "
-        f"root_beta={de_x0[4]:.6g}",
+        f"  optimizer seed x0: diff_factor={de_x0[0]:.6g}, "
+        f"sm_max_factor={de_x0[1]:.6g}, sm_min_factor={de_x0[2]:.6g}, "
+        f"root_beta={de_x0[3]:.6g}",
         flush=True,
     )
     de_extra = {}
@@ -628,16 +624,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     with output_path.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(
-            ["infil_coeff", "diff_factor", "sm_max_factor", "sm_min_factor", "root_beta", "rmse", "n_obs"]
-        )
+        writer.writerow(["diff_factor", "sm_max_factor", "sm_min_factor", "root_beta", "rmse", "n_obs"])
         writer.writerow(
             [
                 f"{best_params[0]:.6g}",
                 f"{best_params[1]:.6g}",
                 f"{best_params[2]:.6g}",
                 f"{best_params[3]:.6g}",
-                f"{best_params[4]:.6g}",
                 f"{final_rmse:.6g}",
                 str(int(n_obs)),
             ]

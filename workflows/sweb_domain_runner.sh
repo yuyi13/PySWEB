@@ -65,10 +65,10 @@ EXTENT="147.20, -35.10, 147.30, -35.00" # North Wagga
 #EXTENT="149.98, -28.80, 150.18, -28.60" # Warrakirri
 
 SM_RES="0.00025"
-DEFAULT_INFIL_COEFF="0.3"
 DEFAULT_DIFF_FACTOR="1000.0"
 DEFAULT_SM_MAX_FACTOR="1.0"
 DEFAULT_SM_MIN_FACTOR="1.0"
+DEFAULT_ROOT_BETA="0.96"
 CALIB_DIFF_MIN="0.0"
 CALIB_DIFF_MAX="10000.0"
 
@@ -449,10 +449,10 @@ fi
 
 # Step 3: run SWEB using calibrated domain-wide parameters.
 if [[ "${RUN_SWB}" == "true" ]]; then
-  INFIL_COEFF="${DEFAULT_INFIL_COEFF}"
   DIFF_FACTOR="${DEFAULT_DIFF_FACTOR}"
   SM_MAX_FACTOR="${DEFAULT_SM_MAX_FACTOR}"
   SM_MIN_FACTOR="${DEFAULT_SM_MIN_FACTOR}"
+  ROOT_BETA="${DEFAULT_ROOT_BETA}"
 
   if [[ "${UNCALIBRATED_MODE}" == "false" && ! -f "${CALIB_OUTPUT}" ]]; then
     UNCALIBRATED_MODE="true"
@@ -462,7 +462,7 @@ if [[ "${RUN_SWB}" == "true" ]]; then
   if [[ "${UNCALIBRATED_MODE}" == "true" ]]; then
     print_status "STEP 3/3" "Uncalibrated mode active: forcing default parameters (no calibration CSV required)."
   else
-    read -r INFIL_COEFF DIFF_FACTOR SM_MAX_FACTOR SM_MIN_FACTOR < <(
+    read -r DIFF_FACTOR SM_MAX_FACTOR SM_MIN_FACTOR ROOT_BETA < <(
       python - "${CALIB_OUTPUT}" <<'PY'
 import csv
 import sys
@@ -471,12 +471,16 @@ path = sys.argv[1]
 with open(path, newline="") as handle:
     reader = csv.DictReader(handle)
     row = next(reader)
-print(row["infil_coeff"], row["diff_factor"], row.get("sm_max_factor", ""), row.get("sm_min_factor", ""))
+print(row["diff_factor"], row.get("sm_max_factor", ""), row.get("sm_min_factor", ""), row.get("root_beta", ""))
 PY
     )
-    if [[ -z "${INFIL_COEFF}" || -z "${DIFF_FACTOR}" ]]; then
+    if [[ -z "${DIFF_FACTOR}" ]]; then
       echo "Failed to read calibration parameters from ${CALIB_OUTPUT}" >&2
       exit 1
+    fi
+    if [[ -z "${ROOT_BETA}" ]]; then
+      ROOT_BETA="${DEFAULT_ROOT_BETA}"
+      print_skip "STEP 3/3" "No root_beta column in calibration CSV; using default beta=${ROOT_BETA}."
     fi
     print_status "STEP 3/3" "Using parameters from calibration CSV: ${CALIB_OUTPUT}"
   fi
@@ -490,7 +494,7 @@ PY
   print_status "STEP 3/3" "Burn-in period   : ${BURN_IN_START} to ${BURN_IN_END}"
   print_status "STEP 3/3" "Post-burn range  : ${POST_BURN_START} to ${MODEL_END_DATE}"
   print_status "STEP 3/3" "Workers          : ${N_WORKERS}"
-  print_status "STEP 3/3" "Parameters       : infil=${INFIL_COEFF}, diff=${DIFF_FACTOR}, sm_max=${SM_MAX_FACTOR:-${DEFAULT_SM_MAX_FACTOR}}, sm_min=${SM_MIN_FACTOR:-${DEFAULT_SM_MIN_FACTOR}}"
+  print_status "STEP 3/3" "Parameters       : diff=${DIFF_FACTOR}, sm_max=${SM_MAX_FACTOR:-${DEFAULT_SM_MAX_FACTOR}}, sm_min=${SM_MIN_FACTOR:-${DEFAULT_SM_MIN_FACTOR}}, beta=${ROOT_BETA}"
   env \
       "OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}" \
       "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}" \
@@ -507,8 +511,8 @@ PY
       --output-dir "${MODEL_OUT_DIR}" \
       --output-file "${MODEL_OUTPUT_TMP}" \
       --sm-res "${SM_RES}" \
-      --infil-coeff "${INFIL_COEFF}" \
       --diff-factor "${DIFF_FACTOR}" \
+      --root-beta "${ROOT_BETA}" \
       --sm-max-factor "${SM_MAX_FACTOR:-1.0}" \
       --sm-min-factor "${SM_MIN_FACTOR:-1.0}" \
       --workers "${N_WORKERS}" \

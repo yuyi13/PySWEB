@@ -40,7 +40,7 @@ PySWEB/
 1. `workflows/1_ssebop_prepare_inputs.py`: build a run-specific GEE config and download Landsat scenes.
 2. `workflows/2_ssebop_run_model.py`: compute daily `ET`, `E`, `T`, `etf_interp`, `ndvi_interp`, and `Tc`.
 3. `workflows/3_sweb_preprocess_inputs.py`: align precipitation, ET/T, soil properties, and optional SMAP SSM to one grid.
-4. `workflows/4_sweb_calib_domain.py`: calibrate domain-wide SWEB parameters (`infil_coeff`, `diff_factor`, `sm_max_factor`, `sm_min_factor`).
+4. `workflows/4_sweb_calib_domain.py`: calibrate domain-wide SWEB parameters (`diff_factor`, `sm_max_factor`, `sm_min_factor`, `root_beta`).
 5. `workflows/5_sweb_run_model.py`: run spatial SWEB and export root-zone soil moisture NetCDF outputs.
 
 ## Quick start

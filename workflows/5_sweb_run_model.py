@@ -237,7 +237,6 @@ def parse_args() -> argparse.Namespace:
         help="Shortcut for supplying start and end date.",
     )
     parser.add_argument("--time-step", type=float, default=1.0, help="Model time step in days.")
-    parser.add_argument("--infil-coeff", type=float, default=0.3, help="Infiltration coefficient for the top layer.")
     parser.add_argument("--diff-factor", type=float, default=1e3, help="Diffusivity scaling factor (mm).")
     parser.add_argument(
         "--sm-max-factor",
@@ -251,8 +250,7 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Multiplier for wilting point to set the lower soil moisture bound.",
     )
-    parser.add_argument("--param-grid", help="NetCDF with spatially varying parameters.")
-    parser.add_argument("--param-infil-var", default="infil_coeff", help="Variable name for infil_coeff grid.")
+    parser.add_argument("--param-grid", help="NetCDF with spatially varying model parameters (currently diff_factor).")
     parser.add_argument("--param-diff-var", default="diff_factor", help="Variable name for diff_factor grid.")
     parser.add_argument("--output-dir", required=True, help="Directory for consolidated RZSM NetCDF output.")
     parser.add_argument(
@@ -346,7 +344,6 @@ def _compute_row_soil_moisture(
     param_values: Optional[Dict[str, np.ndarray]],
     time_index: pd.DatetimeIndex,
     time_step: float,
-    default_infil_coeff: float,
     default_diff_factor: float,
     use_ndvi_root_depth: bool,
     emit_warnings: bool = True,
@@ -374,12 +371,10 @@ def _compute_row_soil_moisture(
                 soil_props["ndvi"] = ndvi_value
 
         if param_values is not None:
-            infil_coeff = float(param_values["infil_coeff"][lat_idx, lon_idx])
             diff_factor = float(param_values["diff_factor"][lat_idx, lon_idx])
-            if not np.isfinite(infil_coeff + diff_factor):
+            if not np.isfinite(diff_factor):
                 continue
         else:
-            infil_coeff = default_infil_coeff
             diff_factor = default_diff_factor
 
         try:
@@ -390,7 +385,6 @@ def _compute_row_soil_moisture(
                 time_index,
                 time_step=time_step,
                 initial_soil_moisture=None,
-                infil_coeff=infil_coeff,
                 diff_factor=diff_factor,
                 transpiration_data=t_series,
             )
@@ -416,7 +410,6 @@ def _init_process_run_worker(
     param_values: Optional[Dict[str, np.ndarray]],
     time_index: pd.DatetimeIndex,
     time_step: float,
-    default_infil_coeff: float,
     default_diff_factor: float,
     use_ndvi_root_depth: bool,
 ) -> None:
@@ -430,7 +423,6 @@ def _init_process_run_worker(
         "param_values": param_values,
         "time_index": time_index,
         "time_step": time_step,
-        "default_infil_coeff": default_infil_coeff,
         "default_diff_factor": default_diff_factor,
         "use_ndvi_root_depth": bool(use_ndvi_root_depth),
     }
@@ -446,7 +438,6 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
     param_values = state["param_values"]
     time_index = state["time_index"]
     time_step = float(state["time_step"])
-    default_infil_coeff = float(state["default_infil_coeff"])
     default_diff_factor = float(state["default_diff_factor"])
     use_ndvi_root_depth = bool(state["use_ndvi_root_depth"])
     n_lon = int(np.asarray(precip_values).shape[2])
@@ -462,7 +453,6 @@ def _run_model_for_lat_process(lat_idx: int) -> Tuple[int, np.ndarray]:
         param_values=param_values,
         time_index=time_index,
         time_step=time_step,
-        default_infil_coeff=default_infil_coeff,
         default_diff_factor=default_diff_factor,
         use_ndvi_root_depth=use_ndvi_root_depth,
         emit_warnings=False,
@@ -513,10 +503,8 @@ def main() -> None:
             raise FileNotFoundError(f"Parameter grid not found: {param_path}")
         with xr.open_dataset(param_path) as ds:
             param_grids = {
-                "infil_coeff": ds[args.param_infil_var].load(),
                 "diff_factor": ds[args.param_diff_var].load(),
             }
-        ensure_matching_grid(param_grids["infil_coeff"], soil_arrays, args.lat_dim, args.lon_dim)
         ensure_matching_grid(param_grids["diff_factor"], soil_arrays, args.lat_dim, args.lon_dim)
 
     layer_bottoms = infer_layer_bottoms(soil_arrays, args.layer_bottoms_mm)
@@ -524,7 +512,6 @@ def main() -> None:
     param_values = None
     if param_grids is not None:
         param_values = {
-            "infil_coeff": np.asarray(param_grids["infil_coeff"].values, dtype=float),
             "diff_factor": np.asarray(param_grids["diff_factor"].values, dtype=float),
         }
 
@@ -575,7 +562,6 @@ def main() -> None:
                 param_values=param_values,
                 time_index=time_index,
                 time_step=args.time_step,
-                default_infil_coeff=args.infil_coeff,
                 default_diff_factor=args.diff_factor,
                 use_ndvi_root_depth=args.use_ndvi_root_depth,
             )
@@ -609,7 +595,6 @@ def main() -> None:
                 param_values,
                 time_index,
                 args.time_step,
-                args.infil_coeff,
                 args.diff_factor,
                 args.use_ndvi_root_depth,
             ),
@@ -722,6 +707,9 @@ def main() -> None:
         "soil_property_source": str(soil_source_dir),
         "layer_bottoms_mm": np.asarray(soil_grids["layer_depth"], dtype=float).tolist(),
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),
+        "effective_rainfall_method": (
+            "Smith (1992) CROPWAT monthly effective rainfall scaled to daily precipitation proportion"
+        ),
     }
     attrs["root_beta"] = float(args.root_beta)
     # NetCDF global attrs do not accept Python bool with the netCDF4 backend.
@@ -731,7 +719,6 @@ def main() -> None:
     if args.param_grid:
         attrs["parameter_grid"] = str(param_path)
     else:
-        attrs["infiltration_coefficient"] = args.infil_coeff
         attrs["diffusivity_factor"] = args.diff_factor
     attrs["sm_max_factor"] = args.sm_max_factor
     attrs["sm_min_factor"] = args.sm_min_factor

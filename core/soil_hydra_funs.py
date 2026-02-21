@@ -115,7 +115,7 @@ def _limit_rhs_diffusive_interface_flux(
     return max(raw_flux, -flux_cap)
 
 # Matrix Setup for Richards Equation
-def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil_coeff, diff_factor, time_step=1.0):
+def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, diff_factor, time_step=1.0):
     """
     Set up the matrix coefficients for the Richards equation
     
@@ -126,7 +126,10 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
     soil_properties : dict
         Dictionary of soil parameters
     boundary_fluxes : dict
-        Dictionary of boundary condition fluxes (infiltration, ET, etc.) [mm/day]
+        Dictionary of boundary condition fluxes (effective rainfall infiltration,
+        ET, etc.) [mm/day]
+    diff_factor : float
+        Diffusivity scaling factor used by Brooks-Corey diffusivity.
     time_step : float, optional
         Model time step [days] used by RHS diffusion limiter.
     
@@ -217,8 +220,8 @@ def setup_richards_matrix(soil_moisture, soil_properties, boundary_fluxes, infil
                 mat_left2[i] = 0.0
                 flux_to_below = conductivity[i]
             
-            # Right hand side includes infiltration and ET (all in mm/day)
-            mat_right[i] = (boundary_fluxes['infiltration'] * infil_coeff - 
+            # Right hand side includes effective rainfall infiltration and ET (all in mm/day)
+            mat_right[i] = (boundary_fluxes['infiltration'] -
                            boundary_fluxes['evapotranspiration'][i] - 
                            flux_to_below) / layer_thickness[i]
             
