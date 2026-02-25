@@ -1,11 +1,15 @@
-"""Australia-focused SSEBop helpers for SWEB integration.
-
-This module documents AU-friendly data sources and provides geospatial
-helpers for key SSEBop steps (dT, ETf, and daily ET) using xarray/rioxarray.
-It avoids hard dependencies on Earth Engine so it can be used with locally
-prepared gridded datasets and site time series.
+#!/usr/bin/env python3
 """
-
+Script: ssebop_au.py
+Objective: Provide Australia-focused SSEBop helper functions for dT climatology, ET fraction, and reprojection.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: xarray datasets/raster grids, Landsat/SILO-derived variables, and geospatial metadata.
+Outputs: Processed geospatial arrays including masks, climatologies, ET fraction, and daily ET products.
+Usage: Imported by workflows/2_ssebop_run_model.py; not intended as a standalone CLI script.
+Dependencies: numpy, pandas, xarray, rioxarray, rasterio
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

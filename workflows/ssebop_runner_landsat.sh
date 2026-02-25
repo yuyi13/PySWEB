@@ -1,5 +1,13 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
+# Script: ssebop_runner_landsat.sh
+# Objective: Orchestrate SSEBop input preparation and Landsat/SILO ET runs for a selected run subdirectory.
+# Author: Yi Yu
+# Created: 2026-02-17
+# Last updated: 2026-02-25
+# Inputs: run_subdir plus optional flags (--mute-download, --mute-run, --workers) and configured data paths.
+# Outputs: Prepared SSEBop inputs and ET model outputs under run-specific project directories.
+# Usage: bash workflows/ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--workers N]
+# Requirements: bash, date, mktemp, python, project workflow scripts, access to Landsat/SILO/DEM/landcover data
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.

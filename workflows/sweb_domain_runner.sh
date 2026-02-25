@@ -1,5 +1,13 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
+# Script: sweb_domain_runner.sh
+# Objective: Orchestrate SWEB preprocessing, domain calibration, and model execution for a selected run subdirectory.
+# Author: Yi Yu
+# Created: 2026-02-17
+# Last updated: 2026-02-25
+# Inputs: run_subdir plus optional flags (--burn-in-end, --workers, --uncalibrated, step toggles) and forcing paths.
+# Outputs: Preprocessed SWEB inputs, domain calibration CSV, and SWEB RZSM outputs.
+# Usage: bash workflows/sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
+# Requirements: bash, date, python, xarray-capable environment, project workflow scripts
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.

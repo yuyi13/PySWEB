@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+"""
+Script: soil_hydra_funs.py
+Objective: Provide soil hydraulic functions and Richards-equation matrix assembly utilities for SWEB.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: Soil moisture states, soil-property dictionaries, boundary fluxes, and calibration parameters.
+Outputs: Hydraulic coefficients, tridiagonal system terms, and soil-moisture state updates.
+Usage: Imported by core/swb_model_1d.py; not intended as a standalone CLI script.
+Dependencies: numpy
+"""
 # ------------------------ Code history --------------------------------------------------
 # Original Noah-MP subroutine: ROSR12
 # Original code: Guo-Yue Niu and Noah-MP team (Niu et al. 2011)

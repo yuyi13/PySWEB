@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-Calibrate SWEB parameters against domain-wide SMAP-DS surface soil moisture.
-
-Example
--------
-python 4_sweb_calib_domain.py \
-    --effective-precip /g/data/ym05/sweb_model/3_spatial_preprocess/effective_precip_daily_20210101_20210131.nc \
-    --et /g/data/ym05/sweb_model/3_spatial_preprocess/et_daily_20210101_20210131.nc \
-    --t /g/data/ym05/sweb_model/3_spatial_preprocess/t_daily_20210101_20210131.nc \
-    --soil-dir /g/data/ym05/sweb_model/3_spatial_preprocess \
-    --smap-ssm /g/data/ym05/sweb_model/3_spatial_preprocess/smap_ssm_daily_20210101_20210131.nc \
-    --date-range 2021-01-01 2021-01-31 \
-    --output /g/data/ym05/sweb_model/3_spatial_preprocess/domain_calibration.csv
+Script: 4_sweb_calib_domain.py
+Objective: Calibrate domain-wide SWEB parameters against SMAP-DS surface soil moisture observations.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: Effective precipitation, ET, transpiration, soil NetCDFs, SMAP-SSM NetCDF, and calibration options.
+Outputs: Calibration CSV containing optimized parameters and fit metrics for the target domain.
+Usage: python workflows/4_sweb_calib_domain.py --help
+Dependencies: numpy, pandas, xarray, scipy
 """
-
 from __future__ import annotations
 
 import argparse

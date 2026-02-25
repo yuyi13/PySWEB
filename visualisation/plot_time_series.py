@@ -1,24 +1,15 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Extract and plot time series from SSEBop and SWEB NetCDF outputs.
-
-Examples
---------
-Domain-mean extraction from a shared run subdirectory:
-    python visualisation/plot_time_series.py \
-      --run-subdir Boonaldoon \
-      --output /g/data/ym05/sweb_model/figures/Boonaldoon_timeseries.png \
-      --csv-out /g/data/ym05/sweb_model/figures/Boonaldoon_timeseries.csv
-
-Point extraction (nearest grid cell):
-    python visualisation/plot_time_series.py \
-      --ssebop-path /g/data/ym05/sweb_model/2_ssebop_outputs/Boonaldoon \
-      --sweb-path /g/data/ym05/sweb_model/4_sweb_outputs/Boonaldoon \
-      --lat -29.50 --lon 149.39 \
-      --sweb-vars rzsm_layer_1 rzsm_layer_2 rzsm_layer_3 \
-      --output ./timeseries_point.png
+Script: plot_time_series.py
+Objective: Extract and plot SSEBop and SWEB time series for point-based or domain-mean analysis.
+Author: Yi Yu
+Created: 2026-02-20
+Last updated: 2026-02-25
+Inputs: SSEBop/SWEB NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
+Outputs: Saved time-series figure and optional CSV containing extracted values.
+Usage: python visualisation/plot_time_series.py --help
+Dependencies: argparse, matplotlib, pandas, xarray
 """
-
 from __future__ import annotations
 
 import argparse

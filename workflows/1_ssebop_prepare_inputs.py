@@ -1,5 +1,15 @@
-"""Prepare SSEBop inputs from GEE (SILO assumed pre-downloaded)."""
-
+#!/usr/bin/env python3
+"""
+Script: 1_ssebop_prepare_inputs.py
+Objective: Prepare and validate GEE/SSEBop input configuration from date range and extent arguments.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: CLI arguments (--config, --date-range, --extent, --gee-config, --out-dir) and optional base YAML config.
+Outputs: Updated GEE config YAML and prepared input directory for SSEBop downloads.
+Usage: python workflows/1_ssebop_prepare_inputs.py --help
+Dependencies: argparse, pyyaml, re, datetime, core/gee_downloader.py
+"""
 from __future__ import annotations
 
 import argparse

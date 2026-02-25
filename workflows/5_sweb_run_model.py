@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """
-Run the 1-D soil water balance model on preprocessed gridded forcings.
-
-Example
--------
-python 5_sweb_run_model.py \\
-    --precip /g/data/ym05/sweb_model/2_spatial_preprocess/rain_daily_20210101_20210131.nc \\
-    --effective-precip /g/data/ym05/sweb_model/2_spatial_preprocess/effective_precip_daily_20210101_20210131.nc \\
-    --et /g/data/ym05/sweb_model/2_spatial_preprocess/et_daily_20210101_20210131.nc \\
-    --t /g/data/ym05/sweb_model/2_spatial_preprocess/t_daily_20210101_20210131.nc \\
-    --soil-dir /g/data/ym05/sweb_model/2_spatial_preprocess \\
-    --output-dir /g/data/ym05/sweb_model/3_model_output
+Script: 5_sweb_run_model.py
+Objective: Run the 1-D SWEB model on gridded forcings and soil properties to generate RZSM outputs.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: Precipitation/effective precipitation/ET/transpiration NetCDFs, soil NetCDFs, optional NDVI/parameter grids.
+Outputs: Consolidated SWEB RZSM NetCDF outputs and run logs in the configured output directory.
+Usage: python workflows/5_sweb_run_model.py --help
+Dependencies: numpy, pandas, xarray, concurrent.futures
 """
-
 from __future__ import annotations
 
 import argparse

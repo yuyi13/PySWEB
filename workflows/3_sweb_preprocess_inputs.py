@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Preprocess spatial forcing and soil datasets into aligned NetCDF products.
-
-This script harmonises precipitation (daily NetCDF), evapotranspiration (daily GeoTIFF),
-and soil hydraulic property rasters (GeoTIFF) onto a common grid, extent, and time range.
-All processed outputs are written as NetCDF files that can be consumed by the spatial
-soil water balance driver.
+Script: 3_sweb_preprocess_inputs.py
+Objective: Preprocess forcing and soil datasets into aligned NetCDF inputs for spatial SWEB simulations.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: Date range, extent/resolution, rainfall and ET sources, soil rasters, optional SMAP inputs.
+Outputs: NetCDF forcing files, soil-property layers, and optional SMAP-SSM products on a common grid.
+Usage: python workflows/3_sweb_preprocess_inputs.py --help
+Dependencies: numpy, pandas, xarray, rioxarray, rasterio, pyproj, concurrent.futures
 """
-
 from __future__ import annotations
 
 import argparse

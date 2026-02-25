@@ -1,4 +1,15 @@
-
+#!/usr/bin/env python3
+"""
+Script: thomas_solve_tridiagonal_matrix.py
+Objective: Solve tridiagonal linear systems using the Thomas algorithm for SWEB numerical routines.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: Lower/main/upper diagonal arrays and right-hand-side vector for a tridiagonal system.
+Outputs: Solution vector for the supplied tridiagonal linear system.
+Usage: Imported by hydraulic solver modules; not intended as a standalone CLI script.
+Dependencies: numpy
+"""
 # Tridiagonal matrix solver (Thomas algorithm)
 def thomas_solve_tridiagonal_matrix(a, b, c, d):
     """

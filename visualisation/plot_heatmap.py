@@ -1,22 +1,15 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Extract and plot SWEB layer heatmaps, with an optional SSEBop forcing panel.
-
-Examples
---------
-Point heatmap (nearest grid cell; default mode):
-    python visualisation/plot_heatmap.py \
-      --run-subdir Boonaldoon \
-      --lat -29.50 --lon 149.39 \
-      --output ./Boonaldoon_heatmap_point.png
-
-Domain-mean heatmap (optional mode):
-    python visualisation/plot_heatmap.py \
-      --run-subdir Boonaldoon \
-      --domain-mean \
-      --output /g/data/ym05/sweb_model/figures/Boonaldoon_heatmap.png
+Script: plot_heatmap.py
+Objective: Plot SWEB layer heatmaps with an optional SSEBop forcing panel for a point or domain mean.
+Author: Yi Yu
+Created: 2026-02-20
+Last updated: 2026-02-25
+Inputs: SWEB/SSEBop NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
+Outputs: Saved heatmap figure and optional CSV of extracted plotting data.
+Usage: python visualisation/plot_heatmap.py --help
+Dependencies: argparse, matplotlib, numpy, pandas, xarray
 """
-
 from __future__ import annotations
 
 import argparse

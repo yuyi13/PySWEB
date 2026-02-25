@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+"""
+Script: swb_model_1d.py
+Objective: Implement the 1-D SWEB soil-water-balance solver and root-distribution utilities.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: Daily forcing arrays and per-pixel soil-property dictionaries for each simulation step.
+Outputs: Layer soil-moisture states, runoff/drainage components, and model diagnostic arrays.
+Usage: Imported by workflow runner scripts; not intended as a standalone CLI script.
+Dependencies: numpy, pandas, core/soil_hydra_funs.py
+"""
 import sys
 import numpy as np
 import pandas as pd

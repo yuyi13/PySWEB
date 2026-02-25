@@ -1,5 +1,15 @@
-"""Run SSEBop from local Landsat + SILO datasets (AU-focused)."""
-
+#!/usr/bin/env python3
+"""
+Script: 2_ssebop_run_model.py
+Objective: Run SSEBop evapotranspiration estimation from local Landsat scenes and SILO meteorological inputs.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: YAML config/CLI options, Landsat GeoTIFFs, SILO meteorology files, DEM, landcover raster.
+Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
+Usage: python workflows/2_ssebop_run_model.py --help
+Dependencies: numpy, pandas, xarray, rasterio, rioxarray, pyproj, scipy, pyyaml
+"""
 from __future__ import annotations
 
 import argparse

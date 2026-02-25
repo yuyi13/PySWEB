@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+"""
+Script: gee_downloader.py
+Objective: Download and post-process Google Earth Engine composites used by SSEBop preprocessing workflows.
+Author: Yi Yu
+Created: 2026-02-17
+Last updated: 2026-02-25
+Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
+Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
+Usage: python core/gee_downloader.py <config.yaml>
+Dependencies: earthengine-api, requests, rasterio, numpy, pyyaml, python-dateutil
+"""
 import os
 import sys
 import yaml
