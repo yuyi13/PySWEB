@@ -4,7 +4,7 @@ Script: 2_ssebop_run_model.py
 Objective: Run SSEBop evapotranspiration estimation from local Landsat scenes and SILO meteorological inputs.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-02-25
+Last updated: 2026-03-20
 Inputs: YAML config/CLI options, Landsat GeoTIFFs, SILO meteorology files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: python workflows/2_ssebop_run_model.py --help
@@ -17,8 +17,10 @@ import glob
 import os
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
+from itertools import repeat
+import multiprocessing as mp
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -38,6 +40,7 @@ if CORE_DIR not in sys.path:
 from ssebop_au import (
     build_doy_climatology,
     compute_dt_daily,
+    crop_to_match_bounds,
     et_fraction_xr,
     load_worldcover_landcover,
     reproject_match,
@@ -45,6 +48,8 @@ from ssebop_au import (
     tcold_fano_simple_xr,
     worldcover_masks,
 )
+
+_SCENE_WORKER_CONTEXT: Optional[Dict[str, object]] = None
 
 
 def list_landsat_files(landsat_dir: str, pattern: str) -> List[str]:
@@ -84,7 +89,7 @@ def filter_landsat_files_by_date(
 
 
 def read_geotiff_bands(path: str) -> Dict[str, xr.DataArray]:
-    da = rioxarray.open_rasterio(path, masked=True)
+    da = _as_float32(rioxarray.open_rasterio(path, masked=True))
     with rasterio.open(path) as src:
         descriptions = list(src.descriptions)
     if not any(descriptions):
@@ -100,6 +105,12 @@ def ensure_spatial_dims(da: xr.DataArray) -> xr.DataArray:
         return da
     if {"lon", "lat"}.issubset(set(da.dims)):
         da = da.rename({"lon": "x", "lat": "y"})
+    return da
+
+
+def _as_float32(da: xr.DataArray) -> xr.DataArray:
+    if np.issubdtype(da.dtype, np.floating) and da.dtype != np.float32:
+        return da.astype("float32")
     return da
 
 
@@ -172,17 +183,17 @@ def open_silo_da(path: Union[str, Sequence[str]], var: Optional[str]) -> xr.Data
     da = ensure_spatial_dims(da)
     if da.rio.crs is None:
         da = da.rio.write_crs("EPSG:4326")
-    return da
+    return _as_float32(da)
 
 
 def scale_landsat_sr(band: xr.DataArray) -> xr.DataArray:
     """Scale Landsat Collection 2 Level-2 SR bands to reflectance."""
-    return band * 0.0000275 + (-0.2)
+    return _as_float32(band) * np.float32(0.0000275) + np.float32(-0.2)
 
 
 def scale_landsat_st(band: xr.DataArray) -> xr.DataArray:
     """Scale Landsat Collection 2 Level-2 ST_B10 to Kelvin."""
-    return band * 0.00341802 + 149.0
+    return _as_float32(band) * np.float32(0.00341802) + np.float32(149.0)
 
 
 def _slice_to_date_range(da: xr.DataArray, date_range: Optional[str]) -> xr.DataArray:
@@ -205,13 +216,27 @@ def build_lat_lon(template: xr.DataArray) -> Tuple[xr.DataArray, xr.DataArray]:
     if CRS.from_user_input(crs).to_epsg() == 4326:
         lon = xr.DataArray(xv, dims=("y", "x"))
         lat = xr.DataArray(yv, dims=("y", "x"))
-        return lat, lon
+        return _as_float32(lat), _as_float32(lon)
 
     transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
     lon_vals, lat_vals = transformer.transform(xv, yv)
     lat = xr.DataArray(lat_vals, dims=("y", "x"))
     lon = xr.DataArray(lon_vals, dims=("y", "x"))
-    return lat, lon
+    return _as_float32(lat), _as_float32(lon)
+
+
+def load_output_stack(
+    records: Sequence[Tuple[np.datetime64, str]],
+    var_name: str,
+) -> xr.DataArray:
+    arrays: List[xr.DataArray] = []
+    times: List[np.datetime64] = []
+    for ts, path in sorted(records, key=lambda item: item[0]):
+        da = rioxarray.open_rasterio(path, masked=True).squeeze("band", drop=True).rename(var_name)
+        da = _as_float32(da).load()
+        arrays.append(da.assign_coords(time=ts).expand_dims("time"))
+        times.append(ts)
+    return xr.concat(arrays, dim="time").assign_coords(time=times)
 
 
 def interpolate_etf_daily(
@@ -252,14 +277,44 @@ def interpolate_etf_daily(
     return etf_daily.where(mask)
 
 
+def _gapfill_flat_chunk(
+    flat_chunk: np.ndarray,
+    times: np.ndarray,
+    window_len: int,
+    polyorder: int,
+    min_samples: int,
+) -> np.ndarray:
+    out = np.array(flat_chunk, copy=True)
+    for idx in range(out.shape[1]):
+        series = out[:, idx]
+        valid = np.isfinite(series)
+        if valid.sum() < min_samples or valid.all():
+            continue
+
+        s = pd.Series(series, index=times)
+        s_interp = s.interpolate(method="time", limit_direction="both")
+        interp_values = s_interp.to_numpy()
+        if not np.isfinite(interp_values).all():
+            continue
+
+        smooth = savgol_filter(interp_values, window_length=window_len, polyorder=polyorder, mode="interp")
+        fill_mask = ~valid
+        if fill_mask.any():
+            series_filled = series.copy()
+            series_filled[fill_mask] = smooth[fill_mask]
+            out[:, idx] = series_filled
+
+    return out
+
+
 def gapfill_etf_savgol(
     etf_stack: xr.DataArray,
     window_days: int,
     min_samples: int,
+    workers: int = 1,
 ) -> xr.DataArray:
     times = pd.to_datetime(etf_stack.time.values).to_numpy(dtype="datetime64[ns]")
     data = np.array(etf_stack.values, copy=True)
-    filled = np.array(data, copy=True)
 
     if data.shape[0] < 3:
         return etf_stack
@@ -282,28 +337,57 @@ def gapfill_etf_savgol(
     polyorder = min(2, window_len - 1)
 
     flat = data.reshape(data.shape[0], -1)
-    for idx in range(flat.shape[1]):
-        series = flat[:, idx]
-        valid = np.isfinite(series)
-        if valid.sum() < min_samples:
-            continue
+    missing_cols = np.any(~np.isfinite(flat), axis=0)
+    if not missing_cols.any():
+        return etf_stack
 
-        s = pd.Series(series, index=times)
-        s_interp = s.interpolate(method="time", limit_direction="both")
-        interp_values = s_interp.to_numpy()
-        if not np.isfinite(interp_values).all():
-            continue
+    target_cols = np.where(missing_cols)[0]
+    target = flat[:, target_cols]
 
-        smooth = savgol_filter(interp_values, window_length=window_len, polyorder=polyorder, mode="interp")
-        fill_mask = ~valid
-        if fill_mask.any():
-            series_filled = series.copy()
-            series_filled[fill_mask] = smooth[fill_mask]
-            flat[:, idx] = series_filled
+    if workers > 1 and target.shape[1] > 1:
+        n_workers = min(workers, target.shape[1])
+        chunk_size = int(np.ceil(target.shape[1] / n_workers))
+        chunks = [target[:, i : i + chunk_size] for i in range(0, target.shape[1], chunk_size)]
+        mp_ctx = mp.get_context("fork")
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as executor:
+            filled_chunks = list(
+                executor.map(
+                    _gapfill_flat_chunk,
+                    chunks,
+                    repeat(times, len(chunks)),
+                    repeat(window_len, len(chunks)),
+                    repeat(polyorder, len(chunks)),
+                    repeat(min_samples, len(chunks)),
+                )
+            )
+        target_filled = np.concatenate(filled_chunks, axis=1)
+    else:
+        target_filled = _gapfill_flat_chunk(target, times, window_len, polyorder, min_samples)
 
-    filled = flat.reshape(data.shape)
+    flat_out = np.array(flat, copy=True)
+    flat_out[:, target_cols] = target_filled
+    filled = flat_out.reshape(data.shape).astype(data.dtype, copy=False)
 
     return etf_stack.copy(data=filled)
+
+
+def _process_landsat_scene_worker(tif_path: str) -> Tuple[np.datetime64, str, str]:
+    if _SCENE_WORKER_CONTEXT is None:
+        raise RuntimeError("Scene worker context is not initialised")
+
+    return process_landsat_scene(
+        tif_path=tif_path,
+        lst_band=str(_SCENE_WORKER_CONTEXT["lst_band"]),
+        ndvi_band=str(_SCENE_WORKER_CONTEXT["ndvi_band"]),
+        red_band=str(_SCENE_WORKER_CONTEXT["red_band"]),
+        nir_band=str(_SCENE_WORKER_CONTEXT["nir_band"]),
+        apply_water_mask=bool(_SCENE_WORKER_CONTEXT["apply_water_mask"]),
+        water_mask=_SCENE_WORKER_CONTEXT["water_mask"],  # type: ignore[arg-type]
+        dt_clim=_SCENE_WORKER_CONTEXT["dt_clim"],  # type: ignore[arg-type]
+        template_crs=_SCENE_WORKER_CONTEXT["template_crs"],  # type: ignore[arg-type]
+        etf_dir=str(_SCENE_WORKER_CONTEXT["etf_dir"]),
+        ndvi_dir=str(_SCENE_WORKER_CONTEXT["ndvi_dir"]),
+    )
 
 
 def process_landsat_scene(
@@ -318,7 +402,7 @@ def process_landsat_scene(
     template_crs: Optional[CRS],
     etf_dir: str,
     ndvi_dir: str,
-) -> Tuple[np.datetime64, xr.DataArray, xr.DataArray]:
+) -> Tuple[np.datetime64, str, str]:
     date_str = parse_date_from_filename(tif_path)
     doy = datetime.fromisoformat(date_str).timetuple().tm_yday
     bands = read_geotiff_bands(tif_path)
@@ -340,23 +424,30 @@ def process_landsat_scene(
         lst = lst.where(water_mask == 0)
         ndvi = ndvi.where(water_mask == 0)
 
-    dt = dt_clim.sel(dayofyear=doy)
+    dt = _as_float32(reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear"))
     tcold = tcold_fano_simple_xr(lst, ndvi, dt)
-    etf = et_fraction_xr(lst, tcold, dt).rename("etf")
+    etf = _as_float32(et_fraction_xr(lst, tcold, dt).rename("etf"))
     ts = np.datetime64(date_str, "ns")
     etf = etf.assign_coords(time=ts).expand_dims("time")
-    ndvi_out = ndvi.rename("ndvi").assign_coords(time=ts).expand_dims("time")
+    ndvi_out = _as_float32(ndvi.rename("ndvi")).assign_coords(time=ts).expand_dims("time")
+
+    # Drop transient coordinates that can conflict during later dataset merges.
+    for coord in ("dayofyear", "band"):
+        if coord in etf.coords and coord not in etf.dims:
+            etf = etf.drop_vars(coord)
+        if coord in ndvi_out.coords and coord not in ndvi_out.dims:
+            ndvi_out = ndvi_out.drop_vars(coord)
 
     out_etf = os.path.join(etf_dir, f"etf_{date_str}.tif")
-    etf_single = etf.squeeze("time", drop=True)
+    etf_single = _as_float32(etf.squeeze("time", drop=True))
     etf_single.rio.write_crs(template_crs, inplace=True)
     etf_single.rio.to_raster(out_etf)
     out_ndvi = os.path.join(ndvi_dir, f"ndvi_{date_str}.tif")
-    ndvi_single = ndvi_out.squeeze("time", drop=True)
+    ndvi_single = _as_float32(ndvi_out.squeeze("time", drop=True))
     ndvi_single.rio.write_crs(template_crs, inplace=True)
     ndvi_single.rio.to_raster(out_ndvi)
 
-    return ts, etf, ndvi_out
+    return ts, out_etf, out_ndvi
 
 
 def main() -> None:
@@ -466,9 +557,7 @@ def main() -> None:
         water_mask = None
 
     dem = rioxarray.open_rasterio(dem_path, masked=True).squeeze("band", drop=True)
-    dem = reproject_match_crop_first(dem, template, resampling="bilinear", buffer=buffer)
-
-    lat_deg, _ = build_lat_lon(template)
+    dem = _as_float32(reproject_match_crop_first(dem, template, resampling="bilinear", buffer=buffer)).load()
 
     inferred = _infer_silo_paths(date_range, silo_dir)
     if not et_short_crop:
@@ -496,33 +585,37 @@ def main() -> None:
             + ". Provide date_range and silo_dir for inference, or explicit file paths."
         )
 
-    tmax = _slice_to_date_range(open_silo_da(tmax_path, tmax_var), date_range)
-    tmin = _slice_to_date_range(open_silo_da(tmin_path, tmin_var), date_range)
-    rs = _slice_to_date_range(open_silo_da(rs_path, rs_var), date_range)
-    ea = _slice_to_date_range(open_silo_da(ea_path, ea_var), date_range)
+    tmax = crop_to_match_bounds(_slice_to_date_range(open_silo_da(tmax_path, tmax_var), date_range), template).load()
+    tmin = crop_to_match_bounds(_slice_to_date_range(open_silo_da(tmin_path, tmin_var), date_range), template).load()
+    rs = crop_to_match_bounds(_slice_to_date_range(open_silo_da(rs_path, rs_var), date_range), template).load()
+    ea = crop_to_match_bounds(_slice_to_date_range(open_silo_da(ea_path, ea_var), date_range), template).load()
 
     if silo_temp_units == "celsius":
-        tmax = tmax + 273.15
-        tmin = tmin + 273.15
+        tmax = tmax + np.float32(273.15)
+        tmin = tmin + np.float32(273.15)
 
-    tmax = reproject_match_crop_first(tmax, template, resampling="bilinear", buffer=buffer)
-    tmin = reproject_match_crop_first(tmin, template, resampling="bilinear", buffer=buffer)
-    rs = reproject_match_crop_first(rs, template, resampling="bilinear", buffer=buffer)
-    ea = reproject_match_crop_first(ea, template, resampling="bilinear", buffer=buffer)
+    silo_template = tmax.isel(time=0, drop=True)
+    dem_silo = _as_float32(reproject_match_crop_first(dem, silo_template, resampling="bilinear"))
+    lat_deg, _ = build_lat_lon(silo_template)
 
-    dt_daily = compute_dt_daily(tmax, tmin, dem, lat_deg, rs_mj_m2_day=rs, ea_kpa=ea)
-    dt_clim = build_doy_climatology(dt_daily)
+    dt_daily = _as_float32(compute_dt_daily(tmax, tmin, dem_silo, lat_deg, rs_mj_m2_day=rs, ea_kpa=ea)).load()
+    dt_clim = _as_float32(build_doy_climatology(dt_daily)).load()
 
-    eto = _slice_to_date_range(open_silo_da(et_short_crop, et_short_crop_var), date_range)
-    eto = reproject_match_crop_first(eto, template, resampling="bilinear", buffer=buffer)
+    del dt_daily
+    del tmax
+    del tmin
+    del rs
+    del ea
+    del dem_silo
+    del lat_deg
 
-    etf_list = []
-    ndvi_list = []
-    etf_times = []
+    eto = crop_to_match_bounds(_slice_to_date_range(open_silo_da(et_short_crop, et_short_crop_var), date_range), template).load()
+
+    scene_outputs: List[Tuple[np.datetime64, str, str]] = []
     template_crs = template.rio.crs
     if workers == 1:
         for tif_path in landsat_files:
-            ts, etf, ndvi_out = process_landsat_scene(
+            ts, etf_path_out, ndvi_path_out = process_landsat_scene(
                 tif_path=tif_path,
                 lst_band=lst_band,
                 ndvi_band=ndvi_band,
@@ -535,52 +628,68 @@ def main() -> None:
                 etf_dir=etf_dir,
                 ndvi_dir=ndvi_dir,
             )
-            etf_list.append(etf)
-            ndvi_list.append(ndvi_out)
-            etf_times.append(ts)
+            scene_outputs.append((ts, etf_path_out, ndvi_path_out))
     else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [
-                executor.submit(
-                    process_landsat_scene,
-                    tif_path=tif_path,
-                    lst_band=lst_band,
-                    ndvi_band=ndvi_band,
-                    red_band=red_band,
-                    nir_band=nir_band,
-                    apply_water_mask=apply_water_mask,
-                    water_mask=water_mask,
-                    dt_clim=dt_clim,
-                    template_crs=template_crs,
-                    etf_dir=etf_dir,
-                    ndvi_dir=ndvi_dir,
-                )
-                for tif_path in landsat_files
-            ]
-            for future in as_completed(futures):
-                ts, etf, ndvi_out = future.result()
-                etf_list.append(etf)
-                ndvi_list.append(ndvi_out)
-                etf_times.append(ts)
+        scene_context: Dict[str, object] = {
+            "lst_band": lst_band,
+            "ndvi_band": ndvi_band,
+            "red_band": red_band,
+            "nir_band": nir_band,
+            "apply_water_mask": apply_water_mask,
+            "water_mask": water_mask,
+            "dt_clim": dt_clim,
+            "template_crs": template_crs,
+            "etf_dir": etf_dir,
+            "ndvi_dir": ndvi_dir,
+        }
 
-    etf_stack = xr.concat(etf_list, dim="time").assign_coords(time=etf_times).sortby("time")
-    ndvi_stack = xr.concat(ndvi_list, dim="time").assign_coords(time=etf_times).sortby("time")
+        global _SCENE_WORKER_CONTEXT
+        _SCENE_WORKER_CONTEXT = scene_context
+        try:
+            mp_ctx = mp.get_context("fork")
+            scene_workers = min(workers, len(landsat_files))
+            scene_chunksize = max(1, len(landsat_files) // (scene_workers * 4))
+            with ProcessPoolExecutor(max_workers=scene_workers, mp_context=mp_ctx) as executor:
+                for ts, etf_path_out, ndvi_path_out in executor.map(
+                    _process_landsat_scene_worker,
+                    landsat_files,
+                    chunksize=scene_chunksize,
+                ):
+                    scene_outputs.append((ts, etf_path_out, ndvi_path_out))
+        finally:
+            _SCENE_WORKER_CONTEXT = None
+
+    etf_stack = load_output_stack([(ts, etf_path_out) for ts, etf_path_out, _ in scene_outputs], "etf")
+    ndvi_stack = load_output_stack([(ts, ndvi_path_out) for ts, _, ndvi_path_out in scene_outputs], "ndvi")
     if gapfill_etf:
         window_days = gapfill_window_days if gapfill_window_days is not None else max_gap_days
-        etf_stack = gapfill_etf_savgol(etf_stack, window_days, gapfill_min_samples)
-        ndvi_stack = gapfill_etf_savgol(ndvi_stack, window_days, gapfill_min_samples)
+        etf_stack = gapfill_etf_savgol(etf_stack, window_days, gapfill_min_samples, workers=workers)
+        ndvi_stack = gapfill_etf_savgol(ndvi_stack, window_days, gapfill_min_samples, workers=workers)
     etf_start = pd.to_datetime(etf_stack.time.values).min()
     etf_end = pd.to_datetime(etf_stack.time.values).max()
     daily_index = pd.date_range(etf_start, etf_end, freq="D")
     daily_time = xr.DataArray(daily_index.values, coords={"time": daily_index.values}, dims=("time",))
 
-    etf_daily = interpolate_etf_daily(etf_stack, daily_time, max_gap_days).rename("etf_interp")
-    ndvi_daily = interpolate_etf_daily(ndvi_stack, daily_time, max_gap_days).rename("ndvi_interp")
+    etf_daily = _as_float32(interpolate_etf_daily(etf_stack, daily_time, max_gap_days).rename("etf_interp"))
+    ndvi_daily = _as_float32(interpolate_etf_daily(ndvi_stack, daily_time, max_gap_days).rename("ndvi_interp"))
+
+    suffix = ""
+    if date_range:
+        start_date, end_date = parse_date_range(date_range)
+        suffix = f"_{start_date}_{end_date}"
+
+    etf_stack.to_netcdf(os.path.join(output_dir, f"etf_stack{suffix}.nc"))
+    ndvi_stack.to_netcdf(os.path.join(output_dir, f"ndvi_stack{suffix}.nc"))
+    del etf_stack
+    del ndvi_stack
+
     eto = eto.sel(time=slice(daily_index.min(), daily_index.max()))
-    et_daily = (etf_daily * eto).rename("ET")
-    tc_daily = (1.26 * ndvi_daily - 0.18).clip(0.0, 1.0).rename("Tc")
-    t_daily = (et_daily * tc_daily).rename("T")
-    e_daily = (et_daily - t_daily).rename("E")
+    eto = _as_float32(reproject_match_crop_first(eto, template, resampling="bilinear", buffer=buffer)).load()
+    et_daily = _as_float32((etf_daily * eto).rename("ET"))
+    del eto
+    tc_daily = _as_float32((np.float32(1.26) * ndvi_daily - np.float32(0.18)).clip(0.0, 1.0).rename("Tc"))
+    t_daily = _as_float32((et_daily * tc_daily).rename("T"))
+    e_daily = _as_float32((et_daily - t_daily).rename("E"))
 
     tc_daily.attrs.update(
         {
@@ -597,13 +706,6 @@ def main() -> None:
     etf_daily.attrs.update({"long_name": "Interpolated SSEBop ET fraction", "units": "1"})
     ndvi_daily.attrs.update({"long_name": "Interpolated NDVI", "units": "1"})
 
-    suffix = ""
-    if date_range:
-        start_date, end_date = parse_date_range(date_range)
-        suffix = f"_{start_date}_{end_date}"
-
-    etf_stack.to_netcdf(os.path.join(output_dir, f"etf_stack{suffix}.nc"))
-    ndvi_stack.to_netcdf(os.path.join(output_dir, f"ndvi_stack{suffix}.nc"))
     xr.Dataset(
         {
             "ET": et_daily,
