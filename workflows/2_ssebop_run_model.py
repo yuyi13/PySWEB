@@ -40,7 +40,6 @@ if CORE_DIR not in sys.path:
 from ssebop_au import (
     build_doy_climatology,
     compute_dt_daily,
-    crop_to_match_bounds,
     et_fraction_xr,
     load_worldcover_landcover,
     reproject_match,
@@ -89,7 +88,7 @@ def filter_landsat_files_by_date(
 
 
 def read_geotiff_bands(path: str) -> Dict[str, xr.DataArray]:
-    da = _as_float32(rioxarray.open_rasterio(path, masked=True))
+    da = rioxarray.open_rasterio(path, masked=True)
     with rasterio.open(path) as src:
         descriptions = list(src.descriptions)
     if not any(descriptions):
@@ -105,12 +104,6 @@ def ensure_spatial_dims(da: xr.DataArray) -> xr.DataArray:
         return da
     if {"lon", "lat"}.issubset(set(da.dims)):
         da = da.rename({"lon": "x", "lat": "y"})
-    return da
-
-
-def _as_float32(da: xr.DataArray) -> xr.DataArray:
-    if np.issubdtype(da.dtype, np.floating) and da.dtype != np.float32:
-        return da.astype("float32")
     return da
 
 
@@ -183,17 +176,17 @@ def open_silo_da(path: Union[str, Sequence[str]], var: Optional[str]) -> xr.Data
     da = ensure_spatial_dims(da)
     if da.rio.crs is None:
         da = da.rio.write_crs("EPSG:4326")
-    return _as_float32(da)
+    return da
 
 
 def scale_landsat_sr(band: xr.DataArray) -> xr.DataArray:
     """Scale Landsat Collection 2 Level-2 SR bands to reflectance."""
-    return _as_float32(band) * np.float32(0.0000275) + np.float32(-0.2)
+    return band * 0.0000275 - 0.2
 
 
 def scale_landsat_st(band: xr.DataArray) -> xr.DataArray:
     """Scale Landsat Collection 2 Level-2 ST_B10 to Kelvin."""
-    return _as_float32(band) * np.float32(0.00341802) + np.float32(149.0)
+    return band * 0.00341802 + 149.0
 
 
 def _slice_to_date_range(da: xr.DataArray, date_range: Optional[str]) -> xr.DataArray:
@@ -216,24 +209,48 @@ def build_lat_lon(template: xr.DataArray) -> Tuple[xr.DataArray, xr.DataArray]:
     if CRS.from_user_input(crs).to_epsg() == 4326:
         lon = xr.DataArray(xv, dims=("y", "x"))
         lat = xr.DataArray(yv, dims=("y", "x"))
-        return _as_float32(lat), _as_float32(lon)
+        return lat, lon
 
     transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
     lon_vals, lat_vals = transformer.transform(xv, yv)
     lat = xr.DataArray(lat_vals, dims=("y", "x"))
     lon = xr.DataArray(lon_vals, dims=("y", "x"))
-    return _as_float32(lat), _as_float32(lon)
+    return lat, lon
+
+
+def assign_dim_coords_from_reference(
+    data: xr.DataArray,
+    reference: xr.DataArray,
+    exclude_dims: Sequence[str] = (),
+) -> xr.DataArray:
+    """Copy exact dimension coordinates from a reference grid."""
+    excluded = set(exclude_dims)
+    coords = {}
+    for dim in data.dims:
+        if dim in excluded or dim not in reference.dims or dim not in reference.coords:
+            continue
+        if data.sizes[dim] != reference.sizes[dim]:
+            raise ValueError(
+                f"Cannot assign coordinate '{dim}': size {data.sizes[dim]} does not match reference size {reference.sizes[dim]}"
+            )
+        coords[dim] = reference.coords[dim].copy()
+    if not coords:
+        return data
+    return data.assign_coords(coords)
 
 
 def load_output_stack(
     records: Sequence[Tuple[np.datetime64, str]],
     var_name: str,
+    reference_grid: Optional[xr.DataArray] = None,
 ) -> xr.DataArray:
     arrays: List[xr.DataArray] = []
     times: List[np.datetime64] = []
     for ts, path in sorted(records, key=lambda item: item[0]):
         da = rioxarray.open_rasterio(path, masked=True).squeeze("band", drop=True).rename(var_name)
-        da = _as_float32(da).load()
+        if reference_grid is not None:
+            da = assign_dim_coords_from_reference(da, reference_grid)
+        da = da.load()
         arrays.append(da.assign_coords(time=ts).expand_dims("time"))
         times.append(ts)
     return xr.concat(arrays, dim="time").assign_coords(time=times)
@@ -274,7 +291,10 @@ def interpolate_etf_daily(
         coords={"time": daily_time_dt.values},
         dims=("time",),
     )
-    return etf_daily.where(mask)
+    etf_daily = etf_daily.where(mask)
+    etf_daily = etf_daily.transpose(*etf_stack.dims)
+    etf_daily = assign_dim_coords_from_reference(etf_daily, etf_stack, exclude_dims=("time",))
+    return etf_daily
 
 
 def _gapfill_flat_chunk(
@@ -424,12 +444,12 @@ def process_landsat_scene(
         lst = lst.where(water_mask == 0)
         ndvi = ndvi.where(water_mask == 0)
 
-    dt = _as_float32(reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear"))
+    dt = reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear")
     tcold = tcold_fano_simple_xr(lst, ndvi, dt)
-    etf = _as_float32(et_fraction_xr(lst, tcold, dt).rename("etf"))
+    etf = et_fraction_xr(lst, tcold, dt).rename("etf")
     ts = np.datetime64(date_str, "ns")
     etf = etf.assign_coords(time=ts).expand_dims("time")
-    ndvi_out = _as_float32(ndvi.rename("ndvi")).assign_coords(time=ts).expand_dims("time")
+    ndvi_out = ndvi.rename("ndvi").assign_coords(time=ts).expand_dims("time")
 
     # Drop transient coordinates that can conflict during later dataset merges.
     for coord in ("dayofyear", "band"):
@@ -439,11 +459,11 @@ def process_landsat_scene(
             ndvi_out = ndvi_out.drop_vars(coord)
 
     out_etf = os.path.join(etf_dir, f"etf_{date_str}.tif")
-    etf_single = _as_float32(etf.squeeze("time", drop=True))
+    etf_single = etf.squeeze("time", drop=True)
     etf_single.rio.write_crs(template_crs, inplace=True)
     etf_single.rio.to_raster(out_etf)
     out_ndvi = os.path.join(ndvi_dir, f"ndvi_{date_str}.tif")
-    ndvi_single = _as_float32(ndvi_out.squeeze("time", drop=True))
+    ndvi_single = ndvi_out.squeeze("time", drop=True)
     ndvi_single.rio.write_crs(template_crs, inplace=True)
     ndvi_single.rio.to_raster(out_ndvi)
 
@@ -557,7 +577,7 @@ def main() -> None:
         water_mask = None
 
     dem = rioxarray.open_rasterio(dem_path, masked=True).squeeze("band", drop=True)
-    dem = _as_float32(reproject_match_crop_first(dem, template, resampling="bilinear", buffer=buffer)).load()
+    dem = reproject_match_crop_first(dem, template, resampling="bilinear", buffer=buffer).load()
 
     inferred = _infer_silo_paths(date_range, silo_dir)
     if not et_short_crop:
@@ -585,21 +605,48 @@ def main() -> None:
             + ". Provide date_range and silo_dir for inference, or explicit file paths."
         )
 
-    tmax = crop_to_match_bounds(_slice_to_date_range(open_silo_da(tmax_path, tmax_var), date_range), template).load()
-    tmin = crop_to_match_bounds(_slice_to_date_range(open_silo_da(tmin_path, tmin_var), date_range), template).load()
-    rs = crop_to_match_bounds(_slice_to_date_range(open_silo_da(rs_path, rs_var), date_range), template).load()
-    ea = crop_to_match_bounds(_slice_to_date_range(open_silo_da(ea_path, ea_var), date_range), template).load()
+    tmax = (
+        reproject_match_crop_first(
+            _slice_to_date_range(open_silo_da(tmax_path, tmax_var), date_range),
+            template,
+            resampling="bilinear",
+            buffer=buffer,
+        )
+    ).load()
+    tmin = (
+        reproject_match_crop_first(
+            _slice_to_date_range(open_silo_da(tmin_path, tmin_var), date_range),
+            template,
+            resampling="bilinear",
+            buffer=buffer,
+        )
+    ).load()
+    rs = (
+        reproject_match_crop_first(
+            _slice_to_date_range(open_silo_da(rs_path, rs_var), date_range),
+            template,
+            resampling="bilinear",
+            buffer=buffer,
+        )
+    ).load()
+    ea = (
+        reproject_match_crop_first(
+            _slice_to_date_range(open_silo_da(ea_path, ea_var), date_range),
+            template,
+            resampling="bilinear",
+            buffer=buffer,
+        )
+    ).load()
 
     if silo_temp_units == "celsius":
-        tmax = tmax + np.float32(273.15)
-        tmin = tmin + np.float32(273.15)
+        tmax = tmax + 273.15
+        tmin = tmin + 273.15
 
-    silo_template = tmax.isel(time=0, drop=True)
-    dem_silo = _as_float32(reproject_match_crop_first(dem, silo_template, resampling="bilinear"))
-    lat_deg, _ = build_lat_lon(silo_template)
+    dem_silo = dem
+    lat_deg, _ = build_lat_lon(template)
 
-    dt_daily = _as_float32(compute_dt_daily(tmax, tmin, dem_silo, lat_deg, rs_mj_m2_day=rs, ea_kpa=ea)).load()
-    dt_clim = _as_float32(build_doy_climatology(dt_daily)).load()
+    dt_daily = compute_dt_daily(tmax, tmin, dem_silo, lat_deg, rs_mj_m2_day=rs, ea_kpa=ea).load()
+    dt_clim = build_doy_climatology(dt_daily).load()
 
     del dt_daily
     del tmax
@@ -609,7 +656,14 @@ def main() -> None:
     del dem_silo
     del lat_deg
 
-    eto = crop_to_match_bounds(_slice_to_date_range(open_silo_da(et_short_crop, et_short_crop_var), date_range), template).load()
+    eto = (
+        reproject_match_crop_first(
+            _slice_to_date_range(open_silo_da(et_short_crop, et_short_crop_var), date_range),
+            template,
+            resampling="bilinear",
+            buffer=buffer,
+        )
+    ).load()
 
     scene_outputs: List[Tuple[np.datetime64, str, str]] = []
     template_crs = template.rio.crs
@@ -659,8 +713,16 @@ def main() -> None:
         finally:
             _SCENE_WORKER_CONTEXT = None
 
-    etf_stack = load_output_stack([(ts, etf_path_out) for ts, etf_path_out, _ in scene_outputs], "etf")
-    ndvi_stack = load_output_stack([(ts, ndvi_path_out) for ts, _, ndvi_path_out in scene_outputs], "ndvi")
+    etf_stack = load_output_stack(
+        [(ts, etf_path_out) for ts, etf_path_out, _ in scene_outputs],
+        "etf",
+        reference_grid=template,
+    )
+    ndvi_stack = load_output_stack(
+        [(ts, ndvi_path_out) for ts, _, ndvi_path_out in scene_outputs],
+        "ndvi",
+        reference_grid=template,
+    )
     if gapfill_etf:
         window_days = gapfill_window_days if gapfill_window_days is not None else max_gap_days
         etf_stack = gapfill_etf_savgol(etf_stack, window_days, gapfill_min_samples, workers=workers)
@@ -670,8 +732,8 @@ def main() -> None:
     daily_index = pd.date_range(etf_start, etf_end, freq="D")
     daily_time = xr.DataArray(daily_index.values, coords={"time": daily_index.values}, dims=("time",))
 
-    etf_daily = _as_float32(interpolate_etf_daily(etf_stack, daily_time, max_gap_days).rename("etf_interp"))
-    ndvi_daily = _as_float32(interpolate_etf_daily(ndvi_stack, daily_time, max_gap_days).rename("ndvi_interp"))
+    etf_daily = interpolate_etf_daily(etf_stack, daily_time, max_gap_days).rename("etf_interp")
+    ndvi_daily = interpolate_etf_daily(ndvi_stack, daily_time, max_gap_days).rename("ndvi_interp")
 
     suffix = ""
     if date_range:
@@ -683,13 +745,12 @@ def main() -> None:
     del etf_stack
     del ndvi_stack
 
-    eto = eto.sel(time=slice(daily_index.min(), daily_index.max()))
-    eto = _as_float32(reproject_match_crop_first(eto, template, resampling="bilinear", buffer=buffer)).load()
-    et_daily = _as_float32((etf_daily * eto).rename("ET"))
+    eto = eto.sel(time=daily_index.values)
+    et_daily = (etf_daily * eto).rename("ET")
     del eto
-    tc_daily = _as_float32((np.float32(1.26) * ndvi_daily - np.float32(0.18)).clip(0.0, 1.0).rename("Tc"))
-    t_daily = _as_float32((et_daily * tc_daily).rename("T"))
-    e_daily = _as_float32((et_daily - t_daily).rename("E"))
+    tc_daily = (1.26 * ndvi_daily - 0.18).clip(0.0, 1.0).rename("Tc")
+    t_daily = (et_daily * tc_daily).rename("T")
+    e_daily = (et_daily - t_daily).rename("E")
 
     tc_daily.attrs.update(
         {

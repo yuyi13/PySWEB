@@ -128,44 +128,6 @@ def reproject_match(
     return source.rio.reproject_match(match, resampling=resampling_enum)
 
 
-def _coord_step(data_array: xr.DataArray, dim: str) -> float:
-    coord = data_array.coords[dim].values
-    if coord.size < 2:
-        return 0.0
-    return abs(float(coord[1] - coord[0]))
-
-
-def crop_to_match_bounds(
-    source: xr.DataArray,
-    match: xr.DataArray,
-    pad_cells: float = 1.0,
-) -> xr.DataArray:
-    """Crop to the match bounds while preserving the source grid."""
-    if source.rio.crs is None:
-        raise ValueError("source must have a CRS")
-    if match.rio.crs is None:
-        raise ValueError("match must have a CRS")
-
-    left, bottom, right, top = transform_bounds(
-        match.rio.crs,
-        source.rio.crs,
-        *match.rio.bounds(),
-        densify_pts=21,
-    )
-    x_pad = _coord_step(source, "x") * pad_cells
-    y_pad = _coord_step(source, "y") * pad_cells
-    try:
-        return source.rio.clip_box(
-            left - x_pad,
-            bottom - y_pad,
-            right + x_pad,
-            top + y_pad,
-            allow_one_dimensional_raster=True,
-        )
-    except Exception:
-        return source
-
-
 def reproject_match_crop_first(
     source: xr.DataArray,
     match: xr.DataArray,
