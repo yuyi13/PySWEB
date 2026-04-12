@@ -2,6 +2,11 @@
 
 # The Sydney Soil Water-Energy Balance (SWEB) Model (work in progress)
 
+[![Python](https://img.shields.io/badge/Python-3.9+-306998?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Article](https://img.shields.io/badge/Article-Come%20Soon-0072BC?style=flat)]()
+[![Dataset](https://img.shields.io/badge/Dataset-Release%20Soon-1682D4?style=flat)]()
+
+
 Python workflows for generating root-zone soil moisture from gridded precipitation, evapotranspiration, and soil hydraulic properties. The repository is under active development; interfaces and defaults may change.
 
 ## Current repository structure
