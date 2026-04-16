@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Script: sweb_domain_runner.sh
-# Objective: Orchestrate SWEB preprocessing, domain calibration, and model execution for a selected run subdirectory.
+# Objective: Orchestrate SWEB preprocessing, domain calibration, and model execution for a selected run subdirectory using ERA5-Land precipitation and SSEBop ET.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-02-25
+# Last updated: 2026-04-16
 # Inputs: run_subdir plus optional flags (--burn-in-end, --workers, --uncalibrated, step toggles) and forcing paths.
 # Outputs: Preprocessed SWEB inputs, domain calibration CSV, and SWEB RZSM outputs.
 # Usage: bash workflows/sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
-# Requirements: bash, date, python, xarray-capable environment, project workflow scripts
+# Requirements: bash, date, python, xarray-capable environment, project workflow scripts, access to ERA5-Land precipitation stacks and SSEBop outputs
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.
@@ -29,7 +29,7 @@ print_badge() {
   cat <<EOF
 ${C_CYAN}${C_BOLD}+----------------------------------------------+
 |                 SWEB RUNNER                  |
-|            Domain preprocess/calib/run       |
+|        ERA5-Land precip + SSEBop ET          |
 +----------------------------------------------+${C_RESET}
 EOF
 }
@@ -81,9 +81,7 @@ CALIB_DIFF_MIN="0.0"
 CALIB_DIFF_MAX="10000.0"
 
 # Forcing and reference inputs.
-RAIN_ROOT="/g/data/yx97/EO_collections/SILO"
-RAIN_PATTERN="{year}.daily_rain.nc"
-RAIN_VAR="daily_rain"
+PRECIP_DIR_BASE="${PROJECT_DIR}/1_era5land_stacks"
 ET_DIR="/g/data/ym05/sweb_model/2_ssebop_outputs"
 ET_PATTERN="et_daily_ssebop_*.nc"
 E_VAR="E"
@@ -142,7 +140,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 Usage: sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
 
-  run_subdir        Subdirectory under 2_ssebop_outputs/3_sweb_inputs/4_sweb_outputs.
+  run_subdir        Run label used to locate ERA5-Land stacks, SSEBop outputs, and SWEB outputs.
   MODEL_RUN_PERIOD/CALIB_PERIOD are configured near the top of this script.
                     If CALIB_PERIOD is outside MODEL_RUN_PERIOD, Step 1 preprocesses both periods.
   --burn-in-end     Burn-in end date (YYYY-MM-DD). Burn-in start is fixed to MODEL_RUN_PERIOD start.
@@ -275,6 +273,7 @@ if ! POST_BURN_START="$(date -d "${BURN_IN_END} +1 day" +%Y-%m-%d 2>/dev/null)";
 fi
 
 ET_DIR="${ET_DIR}/${RUN_SUBDIR}"
+PRECIP_DIR="${PRECIP_DIR_BASE}/${RUN_SUBDIR}"
 PREPROCESS_OUT_DIR="${PREPROCESS_OUT_DIR}/${RUN_SUBDIR}"
 MODEL_OUT_DIR="${MODEL_OUT_DIR}/${RUN_SUBDIR}"
 CALIB_OUTPUT="${PREPROCESS_OUT_DIR}/domain_calibration.csv"
@@ -296,6 +295,7 @@ if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
 else
   print_config "Preprocess plan" "dual runs (CALIB_PERIOD outside MODEL_RUN_PERIOD)"
 fi
+print_config "Precip source dir" "${PRECIP_DIR}"
 print_config "ET source dir" "${ET_DIR}"
 print_config "Input dir" "${PREPROCESS_OUT_DIR}"
 print_config "Output dir" "${MODEL_OUT_DIR}"
@@ -342,28 +342,62 @@ find_et_source_file() {
   return 1
 }
 
+find_precip_source_file() {
+  local target_start="$1"
+  local target_end="$2"
+  local target_start_ts="$3"
+  local target_end_ts="$4"
+  local candidate=""
+  local precip_start=""
+  local precip_end=""
+  local precip_start_ts=""
+  local precip_end_ts=""
+
+  for candidate in "${PRECIP_DIR}"/precipitation_daily_*.nc; do
+    [[ -f "${candidate}" ]] || continue
+    if [[ "${candidate}" =~ precipitation_daily_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{4}-[0-9]{2}-[0-9]{2})\.nc$ ]]; then
+      precip_start="${BASH_REMATCH[1]}"
+      precip_end="${BASH_REMATCH[2]}"
+      if precip_start_ts="$(date -d "${precip_start}" +%s 2>/dev/null)" && \
+         precip_end_ts="$(date -d "${precip_end}" +%s 2>/dev/null)"; then
+        if (( target_start_ts >= precip_start_ts )) && (( target_end_ts <= precip_end_ts )); then
+          echo "${candidate}"
+          return 0
+        fi
+      fi
+    fi
+  done
+
+  echo "No precipitation file in ${PRECIP_DIR} matches precipitation_daily_*.nc covering ${target_start} to ${target_end}." >&2
+  return 1
+}
+
 run_preprocess_for_window() {
   local window_label="$1"
   local window_start="$2"
   local window_end="$3"
   local window_start_ts="$4"
   local window_end_ts="$5"
+  local rain_source_file=""
   local et_source_file=""
 
+  if ! rain_source_file="$(find_precip_source_file "${window_start}" "${window_end}" "${window_start_ts}" "${window_end_ts}")"; then
+    return 1
+  fi
   if ! et_source_file="$(find_et_source_file "${window_start}" "${window_end}" "${window_start_ts}" "${window_end_ts}")"; then
     return 1
   fi
 
   print_status "STEP 1/3" "Preprocessing ${window_label}: ${window_start} to ${window_end}"
+  print_status "STEP 1/3" "Using rain file: ${rain_source_file}"
   print_status "STEP 1/3" "Using ET file: ${et_source_file}"
   python "${PREPROCESS_SCRIPT}" \
       --date-range "${window_start}" "${window_end}" \
       --extent "${EXTENT_ARGS[@]}" \
       --sm-res "${SM_RES}" \
       --workers "${N_WORKERS}" \
-      --rain-root "${RAIN_ROOT}" \
-      --rain-filename-pattern "${RAIN_PATTERN}" \
-      --rain-var "${RAIN_VAR}" \
+      --rain-file "${rain_source_file}" \
+      --rain-var "precipitation" \
       --et-file "${et_source_file}" \
       --e-var "${E_VAR}" \
       --et-var "${ET_VAR}" \

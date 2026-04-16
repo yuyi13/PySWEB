@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Script: ssebop_runner_landsat.sh
-# Objective: Orchestrate SSEBop input preparation and Landsat/SILO ET runs for a selected run subdirectory.
+# Objective: Orchestrate Landsat prep, ERA5-Land daily meteorology downloads/stacks, and SSEBop ET runs for a selected run subdirectory.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-02-25
+# Last updated: 2026-04-16
 # Inputs: run_subdir plus optional flags (--mute-download, --mute-run, --workers) and configured data paths.
-# Outputs: Prepared SSEBop inputs and ET model outputs under run-specific project directories.
+# Outputs: Prepared Landsat inputs, ERA5-Land daily GeoTIFF/NetCDF products, and ET model outputs under run-specific project directories.
 # Usage: bash workflows/ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--workers N]
-# Requirements: bash, date, mktemp, python, project workflow scripts, access to Landsat/SILO/DEM/landcover data
+# Requirements: bash, date, mktemp, python, project workflow scripts, access to Landsat/ERA5-Land/DEM/landcover data
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.
@@ -29,7 +29,7 @@ print_badge() {
   cat <<EOF
 ${C_CYAN}${C_BOLD}+----------------------------------------------+
 |                 SSEBop RUNNER                |
-|              Landsat + SILO workflow         |
+|           Landsat + ERA5-Land workflow       |
 +----------------------------------------------+${C_RESET}
 EOF
 }
@@ -101,10 +101,13 @@ run_with_progress() {
 }
 
 # Project paths.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="/g/data/ym05/sweb_model"
 
-# Shared spatial/temporal setup for both GEE download and SSEBop run.
+# Shared spatial/temporal setup for Landsat prep, ERA5-Land download/stack, and SSEBop run.
 DATE_RANGE="2020-11-01 to 2026-02-11"
+MET_START_DATE="${DATE_RANGE%% to *}"
+MET_END_DATE="${DATE_RANGE##* to }"
 
 #EXTENT="147.48, -34.79, 147.52, -34.75" # Summer Hill
 #EXTENT="148.62, -33.51, 148.66, -33.47" # The Pines
@@ -113,7 +116,8 @@ EXTENT="147.20, -35.10, 147.30, -35.00" # North Wagga
 
 # Input/output locations.
 INPUT_DIR="${PROJECT_DIR}/1_ssebop_inputs"
-SILO_DIR="/g/data/yx97/EO_collections/SILO"
+MET_RAW_BASE="${PROJECT_DIR}/1_era5land_raw"
+MET_STACK_BASE="${PROJECT_DIR}/1_era5land_stacks"
 OUTPUT_DIR="${PROJECT_DIR}/2_ssebop_outputs"
 
 # Landsat/SSEBop settings for band mapping and ET interpolation.
@@ -123,7 +127,7 @@ NIR_BAND="SR_B5"
 LST_BAND="ST_B10"
 MAX_GAP_DAYS="32"
 APPLY_WATER_MASK="false"
-SILO_TEMP_UNITS="celsius"
+MET_TEMP_UNITS="celsius"
 GAPFILL_ETF="true"
 GAPFILL_WINDOW_DAYS="32"
 GAPFILL_MIN_SAMPLES="5"
@@ -157,8 +161,8 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 Usage: ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--workers N]
 
-  run_subdir     Subdirectory under 1_input_data for downloaded data.
-  --mute-download  Skip Step 1 (GEE download/config prep).
+  run_subdir      Run label used to locate Landsat, ERA5-Land raw, ERA5-Land stack, and SSEBop output subdirectories.
+  --mute-download  Skip Step 1 (Landsat + ERA5-Land download/stack prep).
   --mute-run       Skip Step 2 (SSEBop model run).
   --workers N      Number of parallel scene workers for Step 2.
 USAGE
@@ -187,13 +191,19 @@ fi
 
 RUN_INPUT_DIR="${INPUT_DIR}/${RUN_SUBDIR}"
 mkdir -p "${RUN_INPUT_DIR}"
+RUN_MET_RAW_DIR="${MET_RAW_BASE}/${RUN_SUBDIR}"
+mkdir -p "${RUN_MET_RAW_DIR}"
+RUN_MET_STACK_DIR="${MET_STACK_BASE}/${RUN_SUBDIR}"
+mkdir -p "${RUN_MET_STACK_DIR}"
 RUN_OUTPUT_DIR="${OUTPUT_DIR}/${RUN_SUBDIR}"
 mkdir -p "${RUN_OUTPUT_DIR}"
 
 print_badge
 print_status "CONFIG" "Date range : ${DATE_RANGE}"
 print_status "CONFIG" "Extent     : ${EXTENT}"
-print_status "CONFIG" "Input dir  : ${RUN_INPUT_DIR}"
+print_status "CONFIG" "Landsat dir: ${RUN_INPUT_DIR}"
+print_status "CONFIG" "ERA5 raw   : ${RUN_MET_RAW_DIR}"
+print_status "CONFIG" "ERA5 stack : ${RUN_MET_STACK_DIR}"
 print_status "CONFIG" "Output dir : ${RUN_OUTPUT_DIR}"
 echo
 
@@ -230,19 +240,30 @@ postprocess:
   enforce_float32: false
 YAML
 
-# Step 1: download Landsat (and optionally write a per-run GEE config).
+# Step 1: download Landsat plus ERA5-Land daily meteorology and stack the daily rasters.
 if [[ "${RUN_DOWNLOAD}" == "true" ]]; then
-  print_status "STEP 1/2" "Running SSEBop input preparation (GEE download)..."
-  python "1_ssebop_prepare_inputs.py" \
+  print_status "STEP 1/2" "Running Landsat prep and ERA5-Land download/stack..."
+  python "${SCRIPT_DIR}/1_ssebop_prepare_inputs.py" \
     --date-range "${DATE_RANGE}" \
     --extent "${EXTENT}" \
     --gee-config "${GEE_CONFIG}" \
     --out-dir "${RUN_INPUT_DIR}"
+  print_status "STEP 1/2" "Downloading ERA5-Land DAILY_AGGR rasters..."
+  python "${SCRIPT_DIR}/1b_download_era5land_daily.py" \
+    --date-range "${DATE_RANGE}" \
+    --extent "${EXTENT}" \
+    --output-dir "${RUN_MET_RAW_DIR}"
+  print_status "STEP 1/2" "Stacking ERA5-Land daily rasters into NetCDF forcing..."
+  python "${SCRIPT_DIR}/1c_stack_era5land_daily.py" \
+    --raw-dir "${RUN_MET_RAW_DIR}" \
+    --dem "${DEM_PATH}" \
+    --date-range "${MET_START_DATE}" "${MET_END_DATE}" \
+    --output-dir "${RUN_MET_STACK_DIR}"
 else
-  print_skip "STEP 1/2" "Skipping SSEBop input preparation (GEE download)."
+  print_skip "STEP 1/2" "Skipping Landsat + ERA5-Land download/stack prep."
 fi
 
-# Step 2: run SSEBop using local Landsat + pre-downloaded SILO data.
+# Step 2: run SSEBop using local Landsat scenes and ERA5-Land meteorology stacks.
 if [[ "${RUN_SSEBOP}" == "true" ]]; then
   MODEL_START_TS="$(date +%s)"
   LANDSAT_COUNT="$(find "${RUN_INPUT_DIR}" -maxdepth 1 -type f -name "${LANDSAT_PATTERN}" | wc -l | tr -d ' ')"
@@ -269,9 +290,9 @@ if [[ "${RUN_SSEBOP}" == "true" ]]; then
   print_status "STEP 2/2" "Date range        : ${DATE_RANGE}"
   print_status "STEP 2/2" "Landsat input dir : ${RUN_INPUT_DIR}"
   print_status "STEP 2/2" "Matched files     : ${LANDSAT_COUNT} (${LANDSAT_PATTERN})"
-  print_status "STEP 2/2" "SILO source dir   : ${SILO_DIR}"
+  print_status "STEP 2/2" "ERA5 stack dir    : ${RUN_MET_STACK_DIR}"
   print_status "STEP 2/2" "Band mapping      : red=${RED_BAND}, nir=${NIR_BAND}, lst=${LST_BAND}"
-  print_status "STEP 2/2" "Gap settings      : max_gap_days=${MAX_GAP_DAYS}, temp_units=${SILO_TEMP_UNITS}"
+  print_status "STEP 2/2" "Gap settings      : max_gap_days=${MAX_GAP_DAYS}, temp_units=${MET_TEMP_UNITS}"
   print_status "STEP 2/2" "Water mask        : ${APPLY_WATER_MASK}"
   print_status "STEP 2/2" "ETF gapfill       : ${GAPFILL_ETF} (window=${GAPFILL_WINDOW_DAYS}, min_samples=${GAPFILL_MIN_SAMPLES})"
   print_status "STEP 2/2" "Workers           : ${N_WORKERS}"
@@ -280,17 +301,21 @@ if [[ "${RUN_SSEBOP}" == "true" ]]; then
 
   RUN_ARGS=(
     --date-range "${DATE_RANGE}"
-    --silo-dir "${SILO_DIR}"
     --landsat-dir "${RUN_INPUT_DIR}"
     --landsat-pattern "${LANDSAT_PATTERN}"
     --red-band "${RED_BAND}"
     --nir-band "${NIR_BAND}"
     --lst-band "${LST_BAND}"
+    --et-short-crop "${RUN_MET_STACK_DIR}/et_short_crop_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
+    --tmax "${RUN_MET_STACK_DIR}/tmax_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
+    --tmin "${RUN_MET_STACK_DIR}/tmin_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
+    --rs "${RUN_MET_STACK_DIR}/rs_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
+    --ea "${RUN_MET_STACK_DIR}/ea_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
+    --met-temp-units "${MET_TEMP_UNITS}"
     --dem "${DEM_PATH}"
     --landcover "${LANDCOVER_PATH}"
     --output-dir "${RUN_OUTPUT_DIR}"
     --max-gap-days "${MAX_GAP_DAYS}"
-    --silo-temp-units "${SILO_TEMP_UNITS}"
     --workers "${N_WORKERS}"
   )
   if [[ "${APPLY_WATER_MASK}" == "true" ]]; then
