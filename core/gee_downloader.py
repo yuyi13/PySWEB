@@ -4,7 +4,7 @@ Script: gee_downloader.py
 Objective: Download and post-process Google Earth Engine composites used by SSEBop preprocessing workflows, including tiled fallback for oversized requests.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-03-20
+Last updated: 2026-04-16
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
 Usage: python core/gee_downloader.py <config.yaml>
@@ -347,6 +347,10 @@ class GEEDownloader:
             self.cfg.get("collections", self.cfg.get("collection"))
         )
         self.cfg["collection"] = self.cfg["collections"][0]
+        daily_strategy = str(self.cfg.get("daily_strategy", "median")).lower()
+        if daily_strategy not in {"median", "first"}:
+            raise ValueError("daily_strategy must be one of: median, first.")
+        self.cfg["daily_strategy"] = daily_strategy
         self.cfg.setdefault("crs", "EPSG:4326")
         self.cfg.setdefault("max_images", None)
         self.cfg.setdefault("tiling", {})
@@ -441,10 +445,10 @@ class GEEDownloader:
         dates = sorted({datetime.utcfromtimestamp(t / 1000).strftime("%Y-%m-%d") for t in ts})
         return dates
 
-    # ---- Build a per-day composite (mask-then-reduce-median) ----
+    # ---- Build a per-day daily image (mask + median or first-image selection) ----
     def _composite_for_day(self, day_str: str, collection: str) -> ee.Image:
         next_day = (datetime.strptime(day_str, "%Y-%m-%d") + relativedelta(days=1)).strftime("%Y-%m-%d")
-        col = ee.ImageCollection(collection).filterDate(day_str, next_day)
+        col = ee.ImageCollection(collection).filterDate(day_str, next_day).sort("system:time_start")
         if not self._is_globalish_extent():
             col = col.filterBounds(self._region())
 
@@ -453,6 +457,9 @@ class GEEDownloader:
                 m = build_mask_condition(ee.Image(im), self.cfg)
                 return ee.Image(im).updateMask(m)
             col = col.map(_apply_mask)
+
+        if self.cfg.get("daily_strategy", "median") == "first":
+            return ee.Image(col.first())
 
         composite = col.reduce(ee.Reducer.median())
         bnames = composite.bandNames()
