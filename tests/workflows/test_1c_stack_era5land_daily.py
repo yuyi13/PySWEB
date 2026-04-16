@@ -12,6 +12,8 @@ Dependencies: importlib, numpy, pytest, rasterio, xarray
 """
 from importlib import util
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -139,3 +141,46 @@ def test_workflow_writes_expected_daily_netcdfs(tmp_path):
         eto_values = ds_eto["et_short_crop"].values[:, 0, 0]
         assert eto_values[0] == pytest.approx(6.0, abs=0.5)
         assert eto_values[1] == pytest.approx(6.0, abs=0.5)
+
+
+def test_workflow_requires_complete_requested_date_range(tmp_path):
+    workflow_module = _load_workflow_module()
+    raw_dir = tmp_path / "raw"
+    out_dir = tmp_path / "out"
+    raw_dir.mkdir()
+    out_dir.mkdir()
+
+    for date_str in ["2024-01-01", "2024-01-03"]:
+        _write_daily_geotiff(raw_dir / f"ERA5LandDaily_{date_str}.tif")
+
+    dem_path = tmp_path / "dem.tif"
+    _write_dem(dem_path)
+
+    with pytest.raises(ValueError, match="do not cover every date in the range"):
+        workflow_module.main(
+            [
+                "--raw-dir",
+                str(raw_dir),
+                "--dem",
+                str(dem_path),
+                "--date-range",
+                "2024-01-01",
+                "2024-01-03",
+                "--output-dir",
+                str(out_dir),
+            ]
+        )
+
+
+def test_workflow_script_help_runs_with_project_root_bootstrap():
+    workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "1c_stack_era5land_daily.py"
+    result = subprocess.run(
+        [sys.executable, str(workflow_path), "--help"],
+        cwd=workflow_path.parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--raw-dir" in result.stdout

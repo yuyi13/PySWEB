@@ -84,3 +84,16 @@ def test_discover_daily_files_sorts_by_embedded_date(tmp_path):
         Path(raw_dir / "ERA5LandDaily_2024-01-02.tif"),
         Path(raw_dir / "ERA5LandDaily_2024-01-03.tif"),
     ]
+
+
+def test_discover_daily_files_ignores_yaml_sidecars(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    tif_path = raw_dir / "ERA5LandDaily_2024-01-01.tif"
+    yaml_path = raw_dir / "gee_config_era5land_2024-01-01_2024-01-03.yaml"
+    tif_path.write_bytes(b"")
+    yaml_path.write_text("download_dir: /tmp\n", encoding="utf-8")
+
+    files = discover_daily_files(raw_dir)
+
+    assert files == [tif_path]

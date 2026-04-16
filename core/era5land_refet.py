@@ -168,6 +168,7 @@ def compute_daily_eto_short(
     es_kpa = 0.5 * (
         _saturation_vapor_pressure_c(tmax) + _saturation_vapor_pressure_c(tmin)
     )
+    vpd_kpa = np.maximum(es_kpa - ea, 0.0)
     u2_m_s = uz * 4.87 / np.log(67.8 * zw - 5.42)
 
     ra_mj_m2_day = _extraterrestrial_radiation_mj_m2_day(lat, doy_arr)
@@ -178,6 +179,6 @@ def compute_daily_eto_short(
 
     numerator = 0.408 * delta_kpa_c * rn_mj_m2_day + psy_kpa_c * (
         CN_SHORT / (tmean + 273.0)
-    ) * u2_m_s * (es_kpa - ea)
+    ) * u2_m_s * vpd_kpa
     denominator = delta_kpa_c + psy_kpa_c * (1.0 + CD_SHORT * u2_m_s)
     return numerator / denominator

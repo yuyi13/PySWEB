@@ -13,7 +13,9 @@ Dependencies: argparse, datetime, pathlib, numpy, rasterio, xarray, core.era5lan
 from __future__ import annotations
 
 import argparse
-from datetime import date
+import os
+import sys
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Sequence
 
@@ -21,6 +23,10 @@ import numpy as np
 import rasterio
 import xarray as xr
 from rasterio.transform import xy
+
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
 
 from core.era5land_refet import (
     actual_vapor_pressure_from_dewpoint_c,
@@ -91,6 +97,11 @@ def _filter_date_range(paths: list[Path], start: date, end: date) -> list[Path]:
     selected = [path for path in paths if start <= extract_date_from_path(path) <= end]
     if not selected:
         raise ValueError(f"No daily ERA5-Land files were found between {start} and {end}.")
+    expected_dates = {start + timedelta(days=offset) for offset in range((end - start).days + 1)}
+    selected_dates = {extract_date_from_path(path) for path in selected}
+    if selected_dates != expected_dates:
+        missing = ", ".join(sorted(date_value.isoformat() for date_value in expected_dates - selected_dates))
+        raise ValueError(f"ERA5-Land daily files do not cover every date in the range. Missing: {missing}")
     return selected
 
 

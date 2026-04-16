@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 
 DATE_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})")
+DAILY_RASTER_SUFFIXES = {".tif", ".tiff"}
 
 
 def extract_date_from_path(path: Path) -> date:
@@ -34,6 +35,8 @@ def discover_daily_files(raw_dir: Path) -> list[Path]:
     daily_files: list[Path] = []
     for path in raw_dir.iterdir():
         if not path.is_file():
+            continue
+        if path.suffix.lower() not in DAILY_RASTER_SUFFIXES:
             continue
         try:
             extract_date_from_path(path)
