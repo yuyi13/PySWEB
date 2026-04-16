@@ -50,6 +50,7 @@ def write_era5land_config(
 ) -> Path:
     cfg = build_era5land_cfg(start_date=start_date, end_date=end_date, extent=extent, out_dir=output_dir)
     cfg_path = Path(output_dir) / f"gee_config_era5land_{start_date}_{end_date}.yaml"
+    os.makedirs(output_dir, exist_ok=True)
     with cfg_path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(cfg, handle, sort_keys=False)
     return cfg_path

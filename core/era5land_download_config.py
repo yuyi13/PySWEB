@@ -48,6 +48,8 @@ def build_era5land_cfg(
 ) -> dict:
     start_dt = _parse_date(start_date)
     end_dt = _parse_date(end_date)
+    if start_dt > end_dt:
+        raise ValueError("start_date must be on or before end_date.")
     coords = _validate_extent(extent)
 
     return {
