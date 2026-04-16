@@ -448,7 +448,7 @@ class GEEDownloader:
     # ---- Build a per-day daily image (mask + median or first-image selection) ----
     def _composite_for_day(self, day_str: str, collection: str) -> ee.Image:
         next_day = (datetime.strptime(day_str, "%Y-%m-%d") + relativedelta(days=1)).strftime("%Y-%m-%d")
-        col = ee.ImageCollection(collection).filterDate(day_str, next_day).sort("system:time_start")
+        col = ee.ImageCollection(collection).filterDate(day_str, next_day)
         if not self._is_globalish_extent():
             col = col.filterBounds(self._region())
 
@@ -459,6 +459,7 @@ class GEEDownloader:
             col = col.map(_apply_mask)
 
         if self.cfg.get("daily_strategy", "median") == "first":
+            col = col.sort("system:time_start")
             return ee.Image(col.first())
 
         composite = col.reduce(ee.Reducer.median())
