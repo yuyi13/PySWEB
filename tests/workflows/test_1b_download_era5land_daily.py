@@ -87,30 +87,37 @@ def test_build_era5land_cfg_rejects_reversed_date_range(tmp_path):
 
 
 def test_workflow_writes_config_and_invokes_downloader(tmp_path, monkeypatch):
-    recorded = {}
+    recorded = {
+        "init_paths": [],
+        "run_calls": 0,
+    }
 
     class FakeDownloader:
         def __init__(self, config_path):
-            recorded["config_path"] = config_path
+            recorded["init_paths"].append(config_path)
 
         def run(self):
-            recorded["run_called"] = True
+            recorded["run_calls"] += 1
 
     workflow_module = _load_workflow_module(monkeypatch)
     monkeypatch.setattr(workflow_module, "GEEDownloader", FakeDownloader)
-
-    cfg_path = workflow_module.write_era5land_config(
-        start_date="2024-01-01",
-        end_date="2024-01-03",
-        extent=[147.2, -35.1, 147.3, -35.0],
-        output_dir=str(tmp_path / "out"),
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "1b_download_era5land_daily.py",
+            "--date-range",
+            "2024-01-01 to 2024-01-03",
+            "--extent",
+            "147.2,-35.1,147.3,-35.0",
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
     )
 
-    assert cfg_path.name == "gee_config_era5land_2024-01-01_2024-01-03.yaml"
+    workflow_module.main()
+
+    cfg_path = tmp_path / "out" / "gee_config_era5land_2024-01-01_2024-01-03.yaml"
     assert cfg_path.exists()
-    assert recorded == {}
-
-    workflow_module.GEEDownloader(str(cfg_path)).run()
-
-    assert recorded["config_path"] == str(cfg_path)
-    assert recorded["run_called"] is True
+    assert recorded["init_paths"] == [str(cfg_path)]
+    assert recorded["run_calls"] == 1
