@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Script: 2_ssebop_run_model.py
-Objective: Run SSEBop evapotranspiration estimation from local Landsat scenes and SILO meteorological inputs.
+Objective: Run SSEBop evapotranspiration estimation from local Landsat scenes and meteorology inputs.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-03-20
-Inputs: YAML config/CLI options, Landsat GeoTIFFs, SILO meteorology files, DEM, landcover raster.
+Last updated: 2026-04-16
+Inputs: YAML config/CLI options, Landsat GeoTIFFs, meteorology NetCDF files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: python workflows/2_ssebop_run_model.py --help
 Dependencies: numpy, pandas, xarray, rasterio, rioxarray, pyproj, scipy, pyyaml
@@ -32,11 +32,12 @@ import yaml
 from pyproj import CRS, Transformer
 from scipy.signal import savgol_filter
 
-PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CORE_DIR = os.path.join(PROJECT_DIR, "core")
 if CORE_DIR not in sys.path:
     sys.path.insert(0, CORE_DIR)
 
+from met_input_paths import infer_met_var_from_path, resolve_met_input_paths
 from ssebop_au import (
     build_doy_climatology,
     compute_dt_daily,
@@ -107,49 +108,13 @@ def ensure_spatial_dims(da: xr.DataArray) -> xr.DataArray:
     return da
 
 
-def _infer_silo_var_from_path(path: str) -> Optional[str]:
-    name = os.path.basename(path)
-    parts = name.split(".")
-    if len(parts) >= 2:
-        return parts[1]
-    return None
-
-
-def _years_in_range(date_range: str) -> List[int]:
-    start_date, end_date = parse_date_range(date_range)
-    start_year = datetime.fromisoformat(start_date).year
-    end_year = datetime.fromisoformat(end_date).year
-    return list(range(start_year, end_year + 1))
-
-
-def _infer_silo_paths(
-    date_range: Optional[str],
-    silo_dir: Optional[str],
-) -> Dict[str, List[str]]:
-    if not date_range or not silo_dir:
-        return {}
-    years = _years_in_range(date_range)
-    paths = {
-        "et_short_crop": [os.path.join(silo_dir, f"{year}.et_short_crop.nc") for year in years],
-        "tmax": [os.path.join(silo_dir, f"{year}.max_temp.nc") for year in years],
-        "tmin": [os.path.join(silo_dir, f"{year}.min_temp.nc") for year in years],
-        "rs": [os.path.join(silo_dir, f"{year}.radiation.nc") for year in years],
-        "ea": [os.path.join(silo_dir, f"{year}.vp.nc") for year in years],
-    }
-    missing = [p for plist in paths.values() for p in plist if not os.path.exists(p)]
-    if missing:
-        missing_str = ", ".join(missing)
-        raise ValueError(f"Missing SILO files for date_range: {missing_str}")
-    return paths
-
-
 def _coerce_paths(path: Union[str, Sequence[str]]) -> List[str]:
     if isinstance(path, (list, tuple)):
         return list(path)
     return [path]
 
 
-def open_silo_da(path: Union[str, Sequence[str]], var: Optional[str]) -> xr.DataArray:
+def open_meteorology_da(path: Union[str, Sequence[str]], var: Optional[str]) -> xr.DataArray:
     paths = _coerce_paths(path)
     if len(paths) == 1:
         ds = xr.open_dataset(paths[0])
@@ -166,7 +131,7 @@ def open_silo_da(path: Union[str, Sequence[str]], var: Optional[str]) -> xr.Data
                 datasets.append(ds_part)
             ds = xr.combine_by_coords(datasets, combine_attrs="override")
     if var is None:
-        var = _infer_silo_var_from_path(paths[0])
+        var = infer_met_var_from_path(paths[0])
     if var:
         if var not in ds:
             raise ValueError(f"Variable '{var}' not found in {path}")
@@ -471,11 +436,12 @@ def process_landsat_scene(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run SSEBop with local inputs")
+    parser = argparse.ArgumentParser(description="Run SSEBop with local Landsat scenes and meteorology inputs")
     parser.add_argument("config_pos", nargs="?", help="YAML config file with input parameters")
     parser.add_argument("--config", help="YAML config file with input parameters")
     parser.add_argument("--date-range", default=None)
-    parser.add_argument("--silo-dir", default=None)
+    parser.add_argument("--silo-dir", default=None, help="Directory containing legacy SILO yearly NetCDF inputs.")
+    parser.add_argument("--met-dir", default=None, help="Directory containing ERA5-Land daily stack NetCDF inputs.")
     parser.add_argument("--landsat-dir", default=None)
     parser.add_argument("--landsat-pattern", default="*.tif")
     parser.add_argument("--lst-band", default="lst")
@@ -515,6 +481,7 @@ def main() -> None:
 
     date_range = _cfg("date_range")
     silo_dir = _cfg("silo_dir")
+    met_dir = _cfg("met_dir")
     landsat_dir = _cfg("landsat_dir")
     landsat_pattern = _cfg("landsat_pattern")
     lst_band = _cfg("lst_band")
@@ -579,35 +546,41 @@ def main() -> None:
     dem = rioxarray.open_rasterio(dem_path, masked=True).squeeze("band", drop=True)
     dem = reproject_match_crop_first(dem, template, resampling="bilinear", buffer=buffer).load()
 
-    inferred = _infer_silo_paths(date_range, silo_dir)
-    if not et_short_crop:
-        et_short_crop = inferred.get("et_short_crop")
-    if not tmax_path:
-        tmax_path = inferred.get("tmax")
-    if not tmin_path:
-        tmin_path = inferred.get("tmin")
-    if not rs_path:
-        rs_path = inferred.get("rs")
-    if not ea_path:
-        ea_path = inferred.get("ea")
+    met_paths = {
+        "et_short_crop": resolve_met_input_paths("et_short_crop", et_short_crop, met_dir, silo_dir, date_range),
+        "tmax": resolve_met_input_paths("tmax", tmax_path, met_dir, silo_dir, date_range),
+        "tmin": resolve_met_input_paths("tmin", tmin_path, met_dir, silo_dir, date_range),
+        "rs": resolve_met_input_paths("rs", rs_path, met_dir, silo_dir, date_range),
+        "ea": resolve_met_input_paths("ea", ea_path, met_dir, silo_dir, date_range),
+    }
+    et_short_crop = met_paths["et_short_crop"]
+    tmax_path = met_paths["tmax"]
+    tmin_path = met_paths["tmin"]
+    rs_path = met_paths["rs"]
+    ea_path = met_paths["ea"]
 
-    missing_paths = [k for k, v in {
-        "et_short_crop": et_short_crop,
-        "tmax": tmax_path,
-        "tmin": tmin_path,
-        "rs": rs_path,
-        "ea": ea_path,
-    }.items() if not v]
+    missing_paths = [k for k, v in met_paths.items() if not v]
     if missing_paths:
         raise ValueError(
-            "Missing SILO paths: "
+            "Missing meteorology paths: "
             + ", ".join(missing_paths)
-            + ". Provide date_range and silo_dir for inference, or explicit file paths."
+            + ". Provide explicit NetCDF paths, or use --met-dir with --date-range for ERA5-Land stacks, "
+            + "or --silo-dir with --date-range for legacy SILO files."
         )
+
+    missing_silo_files = [
+        path
+        for value in met_paths.values()
+        if isinstance(value, (list, tuple))
+        for path in value
+        if not os.path.exists(path)
+    ]
+    if missing_silo_files:
+        raise ValueError(f"Missing legacy SILO files for date_range: {', '.join(missing_silo_files)}")
 
     tmax = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_silo_da(tmax_path, tmax_var), date_range),
+            _slice_to_date_range(open_meteorology_da(tmax_path, tmax_var), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -615,7 +588,7 @@ def main() -> None:
     ).load()
     tmin = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_silo_da(tmin_path, tmin_var), date_range),
+            _slice_to_date_range(open_meteorology_da(tmin_path, tmin_var), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -623,7 +596,7 @@ def main() -> None:
     ).load()
     rs = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_silo_da(rs_path, rs_var), date_range),
+            _slice_to_date_range(open_meteorology_da(rs_path, rs_var), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -631,7 +604,7 @@ def main() -> None:
     ).load()
     ea = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_silo_da(ea_path, ea_var), date_range),
+            _slice_to_date_range(open_meteorology_da(ea_path, ea_var), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -658,7 +631,7 @@ def main() -> None:
 
     eto = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_silo_da(et_short_crop, et_short_crop_var), date_range),
+            _slice_to_date_range(open_meteorology_da(et_short_crop, et_short_crop_var), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
