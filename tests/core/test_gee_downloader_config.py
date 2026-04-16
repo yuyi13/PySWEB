@@ -139,6 +139,11 @@ def test_daily_strategy_defaults_to_median(tmp_path):
     assert downloader.cfg["daily_strategy"] == "median"
 
 
+def test_daily_strategy_explicit_median(tmp_path):
+    downloader = GEEDownloader(_write_config(tmp_path, daily_strategy="median"))
+    assert downloader.cfg["daily_strategy"] == "median"
+
+
 @pytest.mark.parametrize("daily_strategy", ["FIRST"])
 def test_daily_strategy_accepts_first(tmp_path, daily_strategy):
     downloader = GEEDownloader(_write_config(tmp_path, daily_strategy=daily_strategy))
