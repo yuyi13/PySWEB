@@ -46,7 +46,19 @@ def years_in_date_range(date_range: str) -> List[int]:
     return list(range(start_year, end_year + 1))
 
 
-def infer_met_var_from_path(path: str) -> Optional[str]:
+def _validate_resolved_paths(resolved: Union[str, Sequence[str]], field: str) -> Union[str, Sequence[str]]:
+    paths = [resolved] if isinstance(resolved, str) else list(resolved)
+    missing = [path for path in paths if not Path(path).exists()]
+    if missing:
+        if len(missing) == 1:
+            raise FileNotFoundError(f"Missing meteorology input for {field}: {missing[0]}")
+        raise FileNotFoundError(
+            f"Missing meteorology inputs for {field}: {', '.join(missing)}"
+        )
+    return resolved
+
+
+def infer_met_var_from_path(path: str, default_var: Optional[str] = None) -> Optional[str]:
     stem = Path(path).stem
     match = ERA5LAND_DAILY_STACK_PATTERN.match(stem)
     if match is not None:
@@ -55,6 +67,9 @@ def infer_met_var_from_path(path: str) -> Optional[str]:
     match = SILO_YEAR_FILE_PATTERN.match(stem)
     if match is not None:
         return match.group("field")
+
+    if default_var is not None and stem not in MET_FIELDS:
+        return default_var
 
     return stem or None
 
@@ -70,6 +85,7 @@ def resolve_met_input_paths(
         raise ValueError(f"Unsupported meteorology field: {field}")
 
     if explicit_path:
+        _validate_resolved_paths(explicit_path, field)
         return explicit_path
 
     if met_dir:
@@ -78,12 +94,16 @@ def resolve_met_input_paths(
                 f"--met-dir requires --date-range to infer {field} daily stack filenames."
             )
         start_date, end_date = parse_date_range(date_range)
-        return str(Path(met_dir) / f"{field}_daily_{start_date}_{end_date}.nc")
+        resolved = str(Path(met_dir) / f"{field}_daily_{start_date}_{end_date}.nc")
+        _validate_resolved_paths(resolved, field)
+        return resolved
 
     if silo_dir and date_range:
-        return [
+        resolved = [
             str(Path(silo_dir) / f"{year}.{SILO_FILENAME_SUFFIX[field]}")
             for year in years_in_date_range(date_range)
         ]
+        _validate_resolved_paths(resolved, field)
+        return resolved
 
     return None

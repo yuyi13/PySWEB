@@ -114,7 +114,11 @@ def _coerce_paths(path: Union[str, Sequence[str]]) -> List[str]:
     return [path]
 
 
-def open_meteorology_da(path: Union[str, Sequence[str]], var: Optional[str]) -> xr.DataArray:
+def open_meteorology_da(
+    path: Union[str, Sequence[str]],
+    var: Optional[str],
+    default_var: Optional[str] = None,
+) -> xr.DataArray:
     paths = _coerce_paths(path)
     if len(paths) == 1:
         ds = xr.open_dataset(paths[0])
@@ -131,7 +135,7 @@ def open_meteorology_da(path: Union[str, Sequence[str]], var: Optional[str]) -> 
                 datasets.append(ds_part)
             ds = xr.combine_by_coords(datasets, combine_attrs="override")
     if var is None:
-        var = infer_met_var_from_path(paths[0])
+        var = infer_met_var_from_path(paths[0], default_var=default_var if len(paths) == 1 else None)
     if var:
         if var not in ds:
             raise ValueError(f"Variable '{var}' not found in {path}")
@@ -463,7 +467,18 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-gap-days", type=int, default=32)
     parser.add_argument("--apply-water-mask", action="store_true")
-    parser.add_argument("--silo-temp-units", choices=["celsius", "kelvin"], default="celsius")
+    parser.add_argument(
+        "--met-temp-units",
+        choices=["celsius", "kelvin"],
+        default="celsius",
+        help="Temperature units for meteorology inputs.",
+    )
+    parser.add_argument(
+        "--silo-temp-units",
+        dest="met_temp_units",
+        choices=["celsius", "kelvin"],
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--gapfill-etf", action="store_true")
     parser.add_argument("--gapfill-window-days", type=int, default=None)
     parser.add_argument("--gapfill-min-samples", type=int, default=5)
@@ -476,8 +491,12 @@ def main() -> None:
         with open(config_path, "r") as f:
             cfg = yaml.safe_load(f) or {}
 
-    def _cfg(key: str, default: Optional[str] = None):
-        return cfg.get(key, getattr(args, key)) if cfg else getattr(args, key, default)
+    def _cfg(key: str, default: Optional[str] = None, aliases: Sequence[str] = ()):
+        if cfg:
+            for candidate in (key, *aliases):
+                if candidate in cfg:
+                    return cfg[candidate]
+        return getattr(args, key, default)
 
     date_range = _cfg("date_range")
     silo_dir = _cfg("silo_dir")
@@ -503,7 +522,7 @@ def main() -> None:
     output_dir = _cfg("output_dir")
     max_gap_days = int(_cfg("max_gap_days"))
     apply_water_mask = bool(_cfg("apply_water_mask"))
-    silo_temp_units = _cfg("silo_temp_units")
+    met_temp_units = _cfg("met_temp_units", aliases=("silo_temp_units",))
     gapfill_etf = bool(_cfg("gapfill_etf"))
     gapfill_window_days = _cfg("gapfill_window_days")
     gapfill_min_samples = int(_cfg("gapfill_min_samples"))
@@ -568,19 +587,9 @@ def main() -> None:
             + "or --silo-dir with --date-range for legacy SILO files."
         )
 
-    missing_silo_files = [
-        path
-        for value in met_paths.values()
-        if isinstance(value, (list, tuple))
-        for path in value
-        if not os.path.exists(path)
-    ]
-    if missing_silo_files:
-        raise ValueError(f"Missing legacy SILO files for date_range: {', '.join(missing_silo_files)}")
-
     tmax = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_meteorology_da(tmax_path, tmax_var), date_range),
+            _slice_to_date_range(open_meteorology_da(tmax_path, tmax_var, default_var="tmax"), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -588,7 +597,7 @@ def main() -> None:
     ).load()
     tmin = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_meteorology_da(tmin_path, tmin_var), date_range),
+            _slice_to_date_range(open_meteorology_da(tmin_path, tmin_var, default_var="tmin"), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -596,7 +605,7 @@ def main() -> None:
     ).load()
     rs = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_meteorology_da(rs_path, rs_var), date_range),
+            _slice_to_date_range(open_meteorology_da(rs_path, rs_var, default_var="rs"), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
@@ -604,14 +613,14 @@ def main() -> None:
     ).load()
     ea = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_meteorology_da(ea_path, ea_var), date_range),
+            _slice_to_date_range(open_meteorology_da(ea_path, ea_var, default_var="ea"), date_range),
             template,
             resampling="bilinear",
             buffer=buffer,
         )
     ).load()
 
-    if silo_temp_units == "celsius":
+    if met_temp_units == "celsius":
         tmax = tmax + 273.15
         tmin = tmin + 273.15
 
@@ -631,7 +640,10 @@ def main() -> None:
 
     eto = (
         reproject_match_crop_first(
-            _slice_to_date_range(open_meteorology_da(et_short_crop, et_short_crop_var), date_range),
+            _slice_to_date_range(
+                open_meteorology_da(et_short_crop, et_short_crop_var, default_var="et_short_crop"),
+                date_range,
+            ),
             template,
             resampling="bilinear",
             buffer=buffer,
