@@ -13,9 +13,8 @@ Dependencies: pytest
 from importlib import util
 from pathlib import Path
 import sys
-import types
 
-from core.era5land_download_config import build_era5land_cfg
+from pysweb.met.era5land.download import build_era5land_cfg
 
 
 EXPECTED_BANDS = [
@@ -30,10 +29,6 @@ EXPECTED_BANDS = [
 
 
 def _load_workflow_module(monkeypatch):
-    fake_downloader_mod = types.ModuleType("core.gee_downloader")
-    fake_downloader_mod.GEEDownloader = object
-    monkeypatch.setitem(sys.modules, "core.gee_downloader", fake_downloader_mod)
-
     workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "1b_download_era5land_daily.py"
     spec = util.spec_from_file_location("era5land_daily_workflow", workflow_path)
     module = util.module_from_spec(spec)
@@ -100,7 +95,7 @@ def test_workflow_writes_config_and_invokes_downloader(tmp_path, monkeypatch):
             recorded["run_calls"] += 1
 
     workflow_module = _load_workflow_module(monkeypatch)
-    monkeypatch.setattr(workflow_module, "GEEDownloader", FakeDownloader)
+    monkeypatch.setattr(workflow_module, "_resolve_downloader_cls", lambda: FakeDownloader)
     monkeypatch.setattr(
         sys,
         "argv",

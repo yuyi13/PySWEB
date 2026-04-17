@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from core.met_input_paths import infer_met_var_from_path, resolve_met_input_paths
+from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
 
 
 def test_explicit_missing_meteorology_file_raises_filenotfounderror(tmp_path):

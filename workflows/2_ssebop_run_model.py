@@ -40,7 +40,7 @@ CORE_DIR = os.path.join(PROJECT_DIR, "core")
 if CORE_DIR not in sys.path:
     sys.path.insert(0, CORE_DIR)
 
-from met_input_paths import infer_met_var_from_path, resolve_met_input_paths
+from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
 from pysweb.ssebop.core import (
     build_doy_climatology,
     compute_dt_daily,
