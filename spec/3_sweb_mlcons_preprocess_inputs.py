@@ -4,7 +4,7 @@ Script: 3_sweb_mlcons_preprocess_inputs.py
 Objective: Preprocess forcing and MLConstraints soil datasets into aligned NetCDF inputs for spatial SWEB runs.
 Author: Yi Yu
 Created: 2026-02-22
-Last updated: 2026-02-22
+Last updated: 2026-03-02
 Inputs: Daily precipitation NetCDFs, ET/transpiration inputs, MLConstraints soil rasters, optional SMAP-DS rasters, CLI arguments.
 Outputs: Daily forcing NetCDFs, soil property NetCDFs, and optional SMAP-SSM NetCDF in the output directory.
 Usage: python 3_sweb_mlcons_preprocess_inputs.py --help
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import multiprocessing as mp
+import subprocess
 import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -39,6 +40,7 @@ _MLCONS_SOIL_FILES = {
     "sand": "LegendModel_2.0.1_Sand_4layers.tif",
     "organic_carbon": "LegendModel_2.0.1_OC_4layers.tif",
 }
+_MLCONS_RDS_FILE = "LegendModel_2.0.1_output.RDS"
 _DEFAULT_MLCONS_LAYER_BOTTOMS_MM: Sequence[float] = (150.0, 300.0, 600.0, 1000.0)
 _RAIN_WORKER_STATE: Dict[str, object] = {}
 _ET_WORKER_STATE: Dict[str, object] = {}
@@ -943,6 +945,176 @@ def _load_soil_raster(path: Path, grid: TargetGrid, band: Optional[int] = None) 
     return np.asarray(da.values, dtype=float)
 
 
+def _format_depth_cm(depth_mm: float) -> str:
+    depth_cm = float(depth_mm) / 10.0
+    rounded = round(depth_cm)
+    if np.isclose(depth_cm, rounded):
+        return str(int(rounded))
+    return f"{depth_cm:g}"
+
+
+def _build_layer_descriptions(layer_bottoms_mm: Sequence[float]) -> List[str]:
+    bottoms = np.asarray(layer_bottoms_mm, dtype=float)
+    descriptions: List[str] = []
+    top_mm = 0.0
+    for idx, bottom_mm in enumerate(bottoms, start=1):
+        descriptions.append(
+            f"Layer {idx} ({_format_depth_cm(top_mm)}-{_format_depth_cm(bottom_mm)} cm)"
+        )
+        top_mm = float(bottom_mm)
+    return descriptions
+
+
+def _has_expected_band_descriptions(path: Path, descriptions: Sequence[str]) -> bool:
+    expected = tuple(descriptions)
+    import rasterio
+
+    try:
+        with rasterio.open(path) as ds:
+            if ds.count != len(expected):
+                return False
+            current = tuple("" if desc is None else desc for desc in ds.descriptions)
+    except Exception:
+        return False
+    return current == expected
+
+
+def _extract_mlcons_geotiffs_from_rds(
+    rds_path: Path,
+    output_dir: Path,
+    layer_descriptions: Sequence[str],
+) -> None:
+    desc_joined = "\t".join(layer_descriptions)
+    r_script = r"""
+args <- commandArgs(trailingOnly = TRUE)
+rds_path <- args[[1]]
+output_dir <- args[[2]]
+desc <- if (length(args) >= 3) strsplit(args[[3]], "\t", fixed = TRUE)[[1]] else character(0)
+suppressPackageStartupMessages(library(raster))
+suppressPackageStartupMessages(library(terra))
+obj <- readRDS(rds_path)
+if (!is.list(obj)) {
+  stop("MLConstraints RDS root object must be a list.")
+}
+targets <- list(
+  Clay = "LegendModel_2.0.1_Clay_4layers.tif",
+  Sand = "LegendModel_2.0.1_Sand_4layers.tif",
+  OC = "LegendModel_2.0.1_OC_4layers.tif"
+)
+for (key in names(targets)) {
+  if (!(key %in% names(obj))) {
+    stop(sprintf("MLConstraints RDS missing '%s' entry.", key))
+  }
+  item <- obj[[key]]
+  if (!is.list(item) || is.null(item[["Maps"]])) {
+    stop(sprintf("MLConstraints RDS entry '%s' missing 'Maps'.", key))
+  }
+  maps <- item[["Maps"]]
+  if (inherits(maps, "SpatRaster")) {
+    spat <- maps
+  } else if (inherits(maps, c("RasterLayer", "RasterStack", "RasterBrick"))) {
+    spat <- terra::rast(maps)
+  } else {
+    stop(sprintf("MLConstraints entry '%s$Maps' is not a raster object.", key))
+  }
+  if (length(desc) > 0) {
+    if (terra::nlyr(spat) != length(desc)) {
+      stop(sprintf(
+        "Layer description count (%d) does not match raster layer count (%d) for '%s'.",
+        length(desc), terra::nlyr(spat), key
+      ))
+    }
+    names(spat) <- desc
+  }
+  out_path <- file.path(output_dir, targets[[key]])
+  terra::writeRaster(spat, filename = out_path, filetype = "GTiff", overwrite = TRUE)
+  cat(sprintf("Wrote %s\n", out_path))
+}
+"""
+    cmd = ["Rscript", "-e", r_script, str(rds_path), str(output_dir), desc_joined]
+    try:
+        completed = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Rscript is required to extract MLConstraints GeoTIFFs from RDS, but it was not found."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        details = (exc.stderr or exc.stdout or "").strip()
+        raise RuntimeError(
+            f"Failed to extract MLConstraints GeoTIFFs from {rds_path}: {details}"
+        ) from exc
+
+    stdout = completed.stdout.strip()
+    if stdout:
+        print(stdout, flush=True)
+
+
+def _prepare_mlcons_soil_directory(
+    soil_dir: Path,
+    layer_bottoms_mm: Sequence[float],
+) -> Path:
+    layer_descriptions = _build_layer_descriptions(layer_bottoms_mm)
+    required_paths = [soil_dir / filename for filename in _MLCONS_SOIL_FILES.values()]
+    all_exist = all(path.exists() for path in required_paths)
+    rds_path = soil_dir / _MLCONS_RDS_FILE
+
+    if all_exist:
+        descriptions_ok = all(
+            _has_expected_band_descriptions(path, layer_descriptions)
+            for path in required_paths
+        )
+        if descriptions_ok:
+            return soil_dir
+        if rds_path.exists():
+            print(
+                "MLConstraints GeoTIFFs found but band descriptions are inconsistent; "
+                f"re-extracting with terra from RDS: {rds_path}",
+                flush=True,
+            )
+            _extract_mlcons_geotiffs_from_rds(rds_path, soil_dir, layer_descriptions)
+            return soil_dir
+        return soil_dir
+
+    if rds_path.exists():
+        print(
+            "MLConstraints GeoTIFFs not found; extracting from RDS: "
+            f"{rds_path}",
+            flush=True,
+        )
+        _extract_mlcons_geotiffs_from_rds(rds_path, soil_dir, layer_descriptions)
+        still_missing = [path for path in required_paths if not path.exists()]
+        if still_missing:
+            missing_txt = ", ".join(path.name for path in still_missing)
+            raise FileNotFoundError(
+                "RDS extraction completed but required MLConstraints GeoTIFFs are still missing "
+                f"in {soil_dir}: {missing_txt}"
+            )
+        return soil_dir
+
+    nested_rds = sorted(soil_dir.glob(f"*/{_MLCONS_RDS_FILE}"))
+    if len(nested_rds) == 1:
+        nested_dir = nested_rds[0].parent
+        print(
+            "MLConstraints GeoTIFFs not found in base directory; "
+            f"using nested site directory: {nested_dir}",
+            flush=True,
+        )
+        return _prepare_mlcons_soil_directory(nested_dir, layer_bottoms_mm)
+
+    missing_txt = ", ".join(path.name for path in required_paths if not path.exists())
+    if len(nested_rds) > 1:
+        site_names = ", ".join(path.parent.name for path in nested_rds)
+        raise FileNotFoundError(
+            "Missing MLConstraints GeoTIFFs in "
+            f"{soil_dir}: {missing_txt}. Found multiple nested RDS sources ({site_names}). "
+            "Set --soil-mlcons-dir to the target site subdirectory containing one RDS file."
+        )
+    raise FileNotFoundError(
+        f"Missing MLConstraints GeoTIFFs in {soil_dir}: {missing_txt}. "
+        f"Expected either GeoTIFFs or an RDS source at {rds_path}."
+    )
+
+
 def process_soil_properties(args: argparse.Namespace, grid: TargetGrid) -> Dict[str, xr.DataArray]:
     soil_dir = Path(args.soil_mlcons_dir).expanduser().resolve()
     if not soil_dir.exists():
@@ -960,6 +1132,7 @@ def process_soil_properties(args: argparse.Namespace, grid: TargetGrid) -> Dict[
         raise ValueError("MLConstraints layer bottoms must be > 0 mm.")
     if np.any(np.diff(layer_bottoms_mm) <= 0.0):
         raise ValueError("MLConstraints layer bottoms must be strictly increasing.")
+    soil_dir = _prepare_mlcons_soil_directory(soil_dir, layer_bottoms_mm)
 
     clay_path = soil_dir / _MLCONS_SOIL_FILES["clay"]
     sand_path = soil_dir / _MLCONS_SOIL_FILES["sand"]
