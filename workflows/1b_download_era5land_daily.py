@@ -8,17 +8,21 @@ Last updated: 2026-04-16
 Inputs: --date-range, --extent, and --output-dir CLI arguments.
 Outputs: ERA5-Land YAML config and downloaded daily GeoTIFFs.
 Usage: python workflows/1b_download_era5land_daily.py --help
-Dependencies: argparse, os, re, sys, yaml, core.era5land_download_config, core.gee_downloader
+Dependencies: argparse, json, os, re, sys, optional yaml, core.era5land_download_config, core.gee_downloader
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - exercised in envs without pyyaml
+    yaml = None
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_DIR not in sys.path:
@@ -52,7 +56,10 @@ def write_era5land_config(
     cfg_path = Path(output_dir) / f"gee_config_era5land_{start_date}_{end_date}.yaml"
     os.makedirs(output_dir, exist_ok=True)
     with cfg_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(cfg, handle, sort_keys=False)
+        if yaml is None:
+            json.dump(cfg, handle, indent=2)
+        else:
+            yaml.safe_dump(cfg, handle, sort_keys=False)
     return cfg_path
 
 
