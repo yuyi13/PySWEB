@@ -3,9 +3,8 @@
 # The Sydney Soil Water-Energy Balance (SWEB) Model (work in progress)
 
 [![Python](https://img.shields.io/badge/Python-3.12+-306998?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Article](https://img.shields.io/badge/Article-Come%20Soon-0072BC?style=flat)]()
+[![Preprint](https://img.shields.io/badge/Preprint-Release%20Soon-0072BC?style=flat)]()
 [![Dataset](https://img.shields.io/badge/Dataset-Release%20Soon-1682D4?style=flat)]()
-
 
 Python workflows for generating root-zone soil moisture from gridded precipitation, evapotranspiration, and soil hydraulic properties. The current meteorology pathway is ERA5-Land-based and globally usable; soil and SMAP/reference pieces still use the current downstream defaults. The repository is under active development; interfaces and defaults may change.
 
@@ -14,8 +13,8 @@ Python workflows for generating root-zone soil moisture from gridded precipitati
 PySWEB/
 ├── workflows/                             # Pipeline entry points and orchestration scripts
 │   ├── 1_ssebop_prepare_inputs.py         # Prepare GEE config and download Landsat inputs
-│   ├── 1b_download_era5land_daily.py       # Download ERA5-Land DAILY_AGGR daily GeoTIFFs
-│   ├── 1c_stack_era5land_daily.py          # Stack ERA5-Land rasters and derive daily forcing NetCDFs
+│   ├── 1b_download_era5land_daily.py      # Download ERA5-Land DAILY_AGGR daily GeoTIFFs
+│   ├── 1c_stack_era5land_daily.py         # Stack ERA5-Land rasters and derive daily forcing NetCDFs
 │   ├── 2_ssebop_run_model.py              # Build ET/E/T products with Landsat + explicit ERA5-Land forcing
 │   ├── 3_sweb_preprocess_inputs.py        # Harmonise rain/ET/soil/SMAP to a common grid
 │   ├── 4_sweb_calib_domain.py             # Domain-wide parameter calibration against SMAP-DS SSM
@@ -26,8 +25,8 @@ PySWEB/
 ├── core/                                  # Reusable model and data-processing modules
 │   ├── era5land_download_config.py        # Build ERA5-Land GEE download configs
 │   ├── era5land_refet.py                  # Reference ET and meteorology helpers
-│   ├── era5land_stack.py                 # Discover/sort ERA5-Land daily downloads
-│   ├── met_input_paths.py                # Resolve meteorology inputs for SSEBop
+│   ├── era5land_stack.py                  # Discover/sort ERA5-Land daily downloads
+│   ├── met_input_paths.py                 # Resolve meteorology inputs for SSEBop
 │   ├── swb_model_1d.py                    # 1-D layered soil water balance core
 │   ├── soil_hydra_funs.py                 # Hydraulic process helpers and Richards-equation pieces
 │   ├── ssebop_au.py                       # AU-focused SSEBop geospatial helper functions
