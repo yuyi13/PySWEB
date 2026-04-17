@@ -151,6 +151,51 @@ This repository uses:
 - `workflows/` for runnable CLI entry points and convenience wrappers around package or workflow-owned implementations.
 - `core/` for legacy/reused modules that are still being folded into the package layout.
 
+## Development guidance
+Use this rule of thumb while the package-first refactor is still in progress:
+
+- Prefer `pysweb/` for new reusable logic and for revisions to already-migrated functionality.
+- Keep `workflows/` thin. Update them when CLI arguments, orchestration, or wrapper behavior changes.
+- Keep `core/` for now, but treat it as transitional implementation substrate rather than the long-term public interface.
+
+In practice:
+
+- SSEBop prepare/run changes should usually go into `pysweb.ssebop` first.
+- SWB run changes should usually go into `pysweb.swb` first.
+- SWB preprocess/calibration are still more workflow-owned today, so edits to `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` are still expected until those paths are migrated.
+- If `pysweb/` only wraps a `core/` implementation today, either update that `core/` implementation carefully or finish migrating it into `pysweb/` rather than maintaining two divergent implementations.
+
+### Current `core/` status
+Keep these `core/` modules for now because they still provide real implementation value:
+
+- `core/gee_downloader.py`: still the backend implementation behind `pysweb.io.gee`.
+- `core/swb_model_1d.py`: still used directly by `workflows/4_sweb_calib_domain.py`.
+- `core/soil_hydra_funs.py`: still supports `core/swb_model_1d.py`.
+
+These are mostly transitional, compatibility-oriented, or already superseded by `pysweb/` equivalents:
+
+- `core/ssebop_au.py`: now mainly a compatibility shim over `pysweb.ssebop.*`.
+- `core/era5land_download_config.py`: largely superseded by `pysweb.met.era5land.download`.
+- `core/era5land_refet.py`: largely superseded by `pysweb.met.era5land.refet`.
+- `core/era5land_stack.py`: largely superseded by `pysweb.met.era5land.stack`.
+- `core/met_input_paths.py`: largely superseded by `pysweb.met.paths`.
+
+These are the next retirement candidates once remaining tests, docs, and callers are updated:
+
+- `core/ssebop_au.py`
+- `core/era5land_download_config.py`
+- `core/era5land_refet.py`
+- `core/era5land_stack.py`
+- `core/met_input_paths.py`
+
+Review `core/thomas_solve_tridiagonal_matrix.py` separately before removing it. It looks legacy, but it should be retired only after confirming there are no remaining external consumers.
+
+### Workflow naming note
+For the SSEBop first step, keep `workflows/1_ssebop_prepare_inputs.py` as the canonical entrypoint.
+
+- `prepare_inputs` is the current package/API naming.
+- `workflows/1_ssebop_preprocess_inputs.py` is a legacy duplicate name and should not be the preferred script for future development.
+
 ## Development status
 This repository is actively evolving. Verify file paths, date ranges, and spatial settings before running large jobs.
 
