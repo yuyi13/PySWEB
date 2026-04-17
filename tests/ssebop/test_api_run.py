@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script: test_api_run.py
-Objective: Verify the SSEBop package run API validates required inputs before dispatching workflow execution.
+Objective: Verify the SSEBop package run API validates incomplete calls while forwarding supported workflow inputs.
 Author: Yi Yu
 Created: 2026-04-17
 Last updated: 2026-04-17
@@ -61,6 +61,54 @@ def test_ssebop_run_dispatches_to_package_workflow(monkeypatch):
         "met_dir": "/tmp/met",
         "dem": "/tmp/dem.tif",
         "output_dir": "/tmp/out",
+        "workers": 2,
+    }
+
+
+def test_ssebop_run_allows_config_driven_invocation(monkeypatch):
+    recorded = {}
+
+    def fake_run_ssebop_workflow(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setattr(ssebop_api, "run_ssebop_workflow", fake_run_ssebop_workflow)
+
+    run(config="/tmp/ssebop.yaml")
+
+    assert recorded == {"config": "/tmp/ssebop.yaml"}
+
+
+def test_ssebop_run_forwards_explicit_direct_kwargs_intact(monkeypatch):
+    recorded = {}
+
+    def fake_run_ssebop_workflow(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setattr(ssebop_api, "run_ssebop_workflow", fake_run_ssebop_workflow)
+
+    run(
+        date_range="2024-01-01 to 2024-01-03",
+        landsat_dir="/tmp/landsat",
+        dem="/tmp/dem.tif",
+        output_dir="/tmp/out",
+        et_short_crop="/tmp/eto.nc",
+        tmax="/tmp/tmax.nc",
+        tmin="/tmp/tmin.nc",
+        rs="/tmp/rs.nc",
+        ea="/tmp/ea.nc",
+        workers=2,
+    )
+
+    assert recorded == {
+        "date_range": "2024-01-01 to 2024-01-03",
+        "landsat_dir": "/tmp/landsat",
+        "dem": "/tmp/dem.tif",
+        "output_dir": "/tmp/out",
+        "et_short_crop": "/tmp/eto.nc",
+        "tmax": "/tmp/tmax.nc",
+        "tmin": "/tmp/tmin.nc",
+        "rs": "/tmp/rs.nc",
+        "ea": "/tmp/ea.nc",
         "workers": 2,
     }
 

@@ -803,30 +803,30 @@ def run_ssebop_workflow(
 def run(
     *,
     date_range: Optional[str] = None,
-    landsat_dir: str,
-    met_dir: str,
-    dem: str,
-    output_dir: str,
+    landsat_dir: Optional[str] = None,
+    met_dir: Optional[str] = None,
+    dem: Optional[str] = None,
+    output_dir: Optional[str] = None,
     **kwargs,
 ) -> None:
-    missing = [
-        key
-        for key, value in {
-            "landsat_dir": landsat_dir,
-            "met_dir": met_dir,
-            "dem": dem,
-            "output_dir": output_dir,
-        }.items()
-        if not value
-    ]
-    if missing:
-        raise ValueError(f"Missing required inputs: {', '.join(missing)}")
+    workflow_kwargs = dict(kwargs)
+    if date_range is not None:
+        workflow_kwargs["date_range"] = date_range
+    if landsat_dir is not None:
+        workflow_kwargs["landsat_dir"] = landsat_dir
+    if met_dir is not None:
+        workflow_kwargs["met_dir"] = met_dir
+    if dem is not None:
+        workflow_kwargs["dem"] = dem
+    if output_dir is not None:
+        workflow_kwargs["output_dir"] = output_dir
 
-    run_ssebop_workflow(
-        date_range = date_range,
-        landsat_dir = landsat_dir,
-        met_dir = met_dir,
-        dem = dem,
-        output_dir = output_dir,
-        **kwargs,
-    )
+    meaningful_inputs = {
+        key: value
+        for key, value in workflow_kwargs.items()
+        if key != "date_range" and value not in (None, "")
+    }
+    if not meaningful_inputs:
+        raise ValueError("Missing required inputs for SSEBop run")
+
+    run_ssebop_workflow(**workflow_kwargs)
