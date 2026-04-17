@@ -38,6 +38,21 @@ def test_ssebop_run_requires_explicit_inputs():
         )
 
 
+def test_ssebop_run_rejects_incidental_kwargs_without_entry_inputs(monkeypatch):
+    dispatched = False
+
+    def fake_run_ssebop_workflow(**kwargs):
+        nonlocal dispatched
+        dispatched = True
+
+    monkeypatch.setattr(ssebop_api, "run_ssebop_workflow", fake_run_ssebop_workflow)
+
+    with pytest.raises(ValueError):
+        run(workers=2)
+
+    assert dispatched is False
+
+
 def test_ssebop_run_dispatches_to_package_workflow(monkeypatch):
     recorded = {}
 

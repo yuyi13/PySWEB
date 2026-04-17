@@ -821,10 +821,25 @@ def run(
     if output_dir is not None:
         workflow_kwargs["output_dir"] = output_dir
 
+    entry_input_keys = {
+        "config",
+        "config_pos",
+        "config_path",
+        "landsat_dir",
+        "met_dir",
+        "silo_dir",
+        "dem",
+        "output_dir",
+        "et_short_crop",
+        "tmax",
+        "tmin",
+        "rs",
+        "ea",
+    }
     meaningful_inputs = {
         key: value
         for key, value in workflow_kwargs.items()
-        if key != "date_range" and value not in (None, "")
+        if key in entry_input_keys and value not in (None, "")
     }
     if not meaningful_inputs:
         raise ValueError("Missing required inputs for SSEBop run")
