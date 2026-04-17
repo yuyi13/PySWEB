@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare Landsat and meteorology inputs for SSEBop")
     parser.add_argument("--date-range", required=True, help="Date range string like '2024-01-01 to 2024-01-03'")
     parser.add_argument("--extent", required=True, help="min_lon,min_lat,max_lon,max_lat")
-    parser.add_argument("--met-source", default="era5land", choices=["era5land", "silo"])
+    parser.add_argument("--met-source", default="era5land", choices=["era5land"])
     parser.add_argument("--gee-config", required=True, help="Path to the base GEE config template")
     parser.add_argument("--out-dir", required=True, help="Base output directory for prepared inputs")
     parser.add_argument("--dem", required=True, help="DEM raster used for stacked meteorology inputs")

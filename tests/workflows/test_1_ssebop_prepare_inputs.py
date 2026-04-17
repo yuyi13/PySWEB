@@ -14,6 +14,8 @@ from importlib import util
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 if str(ROOT) not in sys.path:
@@ -40,6 +42,28 @@ def test_unified_first_step_cli_exposes_met_source():
     )
 
     assert args.met_source == "era5land"
+
+
+def test_unified_first_step_cli_rejects_unwired_met_source():
+    workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "1_ssebop_prepare_inputs.py"
+    spec = util.spec_from_file_location("ssebop_prepare_inputs_workflow", workflow_path)
+    module = util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    parser = module.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "--date-range", "2024-01-01 to 2024-01-03",
+                "--extent", "147.2,-35.1,147.3,-35.0",
+                "--met-source", "silo",
+                "--gee-config", "/tmp/gee.yaml",
+                "--out-dir", "/tmp/out",
+                "--dem", "/tmp/dem.tif",
+            ]
+        )
 
 
 def test_unified_first_step_cli_calls_package_api(monkeypatch, tmp_path: Path):
