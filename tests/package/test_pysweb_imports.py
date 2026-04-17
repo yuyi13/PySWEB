@@ -1,4 +1,12 @@
 from importlib import import_module
+from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def test_top_level_package_exposes_ssebop_and_swb():
