@@ -4,7 +4,7 @@ Script: test_2_ssebop_run_model.py
 Objective: Verify meteorology path resolution and workflow bootstrap behavior for the SSEBop runner.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 Inputs: Temporary paths, helper-module imports, and workflow CLI invocations.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_2_ssebop_run_model.py
@@ -15,11 +15,14 @@ from pathlib import Path
 import sys
 import types
 
-import numpy as np
 import pytest
-import xarray as xr
 
-from core.met_input_paths import infer_met_var_from_path, resolve_met_input_paths
+ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
 
 
 def test_explicit_missing_meteorology_file_raises_filenotfounderror(tmp_path):
@@ -102,30 +105,6 @@ def test_default_variable_inference_handles_era5land_and_silo_names():
     assert infer_met_var_from_path("custom_tmin.nc", default_var="tmin") == "tmin"
 
 
-def test_workflow_open_meteorology_da_prefers_field_defaults_for_custom_files(tmp_path, monkeypatch):
-    workflow_module = _load_workflow_module(monkeypatch)
-
-    custom_path = tmp_path / "custom_tmax.nc"
-    custom_ds = xr.Dataset(
-        {"tmax": (("y", "x"), np.array([[1.0]], dtype=np.float32))},
-        coords={"x": np.array([0.5]), "y": np.array([0.5])},
-    )
-    custom_ds.to_netcdf(custom_path)
-
-    silo_path = tmp_path / "2024.max_temp.nc"
-    silo_ds = xr.Dataset(
-        {"max_temp": (("y", "x"), np.array([[2.0]], dtype=np.float32))},
-        coords={"x": np.array([0.5]), "y": np.array([0.5])},
-    )
-    silo_ds.to_netcdf(silo_path)
-
-    custom_da = workflow_module.open_meteorology_da(str(custom_path), None, default_var="tmax")
-    silo_da = workflow_module.open_meteorology_da(str(silo_path), None, default_var="tmax")
-
-    assert custom_da.name == "tmax"
-    assert silo_da.name == "max_temp"
-
-
 def _load_workflow_module(monkeypatch):
     original_yaml = sys.modules.get("yaml")
     original_scipy = sys.modules.get("scipy")
@@ -167,6 +146,7 @@ def _load_workflow_module(monkeypatch):
 
 def test_workflow_help_includes_met_dir_and_bootstraps_project_root(monkeypatch, capsys):
     workflow_module = _load_workflow_module(monkeypatch)
+    assert hasattr(workflow_module, "build_parser")
     monkeypatch.setattr(sys, "argv", ["2_ssebop_run_model.py", "--help"])
 
     with pytest.raises(SystemExit) as exc:
@@ -176,3 +156,41 @@ def test_workflow_help_includes_met_dir_and_bootstraps_project_root(monkeypatch,
     captured = capsys.readouterr()
     assert "--met-temp-units" in captured.out
     assert "meteorology" in captured.out.lower()
+
+
+def test_workflow_main_forwards_parsed_args_to_package_run(monkeypatch):
+    workflow_module = _load_workflow_module(monkeypatch)
+    recorded = {}
+
+    def fake_run_ssebop_workflow(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setattr(workflow_module, "run_ssebop_workflow", fake_run_ssebop_workflow)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "2_ssebop_run_model.py",
+            "--date-range",
+            "2024-01-01 to 2024-01-03",
+            "--landsat-dir",
+            "/tmp/landsat",
+            "--met-dir",
+            "/tmp/met",
+            "--dem",
+            "/tmp/dem.tif",
+            "--output-dir",
+            "/tmp/out",
+            "--workers",
+            "3",
+        ],
+    )
+
+    workflow_module.main()
+
+    assert recorded["date_range"] == "2024-01-01 to 2024-01-03"
+    assert recorded["landsat_dir"] == "/tmp/landsat"
+    assert recorded["met_dir"] == "/tmp/met"
+    assert recorded["dem"] == "/tmp/dem.tif"
+    assert recorded["output_dir"] == "/tmp/out"
+    assert recorded["workers"] == 3

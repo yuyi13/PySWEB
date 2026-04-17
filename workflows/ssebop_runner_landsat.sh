@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Script: ssebop_runner_landsat.sh
-# Objective: Orchestrate Landsat prep, ERA5-Land daily meteorology downloads/stacks, and SSEBop ET runs for a selected run subdirectory.
+# Objective: Orchestrate unified SSEBop input preparation and model runs for a selected run subdirectory.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-04-16
+# Last updated: 2026-04-17
 # Inputs: run_subdir plus optional flags (--mute-download, --mute-run, --workers) and configured data paths.
-# Outputs: Prepared Landsat inputs, ERA5-Land daily GeoTIFF/NetCDF products, and ET model outputs under run-specific project directories.
+# Outputs: Prepared Landsat and ERA5-Land inputs plus ET model outputs under run-specific project directories.
 # Usage: bash workflows/ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--workers N]
-# Requirements: bash, date, mktemp, python, project workflow scripts, access to Landsat/ERA5-Land/DEM/landcover data
+# Requirements: bash, date, mktemp, python, workflow CLIs from this repository, access to Landsat/ERA5-Land/DEM/landcover data
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.
@@ -104,10 +104,8 @@ run_with_progress() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="/g/data/ym05/sweb_model"
 
-# Shared spatial/temporal setup for Landsat prep, ERA5-Land download/stack, and SSEBop run.
+# Shared spatial/temporal setup for unified SSEBop prep and run.
 DATE_RANGE="2020-11-01 to 2026-02-11"
-MET_START_DATE="${DATE_RANGE%% to *}"
-MET_END_DATE="${DATE_RANGE##* to }"
 
 #EXTENT="147.48, -34.79, 147.52, -34.75" # Summer Hill
 #EXTENT="148.62, -33.51, 148.66, -33.47" # The Pines
@@ -115,9 +113,7 @@ EXTENT="147.20, -35.10, 147.30, -35.00" # North Wagga
 #EXTENT="149.98, -28.80, 150.18, -28.60" # Warrakirri
 
 # Input/output locations.
-INPUT_DIR="${PROJECT_DIR}/1_ssebop_inputs"
-MET_RAW_BASE="${PROJECT_DIR}/1_era5land_raw"
-MET_STACK_BASE="${PROJECT_DIR}/1_era5land_stacks"
+PREPARED_DIR_BASE="${PROJECT_DIR}/1_ssebop_inputs"
 OUTPUT_DIR="${PROJECT_DIR}/2_ssebop_outputs"
 
 # Landsat/SSEBop settings for band mapping and ET interpolation.
@@ -161,8 +157,8 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 Usage: ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--workers N]
 
-  run_subdir      Run label used to locate Landsat, ERA5-Land raw, ERA5-Land stack, and SSEBop output subdirectories.
-  --mute-download  Skip Step 1 (Landsat + ERA5-Land download/stack prep).
+  run_subdir      Run label used to locate unified Step 1 inputs and SSEBop output subdirectories.
+  --mute-download  Skip Step 1 (unified Landsat + ERA5-Land preparation).
   --mute-run       Skip Step 2 (SSEBop model run).
   --workers N      Number of parallel scene workers for Step 2.
 USAGE
@@ -180,6 +176,11 @@ USAGE
   esac
 done
 
+RUN_PREPARED_DIR="${PREPARED_DIR_BASE}/${RUN_SUBDIR}"
+RUN_LANDSAT_DIR="${RUN_PREPARED_DIR}/landsat"
+RUN_MET_STACK_DIR="${RUN_PREPARED_DIR}/met/era5land/stack"
+RUN_OUTPUT_DIR="${OUTPUT_DIR}/${RUN_SUBDIR}"
+
 if [[ -z "${RUN_SUBDIR}" ]]; then
   echo "Missing required run_subdir argument. See --help for usage." >&2
   exit 1
@@ -189,20 +190,13 @@ if [[ ! "${N_WORKERS}" =~ ^[0-9]+$ ]] || (( N_WORKERS < 1 )); then
   exit 1
 fi
 
-RUN_INPUT_DIR="${INPUT_DIR}/${RUN_SUBDIR}"
-mkdir -p "${RUN_INPUT_DIR}"
-RUN_MET_RAW_DIR="${MET_RAW_BASE}/${RUN_SUBDIR}"
-mkdir -p "${RUN_MET_RAW_DIR}"
-RUN_MET_STACK_DIR="${MET_STACK_BASE}/${RUN_SUBDIR}"
-mkdir -p "${RUN_MET_STACK_DIR}"
-RUN_OUTPUT_DIR="${OUTPUT_DIR}/${RUN_SUBDIR}"
-mkdir -p "${RUN_OUTPUT_DIR}"
+mkdir -p "${RUN_PREPARED_DIR}" "${RUN_LANDSAT_DIR}" "${RUN_MET_STACK_DIR}" "${RUN_OUTPUT_DIR}"
 
 print_badge
 print_status "CONFIG" "Date range : ${DATE_RANGE}"
 print_status "CONFIG" "Extent     : ${EXTENT}"
-print_status "CONFIG" "Landsat dir: ${RUN_INPUT_DIR}"
-print_status "CONFIG" "ERA5 raw   : ${RUN_MET_RAW_DIR}"
+print_status "CONFIG" "Prepared dir: ${RUN_PREPARED_DIR}"
+print_status "CONFIG" "Landsat dir : ${RUN_LANDSAT_DIR}"
 print_status "CONFIG" "ERA5 stack : ${RUN_MET_STACK_DIR}"
 print_status "CONFIG" "Output dir : ${RUN_OUTPUT_DIR}"
 echo
@@ -240,33 +234,23 @@ postprocess:
   enforce_float32: false
 YAML
 
-# Step 1: download Landsat plus ERA5-Land daily meteorology and stack the daily rasters.
+# Step 1: run the unified preparation workflow for Landsat plus meteorology.
 if [[ "${RUN_DOWNLOAD}" == "true" ]]; then
-  print_status "STEP 1/2" "Running Landsat prep and ERA5-Land download/stack..."
+  print_status "STEP 1/2" "Running unified Landsat + ERA5-Land preparation..."
   python "${SCRIPT_DIR}/1_ssebop_prepare_inputs.py" \
     --date-range "${DATE_RANGE}" \
     --extent "${EXTENT}" \
     --gee-config "${GEE_CONFIG}" \
-    --out-dir "${RUN_INPUT_DIR}"
-  print_status "STEP 1/2" "Downloading ERA5-Land DAILY_AGGR rasters..."
-  python "${SCRIPT_DIR}/1b_download_era5land_daily.py" \
-    --date-range "${DATE_RANGE}" \
-    --extent "${EXTENT}" \
-    --output-dir "${RUN_MET_RAW_DIR}"
-  print_status "STEP 1/2" "Stacking ERA5-Land daily rasters into NetCDF forcing..."
-  python "${SCRIPT_DIR}/1c_stack_era5land_daily.py" \
-    --raw-dir "${RUN_MET_RAW_DIR}" \
     --dem "${DEM_PATH}" \
-    --date-range "${MET_START_DATE}" "${MET_END_DATE}" \
-    --output-dir "${RUN_MET_STACK_DIR}"
+    --out-dir "${RUN_PREPARED_DIR}"
 else
-  print_skip "STEP 1/2" "Skipping Landsat + ERA5-Land download/stack prep."
+  print_skip "STEP 1/2" "Skipping unified Landsat + ERA5-Land preparation."
 fi
 
-# Step 2: run SSEBop using local Landsat scenes and ERA5-Land meteorology stacks.
+# Step 2: run SSEBop using the unified Step 1 output layout.
 if [[ "${RUN_SSEBOP}" == "true" ]]; then
   MODEL_START_TS="$(date +%s)"
-  LANDSAT_COUNT="$(find "${RUN_INPUT_DIR}" -maxdepth 1 -type f -name "${LANDSAT_PATTERN}" | wc -l | tr -d ' ')"
+  LANDSAT_COUNT="$(find "${RUN_LANDSAT_DIR}" -maxdepth 1 -type f -name "${LANDSAT_PATTERN}" | wc -l | tr -d ' ')"
   STEP2_EST_SECONDS="${STEP2_EST_SECONDS:-}"
   if [[ -z "${STEP2_EST_SECONDS}" ]]; then
     if (( LANDSAT_COUNT > 0 )); then
@@ -288,7 +272,8 @@ if [[ "${RUN_SSEBOP}" == "true" ]]; then
 
   print_status "STEP 2/2" "Running SSEBop model..."
   print_status "STEP 2/2" "Date range        : ${DATE_RANGE}"
-  print_status "STEP 2/2" "Landsat input dir : ${RUN_INPUT_DIR}"
+  print_status "STEP 2/2" "Prepared input dir: ${RUN_PREPARED_DIR}"
+  print_status "STEP 2/2" "Landsat input dir : ${RUN_LANDSAT_DIR}"
   print_status "STEP 2/2" "Matched files     : ${LANDSAT_COUNT} (${LANDSAT_PATTERN})"
   print_status "STEP 2/2" "ERA5 stack dir    : ${RUN_MET_STACK_DIR}"
   print_status "STEP 2/2" "Band mapping      : red=${RED_BAND}, nir=${NIR_BAND}, lst=${LST_BAND}"
@@ -301,16 +286,12 @@ if [[ "${RUN_SSEBOP}" == "true" ]]; then
 
   RUN_ARGS=(
     --date-range "${DATE_RANGE}"
-    --landsat-dir "${RUN_INPUT_DIR}"
+    --landsat-dir "${RUN_LANDSAT_DIR}"
     --landsat-pattern "${LANDSAT_PATTERN}"
     --red-band "${RED_BAND}"
     --nir-band "${NIR_BAND}"
     --lst-band "${LST_BAND}"
-    --et-short-crop "${RUN_MET_STACK_DIR}/et_short_crop_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
-    --tmax "${RUN_MET_STACK_DIR}/tmax_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
-    --tmin "${RUN_MET_STACK_DIR}/tmin_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
-    --rs "${RUN_MET_STACK_DIR}/rs_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
-    --ea "${RUN_MET_STACK_DIR}/ea_daily_${MET_START_DATE}_${MET_END_DATE}.nc"
+    --met-dir "${RUN_MET_STACK_DIR}"
     --met-temp-units "${MET_TEMP_UNITS}"
     --dem "${DEM_PATH}"
     --landcover "${LANDCOVER_PATH}"
@@ -332,14 +313,14 @@ if [[ "${RUN_SSEBOP}" == "true" ]]; then
     "OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}" \
     "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}" \
     "MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}" \
-    python "2_ssebop_run_model.py" "${RUN_ARGS[@]}"
+    python "${SCRIPT_DIR}/2_ssebop_run_model.py" "${RUN_ARGS[@]}"
   printf '\n'
 
   run_with_progress "${STEP2_EST_SECONDS}" env \
     "OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}" \
     "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}" \
     "MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}" \
-    python "2_ssebop_run_model.py" "${RUN_ARGS[@]}"
+    python "${SCRIPT_DIR}/2_ssebop_run_model.py" "${RUN_ARGS[@]}"
   MODEL_END_TS="$(date +%s)"
   print_status "STEP 2/2" "Completed in $((MODEL_END_TS - MODEL_START_TS))s."
 else

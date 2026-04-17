@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pysweb"
+version = "0.0.0"
+description = "PySWEB package skeleton"
+requires-python = ">=3.12"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = [
+  "pysweb",
+  "pysweb.*",
+]
