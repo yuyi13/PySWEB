@@ -20,8 +20,6 @@ import xarray as xr
 
 __all__ = ["load_worldcover_landcover", "worldcover_masks"]
 
-_DEFAULT_WORLDCOVER_PATH = "/g/data/yx97/EO_collections/ESA/WorldCover/ESA_WorldCover_100m_v200.tif"
-
 
 def _ensure_spatial_dims(data_array: xr.DataArray) -> xr.DataArray:
     """Ensure spatial dims are named consistently for package helpers."""
@@ -37,8 +35,9 @@ def load_worldcover_landcover(
     masked: bool = True,
 ) -> xr.DataArray:
     """Load ESA WorldCover (v200) GeoTIFF and return landcover classes."""
-    lc_path = path or _DEFAULT_WORLDCOVER_PATH
-    lc = rioxarray.open_rasterio(lc_path, masked=masked).squeeze("band", drop=True)
+    if path is None:
+        raise ValueError("path is required for package-level WorldCover loading")
+    lc = rioxarray.open_rasterio(path, masked=masked).squeeze("band", drop=True)
     return _ensure_spatial_dims(lc)
 
 

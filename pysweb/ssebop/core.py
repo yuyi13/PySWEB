@@ -12,15 +12,11 @@ Dependencies: numpy, pandas, xarray
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-if TYPE_CHECKING:
-    from core.ssebop_au import SsebopAuConfig
-
 
 __all__ = [
     "build_doy_climatology",
@@ -30,6 +26,13 @@ __all__ = [
     "et_fraction_xr",
     "tcold_fano_simple_xr",
 ]
+
+
+class TcoldConfig(Protocol):
+    """Structural config interface for FANO-style Tcold tuning."""
+
+    dt_coeff: float
+    high_ndvi_threshold: float
 
 
 def dt_fao56_xr(
@@ -106,7 +109,7 @@ def tcold_fano_simple_xr(
     lst_k: xr.DataArray,
     ndvi: xr.DataArray,
     dt_k: xr.DataArray,
-    config: "SsebopAuConfig | None" = None,
+    config: TcoldConfig | None = None,
 ) -> xr.DataArray:
     """Simplified FANO-style Tcold estimate for gridded data."""
     dt_coeff = 0.125 if config is None else config.dt_coeff

@@ -8,12 +8,13 @@ Last updated: 2026-04-17
 Inputs: xarray datasets/raster grids, Landsat/SILO-derived variables, and geospatial metadata.
 Outputs: Processed geospatial arrays including masks, climatologies, ET fraction, and daily ET products.
 Usage: Imported by workflows/2_ssebop_run_model.py; not intended as a standalone CLI script.
-Dependencies: numpy, pandas, xarray, rioxarray, rasterio
+Dependencies: xarray, pysweb.ssebop
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict
+import xarray as xr
 
 from pysweb.ssebop.core import (
     build_doy_climatology,
@@ -24,7 +25,10 @@ from pysweb.ssebop.core import (
     tcold_fano_simple_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
-from pysweb.ssebop.landcover import load_worldcover_landcover, worldcover_masks
+from pysweb.ssebop.landcover import (
+    load_worldcover_landcover as _load_worldcover_landcover,
+    worldcover_masks,
+)
 
 
 AU_SSEBOP_SOURCE_CANDIDATES: Dict[str, Dict[str, str]] = {
@@ -68,3 +72,34 @@ class SsebopAuConfig:
     etf_clamp_max: float = 1.0
     etf_mask_max: float = 2.0
     worldcover_path: str = AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"]
+
+
+def _ensure_spatial_dims(data_array: xr.DataArray) -> xr.DataArray:
+    """Ensure spatial dims are named consistently for legacy callers."""
+    if {"x", "y"}.issubset(set(data_array.dims)):
+        return data_array
+    if {"lon", "lat"}.issubset(set(data_array.dims)):
+        data_array = data_array.rename({"lon": "x", "lat": "y"})
+    return data_array
+
+
+def open_silo_et_short_crop(file_path: str, variable: str = "et_short_crop") -> xr.DataArray:
+    """Open SILO FAO56 ETo NetCDF and return the ETo DataArray."""
+    ds = xr.open_dataset(file_path)
+    if variable not in ds:
+        raise ValueError(f"Variable '{variable}' not found in {file_path}")
+    return _ensure_spatial_dims(ds[variable])
+
+
+def open_silo_variable(file_path: str, variable: str) -> xr.DataArray:
+    """Open a SILO NetCDF and return the requested variable as a DataArray."""
+    ds = xr.open_dataset(file_path)
+    if variable not in ds:
+        raise ValueError(f"Variable '{variable}' not found in {file_path}")
+    return _ensure_spatial_dims(ds[variable])
+
+
+def load_worldcover_landcover(path: str | None = None, masked: bool = True) -> xr.DataArray:
+    """Load ESA WorldCover using the AU default path for legacy callers."""
+    lc_path = path or AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"]
+    return _load_worldcover_landcover(lc_path, masked=masked)
