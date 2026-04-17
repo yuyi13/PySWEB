@@ -3,11 +3,11 @@
 # Objective: Orchestrate SWEB preprocessing, domain calibration, and model execution for a selected run subdirectory using ERA5-Land precipitation and SSEBop ET.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-04-16
+# Last updated: 2026-04-17
 # Inputs: run_subdir plus optional flags (--burn-in-end, --workers, --uncalibrated, step toggles) and forcing paths.
 # Outputs: Preprocessed SWEB inputs, domain calibration CSV, and SWEB RZSM outputs.
 # Usage: bash workflows/sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
-# Requirements: bash, date, python, xarray-capable environment, project workflow scripts, access to ERA5-Land precipitation stacks and SSEBop outputs
+# Requirements: bash, date, python, xarray-capable environment, workflow CLIs from this repository, access to ERA5-Land precipitation stacks and SSEBop outputs
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.
@@ -56,11 +56,11 @@ print_config() {
 }
 
 # Project paths.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="/g/data/ym05/sweb_model"
-CODE_DIR="${PROJECT_DIR}/code"
-PREPROCESS_SCRIPT="${CODE_DIR}/workflows/3_sweb_preprocess_inputs.py"
-CALIB_SCRIPT="${CODE_DIR}/workflows/4_sweb_calib_domain.py"
-RUNNER_SCRIPT="${CODE_DIR}/workflows/5_sweb_run_model.py"
+PREPROCESS_SCRIPT="${SCRIPT_DIR}/3_sweb_preprocess_inputs.py"
+CALIB_SCRIPT="${SCRIPT_DIR}/4_sweb_calib_domain.py"
+RUNNER_SCRIPT="${SCRIPT_DIR}/5_sweb_run_model.py"
 
 # Shared spatial/temporal setup.
 MODEL_RUN_PERIOD="2024-01-01 to 2026-01-31"
