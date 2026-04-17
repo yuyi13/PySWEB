@@ -19,6 +19,11 @@ import numpy as np
 import pytest
 import xarray as xr
 
+ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
 
 

@@ -11,8 +11,14 @@ Usage: pytest tests/met/test_paths.py
 Dependencies: pathlib, pytest
 """
 from pathlib import Path
+import sys
 
 import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
 
