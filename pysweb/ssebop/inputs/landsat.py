@@ -56,13 +56,12 @@ def _write_gee_config(
 ) -> str:
     if "coords" not in cfg or cfg["coords"] is None:
         cfg["coords"] = extent
-    if "download_dir" not in cfg or cfg["download_dir"] is None:
-        cfg["download_dir"] = out_dir
 
     start_dt = datetime.fromisoformat(start_date)
     end_dt = datetime.fromisoformat(end_date)
 
     cfg["coords"] = extent
+    cfg["download_dir"] = out_dir
     cfg["start_year"] = start_dt.year
     cfg["start_month"] = start_dt.month
     cfg["start_day"] = start_dt.day

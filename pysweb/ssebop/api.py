@@ -19,15 +19,15 @@ def prepare_inputs(
 ) -> None:
     start_date, end_date = landsat.parse_date_range(date_range)
 
+    if met_source != "era5land":
+        raise NotImplementedError(f"Unsupported met_source: {met_source}")
+
     landsat.prepare_landsat_inputs(
         date_range = date_range,
         extent = extent,
         gee_config = gee_config,
         out_dir = landsat_dir,
     )
-
-    if met_source != "era5land":
-        raise NotImplementedError(f"Unsupported met_source: {met_source}")
 
     era5land_download.download_era5land_daily(
         start_date = start_date,
