@@ -4,7 +4,7 @@ Script: 2_ssebop_run_model.py
 Objective: Run SSEBop evapotranspiration estimation from local Landsat scenes and meteorology inputs.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 Inputs: YAML config/CLI options, Landsat GeoTIFFs, meteorology NetCDF files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: python workflows/2_ssebop_run_model.py --help
@@ -33,19 +33,23 @@ from pyproj import CRS, Transformer
 from scipy.signal import savgol_filter
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
 CORE_DIR = os.path.join(PROJECT_DIR, "core")
 if CORE_DIR not in sys.path:
     sys.path.insert(0, CORE_DIR)
 
 from met_input_paths import infer_met_var_from_path, resolve_met_input_paths
-from ssebop_au import (
+from pysweb.ssebop.core import (
     build_doy_climatology,
     compute_dt_daily,
     et_fraction_xr,
-    load_worldcover_landcover,
-    reproject_match,
-    reproject_match_crop_first,
     tcold_fano_simple_xr,
+)
+from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
+from pysweb.ssebop.landcover import (
+    load_worldcover_landcover,
     worldcover_masks,
 )
 
