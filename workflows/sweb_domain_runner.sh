@@ -81,7 +81,8 @@ CALIB_DIFF_MIN="0.0"
 CALIB_DIFF_MAX="10000.0"
 
 # Forcing and reference inputs.
-PRECIP_DIR_BASE="${PROJECT_DIR}/1_era5land_stacks"
+PREPARED_INPUT_DIR_BASE="${PROJECT_DIR}/1_ssebop_inputs"
+LEGACY_PRECIP_DIR_BASE="${PROJECT_DIR}/1_era5land_stacks"
 ET_DIR="/g/data/ym05/sweb_model/2_ssebop_outputs"
 ET_PATTERN="et_daily_ssebop_*.nc"
 E_VAR="E"
@@ -140,7 +141,9 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 Usage: sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
 
-  run_subdir        Run label used to locate ERA5-Land stacks, SSEBop outputs, and SWEB outputs.
+  run_subdir        Run label used to locate prepared ERA5-Land stacks, SSEBop outputs, and SWEB outputs.
+                    Precipitation is read from 1_ssebop_inputs/<run_subdir>/met/era5land/stack by default,
+                    with fallback to 1_era5land_stacks/<run_subdir> for legacy standalone stack usage.
   MODEL_RUN_PERIOD/CALIB_PERIOD are configured near the top of this script.
                     If CALIB_PERIOD is outside MODEL_RUN_PERIOD, Step 1 preprocesses both periods.
   --burn-in-end     Burn-in end date (YYYY-MM-DD). Burn-in start is fixed to MODEL_RUN_PERIOD start.
@@ -273,7 +276,14 @@ if ! POST_BURN_START="$(date -d "${BURN_IN_END} +1 day" +%Y-%m-%d 2>/dev/null)";
 fi
 
 ET_DIR="${ET_DIR}/${RUN_SUBDIR}"
-PRECIP_DIR="${PRECIP_DIR_BASE}/${RUN_SUBDIR}"
+PRIMARY_PRECIP_DIR="${PREPARED_INPUT_DIR_BASE}/${RUN_SUBDIR}/met/era5land/stack"
+LEGACY_PRECIP_DIR="${LEGACY_PRECIP_DIR_BASE}/${RUN_SUBDIR}"
+PRECIP_DIR="${PRIMARY_PRECIP_DIR}"
+PRECIP_DIR_MODE="prepared"
+if [[ ! -d "${PRECIP_DIR}" && -d "${LEGACY_PRECIP_DIR}" ]]; then
+  PRECIP_DIR="${LEGACY_PRECIP_DIR}"
+  PRECIP_DIR_MODE="legacy"
+fi
 PREPROCESS_OUT_DIR="${PREPROCESS_OUT_DIR}/${RUN_SUBDIR}"
 MODEL_OUT_DIR="${MODEL_OUT_DIR}/${RUN_SUBDIR}"
 CALIB_OUTPUT="${PREPROCESS_OUT_DIR}/domain_calibration.csv"
@@ -296,6 +306,7 @@ else
   print_config "Preprocess plan" "dual runs (CALIB_PERIOD outside MODEL_RUN_PERIOD)"
 fi
 print_config "Precip source dir" "${PRECIP_DIR}"
+print_config "Precip source" "${PRECIP_DIR_MODE}"
 print_config "ET source dir" "${ET_DIR}"
 print_config "Input dir" "${PREPROCESS_OUT_DIR}"
 print_config "Output dir" "${MODEL_OUT_DIR}"
