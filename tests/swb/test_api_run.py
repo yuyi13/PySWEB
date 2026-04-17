@@ -72,3 +72,14 @@ def test_swb_run_dispatches_to_package_workflow(monkeypatch):
         "output_dir": "/tmp/out",
         "workers": 2,
     }
+
+
+def test_swb_run_requires_explicit_soil_inputs():
+    with pytest.raises(ValueError, match="Missing required SWB soil inputs"):
+        run(
+            precip = "/tmp/precip.nc",
+            effective_precip = "/tmp/effective_precip.nc",
+            et = "/tmp/et.nc",
+            t = "/tmp/t.nc",
+            output_dir = "/tmp/out",
+        )

@@ -17,13 +17,12 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from importlib import import_module
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from core.swb_model_1d import soil_water_balance_1d
 from pysweb.swb.core import (
     ensure_matching_grid,
     extract_soil_properties_for_cell,
@@ -33,8 +32,8 @@ from pysweb.swb.core import (
     load_soil_arrays,
     prepare_soil_property_grids,
 )
+from pysweb.swb.solver import soil_water_balance_1d
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROCESS_RUN_STATE: Dict[str, object] = {}
 
 
@@ -105,8 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional output resolution for RZSM/products (square grid, degrees). Defaults to forcing grid.",
     )
 
-    default_soil_dir = REPO_ROOT / "2_spatial_preprocess"
-    parser.add_argument("--soil-dir", default=str(default_soil_dir), help="Directory containing preprocessed soil NetCDFs.")
+    parser.add_argument("--soil-dir", default=None, help="Directory containing preprocessed soil NetCDFs.")
     parser.add_argument("--soil-porosity", help="Override path to soil_porosity.nc.")
     parser.add_argument("--soil-wilting-point", help="Override path to soil_wilting_point.nc.")
     parser.add_argument("--soil-available-water-capacity", help="Override path to soil_available_water_capacity.nc.")
@@ -162,6 +160,19 @@ def _build_run_args(workflow_kwargs: Dict[str, object]) -> argparse.Namespace:
     if missing:
         missing_text = ", ".join(missing)
         raise ValueError(f"Missing required SWB run inputs: {missing_text}")
+
+    soil_input_fields = (
+        "soil_dir",
+        "soil_porosity",
+        "soil_wilting_point",
+        "soil_available_water_capacity",
+        "soil_b_coefficient",
+        "soil_conductivity_sat",
+    )
+    if all(getattr(args, name) in (None, "") for name in soil_input_fields):
+        raise ValueError(
+            "Missing required SWB soil inputs: provide soil_dir or explicit per-property soil files."
+        )
 
     return args
 

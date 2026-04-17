@@ -159,7 +159,7 @@ def test_resolve_soil_paths_and_load_soil_arrays_support_overrides(tmp_path: Pat
     )
 
 
-def test_infer_layer_bottoms_prefers_metadata_then_user_then_defaults():
+def test_infer_layer_bottoms_prefers_explicit_user_values_then_metadata_then_defaults():
     metadata_arrays = {
         "porosity": xr.DataArray(
             np.ones((2, 1, 1), dtype=np.float32),
@@ -186,11 +186,15 @@ def test_infer_layer_bottoms_prefers_metadata_then_user_then_defaults():
 
     np.testing.assert_allclose(
         swb_core.infer_layer_bottoms(metadata_arrays, user_bottoms = [50.0, 150.0]),
-        np.array([75.0, 225.0], dtype=float),
+        np.array([50.0, 150.0], dtype=float),
     )
     np.testing.assert_allclose(
         swb_core.infer_layer_bottoms(bare_arrays, user_bottoms = [60.0, 180.0]),
         np.array([60.0, 180.0], dtype=float),
+    )
+    np.testing.assert_allclose(
+        swb_core.infer_layer_bottoms(metadata_arrays, user_bottoms = None),
+        np.array([75.0, 225.0], dtype=float),
     )
     np.testing.assert_allclose(
         swb_core.infer_layer_bottoms(bare_arrays, user_bottoms = None),

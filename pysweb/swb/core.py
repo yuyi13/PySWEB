@@ -101,6 +101,12 @@ def infer_layer_bottoms(
     soil_arrays: Mapping[str, xr.DataArray],
     user_bottoms: Optional[Sequence[float]] = None,
 ) -> np.ndarray:
+    if user_bottoms is not None:
+        values = np.asarray(list(user_bottoms), dtype=float)
+        if values.ndim != 1 or values.size == 0:
+            raise ValueError("layer_bottoms_mm must contain at least one value.")
+        return values
+
     for da in soil_arrays.values():
         for attr_key in _LAYER_ATTR_KEYS:
             if attr_key in da.attrs:
@@ -112,12 +118,6 @@ def infer_layer_bottoms(
                 values = np.asarray(da.coords[coord_key].values, dtype=float)
                 if values.ndim == 1:
                     return values
-
-    if user_bottoms is not None:
-        values = np.asarray(list(user_bottoms), dtype=float)
-        if values.ndim != 1 or values.size == 0:
-            raise ValueError("layer_bottoms_mm must contain at least one value.")
-        return values
 
     return np.asarray(DEFAULT_LAYER_BOTTOMS_MM, dtype=float)
 

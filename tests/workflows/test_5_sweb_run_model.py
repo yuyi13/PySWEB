@@ -51,6 +51,7 @@ def test_workflow_build_parser_exposes_core_run_arguments():
     assert args.precip == "/tmp/precip.nc"
     assert args.effective_precip == "/tmp/effective_precip.nc"
     assert args.output_dir == "/tmp/out"
+    assert args.soil_dir is None
     assert args.workers == 1
 
 
