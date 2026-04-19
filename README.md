@@ -8,7 +8,7 @@
 
 Python workflows for generating root-zone soil moisture from gridded precipitation, evapotranspiration, and soil hydraulic properties. The current meteorology pathway is ERA5-Land-based and globally usable; SWB soil inputs now default to Earth Engine OpenLandMap, and the reference SSM path now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`. The repository is under active development; interfaces and defaults may change.
 
-The package-first refactor is underway. The canonical code layout now lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around that package code where the refactor is already wired. Some SWB steps still run as workflow-owned scripts during this transition.
+The package-first refactor is now the main execution path. The canonical code layout lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around those package modules. Legacy support code remains under `core/`, but the main SSEBop and SWB prepare/preprocess/calibrate/run paths now route through `pysweb/`.
 
 ## Current repository structure
 ```
@@ -21,9 +21,14 @@ PySWEB/
 │   ├── ssebop/                            # Package-backed SSEBop prepare/run logic
 │   │   ├── api.py
 │   │   └── inputs/
-│   └── swb/                               # Package-backed SWB run logic and transitional API surface
+│   └── swb/                               # Package-backed SWB preprocess/calibrate/run logic
+│       ├── __init__.py
 │       ├── api.py
-│       └── run.py
+│       ├── calibrate.py
+│       ├── core.py
+│       ├── preprocess.py
+│       ├── run.py
+│       └── solver.py
 │
 ├── workflows/                             # CLI entrypoints and convenience wrappers
 │   ├── 1_ssebop_prepare_inputs.py         # Unified first SSEBop step: Landsat + meteorology preparation
@@ -54,7 +59,8 @@ PySWEB/
 ├── notebooks/                             # Example Jupyter notebooks
 │   ├── README.md                          # Notebook index and scope
 │   ├── 01_plot_heatmap.ipynb              # Heatmap plotting walkthrough
-│   └── 02_plot_time_series.ipynb          # Time-series plotting walkthrough
+│   ├── 02_plot_time_series.ipynb          # Time-series plotting walkthrough
+│   └── 03_run_with_pysweb.ipynb           # Direct package-driven walkthrough for prepare/run flows
 │
 ├── README.md
 └── SWEB_logo.png
@@ -142,7 +148,8 @@ The meteorology path is now ERA5-Land-based and globally usable. SWB soil textur
 - Python 3.12+ (recommended)
 - Core packages: `numpy`, `pandas`, `xarray`, `rioxarray`, `rasterio`, `netCDF4`, `scipy`, `pyproj`, `pyyaml`, `tqdm`
 - System libs for geospatial reprojection: GDAL/PROJ
-- Access to forcing and ancillary datasets (Landsat, ERA5-Land, OpenLandMap soil property rasters, optional GSSM reference SSM)
+- Access to forcing and ancillary datasets (Landsat, ERA5-Land, DEM, SSEBop-ready ET products)
+- Google Earth Engine access for OpenLandMap and `users/qianrswaterr/GlobalSSM1km0509` (for example with project `yiyu-research`)
 
 ## Naming convention
 This repository uses:
@@ -166,11 +173,11 @@ In practice:
 - If `pysweb/` only wraps a `core/` implementation today, either update that `core/` implementation carefully or finish migrating it into `pysweb/` rather than maintaining two divergent implementations.
 
 ### Current `core/` status
-Keep these `core/` modules for now because they still provide real implementation value:
+Keep these `core/` modules for now because they still provide real implementation value or compatibility coverage:
 
 - `core/gee_downloader.py`: still the backend implementation behind `pysweb.io.gee`.
-- `core/swb_model_1d.py`: still used directly by `workflows/4_sweb_calib_domain.py`.
-- `core/soil_hydra_funs.py`: still supports `core/swb_model_1d.py`.
+- `core/swb_model_1d.py`: now legacy/reference solver code; the package-owned runtime path uses `pysweb.swb.solver`.
+- `core/soil_hydra_funs.py`: legacy hydraulic helper module coupled to `core/swb_model_1d.py`.
 
 These are mostly transitional, compatibility-oriented, or already superseded by `pysweb/` equivalents:
 
@@ -187,6 +194,8 @@ These are the next retirement candidates once remaining tests, docs, and callers
 - `core/era5land_refet.py`
 - `core/era5land_stack.py`
 - `core/met_input_paths.py`
+- `core/swb_model_1d.py`
+- `core/soil_hydra_funs.py`
 
 Review `core/thomas_solve_tridiagonal_matrix.py` separately before removing it. It looks legacy, but it should be retired only after confirming there are no remaining external consumers.
 
@@ -199,4 +208,10 @@ For the SSEBop first step, keep `workflows/1_ssebop_prepare_inputs.py` as the ca
 ## Development status
 This repository is actively evolving. Verify file paths, date ranges, and spatial settings before running large jobs.
 
-`pysweb.ssebop`, `pysweb.swb.preprocess`, `pysweb.swb.calibrate`, and `pysweb.swb.run` are wired today. `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` are thin wrappers over those package modules.
+`pysweb.ssebop.prepare_inputs`, `pysweb.ssebop.run`, `pysweb.swb.preprocess`, `pysweb.swb.calibrate`, and `pysweb.swb.run` are wired today. `workflows/2_ssebop_run_model.py`, `workflows/3_sweb_preprocess_inputs.py`, `workflows/4_sweb_calib_domain.py`, and `workflows/5_sweb_run_model.py` are thin wrappers over those package modules.
+
+The `notebooks/` directory currently contains:
+
+- `01_plot_heatmap.ipynb`: point or domain-mean heatmap plotting walkthrough
+- `02_plot_time_series.ipynb`: SSEBop + SWEB time-series plotting walkthrough
+- `03_run_with_pysweb.ipynb`: direct `import pysweb` walkthrough for package-backed execution paths

@@ -57,7 +57,7 @@ Use this when you want more explicit control over paths like `gee_config`, `dem`
     --output-dir /path/to/ssebop_outputs
 ```
 
-For the SWB side, `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` are still the main entrypoints for preprocess and calibration.
+For the SWB side, the workflow CLIs remain convenient notebook-facing wrappers, but the underlying package APIs are now wired as well.
 
 #### 3. Import `pysweb` directly
 Use this when you want notebook-native Python control over the parts that are already package-backed. See `03_run_with_pysweb.ipynb` for a worked example.
@@ -66,15 +66,11 @@ At present:
 
 - `pysweb.ssebop.prepare_inputs` is wired.
 - `pysweb.ssebop.run` is wired.
+- `pysweb.swb.preprocess` is wired.
+- `pysweb.swb.calibrate` is wired.
 - `pysweb.swb.run` is wired.
-- `pysweb.swb.preprocess` is not yet exposed as a finished package API.
-- `pysweb.swb.calibrate` is not yet exposed as a finished package API.
 
-So if you want a pure notebook-driven flow today, the realistic hybrid is:
-
-- use `pysweb.ssebop.*` directly for the energy-balance side
-- use `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` for SWB preprocess/calibration
-- use `pysweb.swb.run(...)` or `workflows/5_sweb_run_model.py` for the final SWB run
+So if you want a pure notebook-driven flow today, you can drive both SSEBop and SWB directly from `pysweb`, while still falling back to the workflow CLIs or shell wrappers when that is more convenient for path-heavy operational runs.
 
 ### `gee_config` note
 If you previously relied on a fixed operations path such as `/g/data/ym05/sweb_model/code/gee_config`, the current package/workflow path does not assume that location automatically. Pass the config path explicitly when using:
@@ -85,7 +81,7 @@ If you previously relied on a fixed operations path such as `/g/data/ym05/sweb_m
 ## Current notebooks
 - `01_plot_heatmap.ipynb`: Run the `visualisation/plot_heatmap.py` workflow for point-based heatmap plotting (default mode), with optional domain-mean mode.
 - `02_plot_time_series.ipynb`: Run the `visualisation/plot_time_series.py` workflow for SSEBop + SWEB time-series plotting and CSV export.
-- `03_run_with_pysweb.ipynb`: Use `import pysweb` to prepare ERA5-Land + Landsat inputs, run SSEBop directly from Python, and optionally launch the final SWB run once preprocess outputs already exist.
+- `03_run_with_pysweb.ipynb`: Use `import pysweb` to prepare ERA5-Land + Landsat inputs, run SSEBop directly from Python, and drive the package-backed SWB preprocess/calibrate/run path.
 
 ## Planned notebooks
-- More complete end-to-end examples for SWB preprocess/calibration once those APIs are package-backed.
+- More complete end-to-end and analysis examples built on the package-backed SWB APIs.
