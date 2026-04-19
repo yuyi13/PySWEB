@@ -48,8 +48,13 @@ def test_package_facade_attributes_are_available_and_callable():
     visualisation = import_module("pysweb.visualisation")
 
     assert callable(soil.load_soil_properties)
-    assert callable(visualisation.plot_heatmap)
-    assert callable(visualisation.plot_time_series)
+    assert inspect.ismodule(visualisation.plot_heatmap)
+    assert inspect.ismodule(visualisation.plot_time_series)
+
+
+def test_visualisation_submodules_import_cleanly():
+    assert import_module("pysweb.visualisation.plot_heatmap").__name__ == "pysweb.visualisation.plot_heatmap"
+    assert import_module("pysweb.visualisation.plot_time_series").__name__ == "pysweb.visualisation.plot_time_series"
 
 
 def test_swb_modules_import_cleanly():
