@@ -25,10 +25,15 @@ if str(ROOT) not in sys.path:
 from pysweb.swb.preprocess import (
     GSSM_SCALE_FACTOR,
     OPENLANDMAP_LAYER_SPECS,
+    _build_args,
     _build_layer_bottoms_mm,
+    _build_target_grid,
+    _load_openlandmap_predictors,
+    _load_reference_ssm,
     _matching_gssm_image_ids,
     _parse_gssm_band_date,
     _rename_reference_ssm,
+    process_soil_properties_from_openlandmap,
     preprocess_inputs,
 )
 
@@ -63,6 +68,95 @@ def _soil_array(name: str, values: np.ndarray) -> xr.DataArray:
         name=name,
         attrs={"layer_bottoms_mm": _build_layer_bottoms_mm().tolist()},
     )
+
+
+def _grid_args(*, extent: list[float], sm_res: float) -> object:
+    return _build_args(
+        {
+            "extent": extent,
+            "sm_res": sm_res,
+            "lat_dim": "lat",
+            "lon_dim": "lon",
+            "crs": "EPSG:4326",
+        }
+    )
+
+
+class _FakeInfo:
+    def __init__(self, value):
+        self._value = value
+
+    def getInfo(self):
+        return self._value
+
+
+class _FakeImage:
+    def __init__(self, bands: dict[str, float], image_id: str | None = None):
+        self._bands = dict(bands)
+        self.image_id = image_id
+
+    def clip(self, region):
+        return self
+
+    def bandNames(self):
+        return _FakeInfo(list(self._bands))
+
+    def select(self, names):
+        return _FakeImage({name: self._bands[name] for name in names}, image_id=self.image_id)
+
+
+class _FakeImageCollection:
+    registry: dict[str, list[_FakeImage]] = {}
+
+    def __init__(self, items):
+        if isinstance(items, str):
+            self._images = list(self.registry[items])
+        else:
+            self._images = list(items)
+
+    def aggregate_array(self, field_name: str):
+        assert field_name == "system:index"
+        return _FakeInfo([image.image_id for image in self._images])
+
+    def filter(self, predicate):
+        _, field_name, expected = predicate
+        assert field_name == "system:index"
+        return _FakeImageCollection([image for image in self._images if image.image_id == expected])
+
+    def first(self):
+        return self._images[0]
+
+    def mosaic(self):
+        bands = {}
+        for image in self._images:
+            bands.update(image._bands)
+        return _FakeImage(bands)
+
+
+class _FakeFilter:
+    @staticmethod
+    def eq(field_name: str, value: str):
+        return ("eq", field_name, value)
+
+
+class _FakeGeometry:
+    @staticmethod
+    def Rectangle(coords, **kwargs):
+        return tuple(coords)
+
+
+class _FakeEE:
+    ImageCollection = _FakeImageCollection
+    Filter = _FakeFilter
+    Geometry = _FakeGeometry
+
+    @staticmethod
+    def Initialize(project=None):
+        return None
+
+    @staticmethod
+    def Image(image):
+        return image
 
 
 def test_parse_gssm_band_date_parses_daily_band_names():
@@ -111,6 +205,135 @@ def test_matching_gssm_image_ids_filters_collection_indices_by_year():
         "SM2000Africa1km",
         "SM2000Asia1_1km",
     ]
+
+
+def test_build_target_grid_treats_extent_as_bbox_edges():
+    grid = _build_target_grid(_grid_args(extent=[148.0, -35.1, 148.1, -35.0], sm_res=0.1))
+
+    assert grid.template.shape == (1, 1)
+    np.testing.assert_allclose(grid.latitudes, np.array([-35.05]))
+    np.testing.assert_allclose(grid.longitudes, np.array([148.05]))
+
+    transform = grid.template.rio.transform()
+    assert transform.a == pytest.approx(0.1)
+    assert transform.e == pytest.approx(-0.1)
+    assert transform.c == pytest.approx(148.0)
+    assert transform.f == pytest.approx(-35.0)
+
+
+def test_load_reference_ssm_filters_bands_scales_values_and_uses_reference_name(monkeypatch):
+    _FakeImageCollection.registry = {
+        "users/qianrswaterr/GlobalSSM1km0509": [
+            _FakeImage(
+                {
+                    "band_2000_03_04_classification": 100.0,
+                    "band_2000_03_05_classification": 250.0,
+                },
+                image_id="SM2000Africa1km",
+            ),
+            _FakeImage(
+                {
+                    "band_2000_03_06_classification": 500.0,
+                    "band_2000_03_07_classification": 750.0,
+                },
+                image_id="SM2000Asia1_1km",
+            ),
+        ]
+    }
+    recorded_scales = []
+
+    def fake_download(image, extent, name, scale_m):
+        recorded_scales.append((name, scale_m, image.bandNames().getInfo()))
+        values = np.array([image._bands[band_name] for band_name in image.bandNames().getInfo()], dtype=np.float32)
+        return xr.DataArray(
+            values[:, None, None],
+            dims=("band", "lat", "lon"),
+            coords={
+                "band": np.array(image.bandNames().getInfo(), dtype=object),
+                "lat": np.array([-35.0]),
+                "lon": np.array([148.0]),
+            },
+            name=name,
+        )
+
+    monkeypatch.setattr("pysweb.swb.preprocess.ee", _FakeEE)
+    monkeypatch.setattr("pysweb.swb.preprocess._download_ee_multiband_image", fake_download)
+
+    result = _load_reference_ssm(
+        extent=(148.0, -35.1, 148.1, -35.0),
+        dates=pd.date_range("2000-03-05", "2000-03-06", freq="D"),
+        reference_ssm_asset="users/qianrswaterr/GlobalSSM1km0509",
+        gee_project="yiyu-research",
+    )
+
+    assert result.name == "reference_ssm"
+    assert result.attrs["units"] == "m3 m-3"
+    np.testing.assert_array_equal(result.coords["time"].values, pd.to_datetime(["2000-03-05", "2000-03-06"]).values)
+    np.testing.assert_allclose(result.values[:, 0, 0], np.array([0.25, 0.5], dtype=np.float32))
+    assert recorded_scales == [("gssm_raw_2000", 1000.0, ["band_2000_03_05_classification", "band_2000_03_06_classification"])]
+
+
+def test_load_openlandmap_predictors_uses_openlandmap_export_scale(monkeypatch):
+    _FakeImageCollection.registry = {}
+    recorded_scales = []
+
+    dataset_bands = {band_name: idx + 1.0 for idx, (band_name, _) in enumerate(OPENLANDMAP_LAYER_SPECS)}
+
+    class FakeEEForOpenLandMap(_FakeEE):
+        @staticmethod
+        def Image(image_id):
+            return _FakeImage(dataset_bands, image_id=image_id)
+
+    def fake_download(image, extent, name, scale_m):
+        recorded_scales.append((name, scale_m, image.bandNames().getInfo()))
+        return xr.DataArray(
+            np.ones((len(OPENLANDMAP_LAYER_SPECS), 1, 1), dtype=np.float32),
+            dims=("band", "lat", "lon"),
+            coords={
+                "band": np.array([band_name for band_name, _ in OPENLANDMAP_LAYER_SPECS], dtype=object),
+                "lat": np.array([-35.0]),
+                "lon": np.array([148.0]),
+            },
+            name=name,
+        )
+
+    monkeypatch.setattr("pysweb.swb.preprocess.ee", FakeEEForOpenLandMap)
+    monkeypatch.setattr("pysweb.swb.preprocess._download_ee_multiband_image", fake_download)
+
+    predictors = _load_openlandmap_predictors((148.0, -35.1, 148.1, -35.0), "yiyu-research")
+
+    assert set(predictors) == {"clay", "sand", "soc"}
+    assert [scale for _, scale, _ in recorded_scales] == [250.0, 250.0, 250.0]
+
+
+def test_openlandmap_soil_derivation_returns_five_layers_with_expected_depths():
+    args = _build_args({"dtype": "float32"})
+    grid = _build_target_grid(_grid_args(extent=[148.0, -35.2, 148.2, -35.0], sm_res=0.1))
+    band_names = np.array([band_name for band_name, _ in OPENLANDMAP_LAYER_SPECS], dtype=object)
+    coords = {
+        "band": band_names,
+        "lat": np.array([-35.05, -35.15], dtype=float),
+        "lon": np.array([148.05, 148.15], dtype=float),
+    }
+    soil_predictors = {
+        "clay": xr.DataArray(np.full((5, 2, 2), 30.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
+        "sand": xr.DataArray(np.full((5, 2, 2), 40.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
+        "soc": xr.DataArray(np.full((5, 2, 2), 10.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
+    }
+
+    soil_arrays = process_soil_properties_from_openlandmap(args, grid, soil_predictors)
+
+    assert set(soil_arrays) == {
+        "porosity",
+        "wilting_point",
+        "available_water_capacity",
+        "b_coefficient",
+        "conductivity_sat",
+    }
+    for da in soil_arrays.values():
+        assert da.shape == (5, 2, 2)
+        np.testing.assert_allclose(da.coords["layer_depth"].values, _build_layer_bottoms_mm())
+        assert da.attrs["layer_bottoms_mm"] == _build_layer_bottoms_mm().tolist()
 
 
 def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):

@@ -43,6 +43,8 @@ OPENLANDMAP_LAYER_SPECS = [
     ("b100", 1000.0),
 ]
 GSSM_SCALE_FACTOR = 1000.0
+OPENLANDMAP_EXPORT_SCALE_M = 250.0
+GSSM_EXPORT_SCALE_M = 1000.0
 OPENLANDMAP_DATASETS = {
     "clay": "OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02",
     "sand": "OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02",
@@ -209,22 +211,32 @@ def _build_target_coordinates(
         raise ValueError("Invalid extent bounds for building target grid.")
 
     lon_steps = int(round((max_lon - min_lon) / res))
-    lon_max_adj = min_lon + lon_steps * res
-    if not np.isclose(lon_max_adj, max_lon, atol = res * 1e-4):
-        if lon_max_adj > max_lon + res * 1e-4:
-            raise ValueError("Longitude extent is not aligned with requested resolution.")
-        max_lon = lon_max_adj
-    target_lon = min_lon + np.arange(lon_steps + 1, dtype = float) * res
-
     lat_steps = int(round((max_lat - min_lat) / res))
-    lat_max_adj = min_lat + lat_steps * res
-    if not np.isclose(lat_max_adj, max_lat, atol = res * 1e-4):
-        if lat_max_adj > max_lat + res * 1e-4:
-            raise ValueError("Latitude extent is not aligned with requested resolution.")
-        max_lat = lat_max_adj
-    target_lat = (min_lat + np.arange(lat_steps + 1, dtype = float) * res)[::-1]
+    if lon_steps < 1 or lat_steps < 1:
+        raise ValueError("Extent must span at least one target grid cell in each axis.")
+
+    lon_span = lon_steps * res
+    lat_span = lat_steps * res
+    if not np.isclose(lon_span, max_lon - min_lon, atol = res * 1e-4):
+        raise ValueError("Longitude extent is not aligned with requested resolution.")
+    if not np.isclose(lat_span, max_lat - min_lat, atol = res * 1e-4):
+        raise ValueError("Latitude extent is not aligned with requested resolution.")
+
+    target_lon = min_lon + (np.arange(lon_steps, dtype = float) + 0.5) * res
+    target_lat = max_lat - (np.arange(lat_steps, dtype = float) + 0.5) * res
 
     return np.round(target_lat, 6), np.round(target_lon, 6)
+
+
+def _transform_from_center_coords(
+    latitudes: np.ndarray,
+    longitudes: np.ndarray,
+    res_lon: float,
+    res_lat: float,
+):
+    west = float(np.min(longitudes)) - (res_lon / 2.0)
+    north = float(np.max(latitudes)) + (res_lat / 2.0)
+    return from_origin(west, north, res_lon, res_lat)
 
 
 def _compute_transform(latitudes: np.ndarray, longitudes: np.ndarray):
@@ -238,7 +250,7 @@ def _compute_transform(latitudes: np.ndarray, longitudes: np.ndarray):
     if res_lat == 0.0 or res_lon == 0.0:
         raise ValueError("Detected zero spatial resolution in forcing data.")
 
-    return from_origin(float(lon_arr.min()), float(lat_arr.max()), res_lon, res_lat)
+    return _transform_from_center_coords(lat_arr, lon_arr, res_lon, res_lat)
 
 
 def _grid_resolution(latitudes: np.ndarray, longitudes: np.ndarray) -> Tuple[float, float]:
@@ -260,7 +272,7 @@ def _prepare_template(
     lon_dim: str,
     crs: str,
 ) -> xr.DataArray:
-    transform = from_origin(float(longitudes[0]), float(latitudes[0]), res_lon, res_lat)
+    transform = _transform_from_center_coords(latitudes, longitudes, res_lon, res_lat)
     template = xr.DataArray(
         np.zeros((latitudes.size, longitudes.size), dtype = np.uint8),
         coords = {lat_dim: latitudes, lon_dim: longitudes},
@@ -318,8 +330,7 @@ def _reproject_to_template(
     lat_vals = data.coords[lat_name].values
     lon_vals = data.coords[lon_name].values
     if lat_vals.size < 2 or lon_vals.size < 2:
-        res_lon, res_lat = _grid_resolution(grid.latitudes, grid.longitudes)
-        transform = from_origin(float(lon_vals.min()), float(lat_vals.max()), res_lon, res_lat)
+        transform = grid.template.rio.transform()
     else:
         transform = _compute_transform(lat_vals, lon_vals)
 
@@ -940,6 +951,7 @@ def _download_ee_multiband_image(
     image: ee.Image,
     extent: Tuple[float, float, float, float],
     name: str,
+    scale_m: float,
 ) -> xr.DataArray:
     band_names = image.bandNames().getInfo()
     url = image.getDownloadURL(
@@ -947,7 +959,7 @@ def _download_ee_multiband_image(
             "name": name,
             "region": _region_json_from_extent(extent),
             "crs": "EPSG:4326",
-            "scale": 250,
+            "scale": scale_m,
             "filePerBand": False,
             "format": "GEO_TIFF",
         }
@@ -974,7 +986,12 @@ def _load_openlandmap_predictors(
     predictors: Dict[str, xr.DataArray] = {}
     for key, image_id in OPENLANDMAP_DATASETS.items():
         image = _select_openlandmap_bands(image_id).clip(region)
-        predictors[key] = _download_ee_multiband_image(image, extent, f"openlandmap_{key}")
+        predictors[key] = _download_ee_multiband_image(
+            image,
+            extent,
+            f"openlandmap_{key}",
+            OPENLANDMAP_EXPORT_SCALE_M,
+        )
     return predictors
 
 
@@ -1133,8 +1150,9 @@ def _load_reference_ssm(
             year_image.select([band_name for band_name, _ in selected]),
             extent,
             f"gssm_raw_{year}",
+            GSSM_EXPORT_SCALE_M,
         )
-        raw_year = raw_year.assign_coords(time = [band_date for _, band_date in selected]).rename({"band": "time"})
+        raw_year = raw_year.rename({"band": "time"}).assign_coords(time = [band_date for _, band_date in selected])
         year_stacks.append(raw_year)
 
     if not year_stacks:
