@@ -3,7 +3,7 @@ Script: api.py
 Objective: Provide the package facade for SWB preprocess, calibration, and run workflows.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-19
 Inputs: Facade API keyword arguments for SWB preprocess, calibration, or run operations.
 Outputs: Forwarded workflow execution or explicit placeholder and validation errors.
 Usage: Imported as `pysweb.swb.api`
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import sys
 
+from pysweb.swb.calibrate import calibrate_domain
+from pysweb.swb.preprocess import preprocess_inputs
 from pysweb.swb.run import run_swb_workflow
 
 _RUN_ENTRY_INPUT_KEYS = {
@@ -33,12 +35,12 @@ _RUN_ENTRY_INPUT_KEYS = {
 }
 
 
-def preprocess(*args, **kwargs):
-    raise NotImplementedError("pysweb.swb.preprocess is not wired yet")
+def preprocess(**kwargs):
+    return preprocess_inputs(**kwargs)
 
 
-def calibrate(*args, **kwargs):
-    raise NotImplementedError("pysweb.swb.calibrate is not wired yet")
+def calibrate(**kwargs):
+    return calibrate_domain(**kwargs)
 
 
 def run(**kwargs):
@@ -55,4 +57,6 @@ def run(**kwargs):
 
 _PACKAGE = sys.modules.get("pysweb.swb")
 if _PACKAGE is not None:
+    _PACKAGE.preprocess = preprocess
+    _PACKAGE.calibrate = calibrate
     _PACKAGE.run = run

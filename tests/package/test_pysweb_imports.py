@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Script: test_pysweb_imports.py
-Objective: Verify the package exposes importable subpackages and the current facade entry-point contracts.
+Objective: Verify the package exposes importable subpackages and callable SWB facade entry points.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-19
 Inputs: Package imports and direct facade calls exercised under pytest.
 Outputs: Test assertions.
 Usage: pytest tests/package/test_pysweb_imports.py
@@ -43,12 +43,8 @@ def test_package_api_contracts():
 
     assert callable(ssebop.prepare_inputs)
     assert callable(ssebop.run)
-
-    for func_name in ("preprocess", "calibrate"):
-        func = getattr(swb, func_name)
-        with pytest.raises(NotImplementedError) as exc_info:
-            func()
-        assert str(exc_info.value) == f"pysweb.swb.{func_name} is not wired yet"
+    assert callable(swb.preprocess)
+    assert callable(swb.calibrate)
 
     with pytest.raises(ValueError, match="Missing required inputs for SWB run"):
         swb.run()
