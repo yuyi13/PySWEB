@@ -72,6 +72,45 @@ def _pool_context():
         return None
 
 
+def _missing_date_preview(missing_dates: pd.DatetimeIndex) -> str:
+    preview = ", ".join(timestamp.strftime("%Y-%m-%d") for timestamp in missing_dates[:10])
+    if len(missing_dates) > 10:
+        preview = f"{preview}, ..."
+    return preview
+
+
+def _require_daily_coverage(
+    da: xr.DataArray,
+    expected_dates: Sequence[pd.Timestamp],
+    label: str,
+    *,
+    require_complete: bool = True,
+) -> xr.DataArray:
+    if "time" not in da.coords:
+        raise ValueError(f"{label} data must include a 'time' coordinate.")
+
+    expected_index = pd.DatetimeIndex(expected_dates).sort_values().normalize()
+    actual_times = pd.DatetimeIndex(da.coords["time"].values)
+    actual_index = actual_times.normalize()
+    duplicate_dates = pd.DatetimeIndex(actual_index[actual_index.duplicated(keep = False)]).unique()
+    if not duplicate_dates.empty:
+        raise ValueError(f"{label} data contains multiple timesteps for: {_missing_date_preview(duplicate_dates)}")
+
+    positions_by_day = {day: idx for idx, day in enumerate(actual_index)}
+    selected_days = [day for day in expected_index if day in positions_by_day]
+    if require_complete:
+        missing_dates = expected_index.difference(pd.DatetimeIndex(selected_days))
+        if not missing_dates.empty:
+            raise ValueError(f"{label} data missing requested days: {_missing_date_preview(missing_dates)}")
+    elif not selected_days:
+        return da.isel(time = slice(0, 0)).assign_coords(time = expected_index[:0])
+
+    selected_index = pd.DatetimeIndex(selected_days)
+    positions = [positions_by_day[day] for day in selected_index]
+    selected = da.isel(time = positions)
+    return selected.assign_coords(time = selected_index)
+
+
 def _build_layer_bottoms_mm() -> np.ndarray:
     return np.array([bottom_mm for _, bottom_mm in OPENLANDMAP_LAYER_SPECS], dtype = float)
 
@@ -496,10 +535,16 @@ def _load_rain_file_for_window(
     lat_dim: str,
     lon_dim: str,
 ) -> Optional[xr.DataArray]:
+    expected_dates = pd.date_range(start = start, end = end, freq = "D")
     with xr.open_dataset(path) as ds:
         if rain_var not in ds:
             raise KeyError(f"Variable '{rain_var}' not found in precipitation dataset: {path}")
-        da = ds[rain_var].sel(time = slice(start, end))
+        da = _require_daily_coverage(
+            ds[rain_var],
+            expected_dates,
+            "Precipitation",
+            require_complete = False,
+        )
         if da.sizes.get("time", 0) == 0:
             return None
         if extent:
@@ -561,18 +606,14 @@ def _prepare_et_file_component(
     lon_dim: str,
     dtype: str,
 ) -> xr.DataArray:
+    expected_dates = pd.date_range(start = start_date, end = end_date, freq = "D")
     with xr.open_dataset(path) as ds:
         if var_name not in ds:
             raise KeyError(f"Variable '{var_name}' not found in ET dataset: {path}")
         da = ds[var_name]
-        if "time" in da.coords:
-            time_values = pd.to_datetime(da.coords["time"].values)
-            if start_date < time_values.min() or end_date > time_values.max():
-                raise ValueError(
-                    f"ET file {path} does not cover requested date range "
-                    f"({start_date.date()} to {end_date.date()})."
-                )
-            da = da.sel(time = slice(start_date, end_date))
+        if "time" not in da.coords:
+            raise ValueError(f"ET variable '{var_name}' must include a time coordinate.")
+        da = _require_daily_coverage(da, expected_dates, f"ET variable '{var_name}'")
         if extent:
             if da.rio.crs is not None:
                 da = _clip_to_extent(da, grid, extent)
@@ -657,6 +698,7 @@ def _load_et_daily_task(task: Tuple[int, str, str]) -> Tuple[int, xr.DataArray]:
 
 
 def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.Timestamp, end: pd.Timestamp) -> xr.DataArray:
+    expected_dates = pd.date_range(start = start, end = end, freq = "D")
     if args.rain_file:
         path = Path(args.rain_file).expanduser().resolve()
         if not path.exists():
@@ -664,7 +706,7 @@ def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.
         with xr.open_dataset(path) as ds:
             if args.rain_var not in ds:
                 raise KeyError(f"Variable '{args.rain_var}' not found in precipitation dataset: {path}")
-            rain = ds[args.rain_var].sel(time = slice(start, end))
+            rain = _require_daily_coverage(ds[args.rain_var], expected_dates, "Precipitation")
             if args.extent:
                 extent = tuple(args.extent)
                 if rain.rio.crs is not None:
@@ -674,6 +716,7 @@ def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.
             rain = rain.load()
         if rain.sizes.get("time", 0) == 0:
             raise ValueError("No precipitation data found in the requested date range.")
+        rain = _require_daily_coverage(rain, expected_dates, "Precipitation")
     else:
         month_pattern = args.rain_filename_pattern or "ANUClimate_v2-0_rain_daily_{year}{month:02d}.nc"
         rain_root = Path(args.rain_root).expanduser().resolve()
@@ -736,6 +779,7 @@ def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.
         if not data_arrays:
             raise ValueError("No precipitation data found in the requested date range.")
         rain = xr.concat(data_arrays, dim = "time").sortby("time")
+        rain = _require_daily_coverage(rain, expected_dates, "Precipitation")
 
     broadcast = _broadcast_single_pixel(rain, grid)
     rain = broadcast if broadcast is not None else _reproject_to_template(rain, grid, resampling = Resampling.bilinear)
@@ -1159,6 +1203,7 @@ def _load_reference_ssm(
         raise ValueError("Requested dates do not overlap any gssm1km daily bands.")
 
     raw = xr.concat(year_stacks, dim = "time").sortby("time")
+    raw = _require_daily_coverage(raw, dates, "gssm1km reference SSM")
     return _rename_reference_ssm(raw / GSSM_SCALE_FACTOR)
 
 

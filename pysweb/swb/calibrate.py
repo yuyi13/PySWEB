@@ -146,6 +146,47 @@ def _parse_dates(args: argparse.Namespace) -> Tuple[pd.Timestamp, pd.Timestamp]:
     return start, end
 
 
+def _missing_date_preview(missing_dates: pd.DatetimeIndex) -> str:
+    preview = ", ".join(timestamp.strftime("%Y-%m-%d") for timestamp in missing_dates[:10])
+    if len(missing_dates) > 10:
+        preview = f"{preview}, ..."
+    return preview
+
+
+def _select_daily_timesteps(
+    da: xr.DataArray,
+    expected_dates: Sequence[pd.Timestamp],
+    label: str,
+    *,
+    empty_message: Optional[str] = None,
+) -> xr.DataArray:
+    if "time" not in da.coords:
+        raise ValueError(f"{label} data must include a 'time' coordinate.")
+
+    expected_index = pd.DatetimeIndex(expected_dates).sort_values().normalize()
+    actual_times = pd.DatetimeIndex(da.coords["time"].values)
+    actual_index = actual_times.normalize()
+    duplicate_dates = pd.DatetimeIndex(actual_index[actual_index.duplicated(keep = False)]).unique()
+    if not duplicate_dates.empty:
+        raise ValueError(f"{label} data contains multiple timesteps for: {_missing_date_preview(duplicate_dates)}")
+
+    positions_by_day = {day: idx for idx, day in enumerate(actual_index)}
+    selected_days = [day for day in expected_index if day in positions_by_day]
+    if not selected_days:
+        if empty_message is not None:
+            raise ValueError(empty_message)
+        raise ValueError(f"{label} data missing requested calibration days: {_missing_date_preview(expected_index)}")
+
+    missing_dates = expected_index.difference(pd.DatetimeIndex(selected_days))
+    if not missing_dates.empty:
+        raise ValueError(f"{label} data missing requested calibration days: {_missing_date_preview(missing_dates)}")
+
+    selected_index = pd.DatetimeIndex(selected_days)
+    positions = [positions_by_day[day] for day in selected_index]
+    selected = da.isel(time = positions)
+    return selected.assign_coords(time = selected_index)
+
+
 def _compute_rmse(
     params: Sequence[float],
     effective_precip_vals: np.ndarray,
@@ -392,15 +433,21 @@ def _coarsen_to_target(
 def _namespace_from_kwargs(kwargs: Dict[str, object]) -> argparse.Namespace:
     parser = build_parser()
     namespace = argparse.Namespace()
+    valid_names = set()
 
     required_args = []
     for action in parser._actions:
         if action.dest == "help":
             continue
+        valid_names.add(action.dest)
         if action.default is not argparse.SUPPRESS:
             setattr(namespace, action.dest, action.default)
         if action.required:
             required_args.append(action.dest)
+
+    unknown = sorted(set(kwargs).difference(valid_names))
+    if unknown:
+        raise TypeError(f"Unexpected calibrate_domain arguments: {', '.join(unknown)}")
 
     for key, value in kwargs.items():
         setattr(namespace, key, value)
@@ -453,12 +500,18 @@ def calibrate_domain(**kwargs) -> None:
     if ndvi is not None and "time" not in ndvi.coords:
         raise ValueError("NDVI data must include a 'time' coordinate.")
 
-    effective_precip = effective_precip.sel(time=slice(start, end))
-    et = et.sel(time=effective_precip.coords["time"])
-    t = t.sel(time=effective_precip.coords["time"])
-    reference_ssm = reference_ssm.sel(time=effective_precip.coords["time"])
+    expected_dates = pd.date_range(start = start, end = end, freq = "D")
+    effective_precip = _select_daily_timesteps(
+        effective_precip,
+        expected_dates,
+        "Effective precipitation",
+        empty_message = "No effective precipitation timesteps overlap requested calibration date range.",
+    )
+    et = _select_daily_timesteps(et, expected_dates, "ET")
+    t = _select_daily_timesteps(t, expected_dates, "Transpiration")
+    reference_ssm = _select_daily_timesteps(reference_ssm, expected_dates, "Reference SSM")
     if ndvi is not None:
-        ndvi = ndvi.sel(time=effective_precip.coords["time"])
+        ndvi = _select_daily_timesteps(ndvi, expected_dates, "NDVI")
 
     lat_dim = args.lat_dim
     lon_dim = args.lon_dim
@@ -677,6 +730,8 @@ def calibrate_domain(**kwargs) -> None:
         args.drainage_lower_limit,
         args.use_ndvi_root_depth,
     )
+    if n_obs == 0 or not np.isfinite(final_rmse):
+        raise ValueError("Calibration produced no valid observations for RMSE computation.")
 
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
