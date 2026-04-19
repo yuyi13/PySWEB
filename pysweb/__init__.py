@@ -1,6 +1,6 @@
 from importlib import import_module
 
-__all__ = ["io", "met", "ssebop", "swb"]
+__all__ = ["io", "met", "ssebop", "soil", "swb", "visualisation"]
 
 _SUBMODULES = {name: f"pysweb.{name}" for name in __all__}
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script: test_pysweb_imports.py
-Objective: Verify the package exposes importable subpackages and callable SWB facade entry points.
+Objective: Verify the package exposes importable subpackages and callable facade entry points.
 Author: Yi Yu
 Created: 2026-04-17
 Last updated: 2026-04-19
@@ -28,15 +28,19 @@ def test_top_level_package_exposes_ssebop_and_swb():
     pysweb = import_module("pysweb")
 
     assert hasattr(pysweb, "ssebop")
+    assert hasattr(pysweb, "soil")
     assert hasattr(pysweb, "swb")
+    assert hasattr(pysweb, "visualisation")
 
 
 def test_subpackages_and_swb_modules_import_cleanly():
     assert import_module("pysweb.ssebop").__name__ == "pysweb.ssebop"
+    assert import_module("pysweb.soil").__name__ == "pysweb.soil"
     assert import_module("pysweb.swb").__name__ == "pysweb.swb"
     assert import_module("pysweb.swb.core").__name__ == "pysweb.swb.core"
     assert import_module("pysweb.swb.run").__name__ == "pysweb.swb.run"
     assert import_module("pysweb.met").__name__ == "pysweb.met"
+    assert import_module("pysweb.visualisation").__name__ == "pysweb.visualisation"
 
 
 def test_swb_modules_import_cleanly():
@@ -45,6 +49,10 @@ def test_swb_modules_import_cleanly():
 
 
 def test_package_api_contracts():
+    for module_name in list(sys.modules):
+        if module_name == "pysweb" or module_name.startswith("pysweb.swb"):
+            sys.modules.pop(module_name, None)
+
     ssebop = import_module("pysweb.ssebop")
     swb = import_module("pysweb.swb")
 
