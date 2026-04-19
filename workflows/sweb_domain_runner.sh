@@ -3,7 +3,7 @@
 # Objective: Orchestrate SWEB preprocessing, domain calibration, and model execution for a selected run subdirectory using ERA5-Land precipitation and SSEBop ET.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-04-17
+# Last updated: 2026-04-19
 # Inputs: run_subdir plus optional flags (--burn-in-end, --workers, --uncalibrated, step toggles) and forcing paths.
 # Outputs: Preprocessed SWEB inputs, domain calibration CSV, and SWEB RZSM outputs.
 # Usage: bash workflows/sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
@@ -494,7 +494,7 @@ if [[ "${RUN_CALIB}" == "true" ]]; then
         --t "${CALIB_T_FILE}" \
         --t-var "t" \
         --soil-dir "${PREPROCESS_OUT_DIR}" \
-        --smap-ssm "${CALIB_SMAP_SSM_FILE}" \
+        --reference-ssm "${CALIB_SMAP_SSM_FILE}" \
         --date-range "${CALIB_START_DATE}" "${CALIB_END_DATE}" \
         --diff-bounds "${CALIB_DIFF_MIN}" "${CALIB_DIFF_MAX}" \
         --workers "${N_WORKERS}" \
