@@ -29,9 +29,19 @@ def test_unknown_soil_source_fails_early():
         api.load_soil_properties(soil_source="bogus", args=None, grid=None)
 
 
+def test_openlandmap_placeholder_message_via_public_api():
+    api = import_module("pysweb.soil.api")
+
+    with pytest.raises(
+        NotImplementedError,
+        match=r"Soil backend 'openlandmap' has not been moved out of pysweb\.swb\.preprocess yet\.",
+    ):
+        api.load_soil_properties(soil_source="openlandmap", args=None, grid=None)
+
+
 @pytest.mark.parametrize("soil_source", ["mlcons", "slga", "custom"])
-def test_placeholder_backends_fail_with_named_not_implemented_error(soil_source):
-    backend = import_module(f"pysweb.soil.{soil_source}")
+def test_placeholder_backends_fail_via_public_api(soil_source):
+    api = import_module("pysweb.soil.api")
 
     with pytest.raises(NotImplementedError, match=soil_source):
-        backend.load_soil_properties(args=None, grid=None)
+        api.load_soil_properties(soil_source=soil_source, args=None, grid=None)

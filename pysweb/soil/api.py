@@ -13,7 +13,7 @@ Dependencies: dataclasses, numpy, xarray
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Dict
+from typing import Dict
 
 import numpy as np
 import xarray as xr
@@ -28,11 +28,9 @@ class SoilOutputs:
 
 
 def load_soil_properties(*, soil_source: str, args, grid, **kwargs) -> SoilOutputs:
-    if soil_source == "openlandmap":
-        backend = import_module("pysweb.soil.openlandmap")
+    if soil_source in SUPPORTED_SOIL_SOURCES:
+        backend = import_module(f"pysweb.soil.{soil_source}")
         return backend.load_soil_properties(args=args, grid=grid, **kwargs)
-    if soil_source in {"mlcons", "slga", "custom"}:
-        raise NotImplementedError(f"Soil backend '{soil_source}' is not implemented yet.")
     supported_values = ", ".join(SUPPORTED_SOIL_SOURCES)
     raise ValueError(
         f"Unsupported soil_source '{soil_source}'. Supported values: {supported_values}."

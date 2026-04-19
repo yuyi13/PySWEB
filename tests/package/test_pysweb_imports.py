@@ -43,6 +43,15 @@ def test_subpackages_and_swb_modules_import_cleanly():
     assert import_module("pysweb.visualisation").__name__ == "pysweb.visualisation"
 
 
+def test_package_facade_attributes_are_available_and_callable():
+    soil = import_module("pysweb.soil")
+    visualisation = import_module("pysweb.visualisation")
+
+    assert callable(soil.load_soil_properties)
+    assert callable(visualisation.plot_heatmap)
+    assert callable(visualisation.plot_time_series)
+
+
 def test_swb_modules_import_cleanly():
     assert import_module("pysweb.swb.preprocess").__name__ == "pysweb.swb.preprocess"
     assert import_module("pysweb.swb.calibrate").__name__ == "pysweb.swb.calibrate"
