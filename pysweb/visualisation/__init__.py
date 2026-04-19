@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script: __init__.py
-Objective: Expose lazy visualisation submodules for upcoming plotting helpers.
+Objective: Expose lazy visualisation submodules for plotting helpers.
 Author: Yi Yu
 Created: 2026-04-19
 Last updated: 2026-04-19

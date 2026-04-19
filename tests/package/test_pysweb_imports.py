@@ -57,6 +57,13 @@ def test_visualisation_submodules_import_cleanly():
     assert import_module("pysweb.visualisation.plot_time_series").__name__ == "pysweb.visualisation.plot_time_series"
 
 
+def test_visualisation_lazy_package_attributes_resolve_real_modules():
+    visualisation = import_module("pysweb.visualisation")
+
+    assert visualisation.plot_heatmap.__name__ == "pysweb.visualisation.plot_heatmap"
+    assert visualisation.plot_time_series.__name__ == "pysweb.visualisation.plot_time_series"
+
+
 def test_swb_modules_import_cleanly():
     assert import_module("pysweb.swb.preprocess").__name__ == "pysweb.swb.preprocess"
     assert import_module("pysweb.swb.calibrate").__name__ == "pysweb.swb.calibrate"
