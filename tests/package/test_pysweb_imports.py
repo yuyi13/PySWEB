@@ -48,3 +48,21 @@ def test_package_api_contracts():
 
     with pytest.raises(ValueError, match="Missing required inputs for SWB run"):
         swb.run()
+
+
+@pytest.mark.parametrize(
+    ("submodule_name", "attribute_name"),
+    [
+        ("pysweb.swb.preprocess", "preprocess"),
+        ("pysweb.swb.calibrate", "calibrate"),
+    ],
+)
+def test_submodule_first_import_keeps_package_entry_points_callable(submodule_name, attribute_name):
+    for module_name in list(sys.modules):
+        if module_name == "pysweb" or module_name.startswith("pysweb.swb"):
+            sys.modules.pop(module_name, None)
+
+    import_module(submodule_name)
+    swb = import_module("pysweb.swb")
+
+    assert callable(getattr(swb, attribute_name))
