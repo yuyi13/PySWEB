@@ -44,9 +44,13 @@ def test_run_notebook_uses_package_backed_swb_calls():
     assert "pysweb.swb.preprocess(" in code_text
     assert "pysweb.swb.calibrate(" in code_text
     assert "pysweb.swb.run(" in code_text
+    assert 'e_var = "E"' in code_text
+    assert 'et_var = "ET"' in code_text
+    assert 't_var = "T"' in code_text
 
     assert "SWB preprocess and calibration are still driven by" not in markdown_text
     assert "workflow-script-only" not in markdown_text
+    assert "/g/data/ym05/sweb_model/notebook_runs" not in code_text
 
 
 def test_readmes_list_actual_notebook_files():
