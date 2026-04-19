@@ -22,6 +22,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description = "Preprocess spatial datasets into aligned SWB NetCDF files."
     )
+    parser.add_argument("--start-date", type = str)
+    parser.add_argument("--end-date", type = str)
+    parser.add_argument("--date-range", nargs = 2, metavar = ("START", "END"))
+    parser.add_argument(
+        "--extent",
+        nargs = 4,
+        type = float,
+        metavar = ("MIN_LON", "MIN_LAT", "MAX_LON", "MAX_LAT"),
+    )
+    parser.add_argument("--sm-res", type = float, required = True)
     parser.add_argument("--output-dir", required = True)
     parser.add_argument("--reference-source", default = "gssm1km")
     parser.add_argument("--reference-ssm-asset", default = "users/qianrswaterr/GlobalSSM1km0509")
