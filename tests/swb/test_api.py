@@ -10,6 +10,7 @@ Outputs: Test assertions.
 Usage: pytest tests/swb/test_api.py
 Dependencies: pytest
 """
+from importlib import import_module
 from pathlib import Path
 import sys
 
@@ -27,7 +28,8 @@ def test_swb_preprocess_dispatches_to_package_module(monkeypatch):
         recorded.update(kwargs)
         return "preprocess-ok"
 
-    monkeypatch.setattr(swb_api, "preprocess_inputs", fake_preprocess_inputs, raising = False)
+    preprocess_module = import_module("pysweb.swb.preprocess")
+    monkeypatch.setattr(preprocess_module, "preprocess_inputs", fake_preprocess_inputs)
 
     result = swb_api.preprocess(output_dir = "/tmp/out", reference_source = "gssm1km")
 
@@ -45,7 +47,8 @@ def test_swb_calibrate_dispatches_to_package_module(monkeypatch):
         recorded.update(kwargs)
         return "calibrate-ok"
 
-    monkeypatch.setattr(swb_api, "calibrate_domain", fake_calibrate_domain, raising = False)
+    calibrate_module = import_module("pysweb.swb.calibrate")
+    monkeypatch.setattr(calibrate_module, "calibrate_domain", fake_calibrate_domain)
 
     result = swb_api.calibrate(reference_ssm = "/tmp/reference.nc", output = "/tmp/params.csv")
 

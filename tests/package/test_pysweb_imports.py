@@ -11,6 +11,7 @@ Usage: pytest tests/package/test_pysweb_imports.py
 Dependencies: pytest
 """
 from importlib import import_module
+import inspect
 from pathlib import Path
 import sys
 
@@ -66,3 +67,21 @@ def test_submodule_first_import_keeps_package_entry_points_callable(submodule_na
     swb = import_module("pysweb.swb")
 
     assert callable(getattr(swb, attribute_name))
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "module_name"),
+    [
+        ("import pysweb.swb.preprocess as preprocess_module", "preprocess_module"),
+        ("import pysweb.swb.calibrate as calibrate_module", "calibrate_module"),
+    ],
+)
+def test_submodule_import_alias_remains_a_module(import_statement, module_name):
+    for module_name_key in list(sys.modules):
+        if module_name_key == "pysweb" or module_name_key.startswith("pysweb.swb"):
+            sys.modules.pop(module_name_key, None)
+
+    namespace = {}
+    exec(import_statement, namespace, namespace)
+
+    assert inspect.ismodule(namespace[module_name])

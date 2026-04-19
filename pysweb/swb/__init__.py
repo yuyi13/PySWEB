@@ -7,31 +7,22 @@ Last updated: 2026-04-19
 Inputs: Package attribute access and submodule imports.
 Outputs: Callable package facade entry points.
 Usage: Imported as `pysweb.swb`
-Dependencies: importlib, sys, types
+Dependencies: importlib
 """
 
 from importlib import import_module
-import sys
-import types
 
 __all__ = ["calibrate", "preprocess", "run"]
 
 
-class _SWBPackageModule(types.ModuleType):
-    def __setattr__(self, name, value):
-        if name in __all__ and isinstance(value, types.ModuleType):
-            api = import_module("pysweb.swb.api")
-            value = getattr(api, name)
-        super().__setattr__(name, value)
-
-
-sys.modules[__name__].__class__ = _SWBPackageModule
-
-
 def __getattr__(name):
-    if name in __all__:
+    if name == "preprocess":
+        return import_module("pysweb.swb.preprocess")
+    if name == "calibrate":
+        return import_module("pysweb.swb.calibrate")
+    if name == "run":
         api = import_module("pysweb.swb.api")
-        value = getattr(api, name)
+        value = api.run
         globals()[name] = value
         return value
     raise AttributeError(f"module 'pysweb.swb' has no attribute {name!r}")
