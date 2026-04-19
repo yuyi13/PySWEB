@@ -18,10 +18,11 @@ PySWEB/
 │   ├── met/                               # Meteorology path resolution and source-specific helpers
 │   │   ├── era5land/
 │   │   └── silo/
+│   ├── soil/                              # Canonical soil-source discovery and loading logic
 │   ├── ssebop/                            # Package-backed SSEBop prepare/run logic
 │   │   ├── api.py
 │   │   └── inputs/
-│   └── swb/                               # Package-backed SWB preprocess/calibrate/run logic
+│   ├── swb/                               # Package-backed SWB preprocess/calibrate/run logic
 │       ├── __init__.py
 │       ├── api.py
 │       ├── calibrate.py
@@ -29,6 +30,7 @@ PySWEB/
 │       ├── preprocess.py
 │       ├── run.py
 │       └── solver.py
+│   └── visualisation/                     # Canonical plotting modules for notebooks and scripts
 │
 ├── workflows/                             # CLI entrypoints and convenience wrappers
 │   ├── 1_ssebop_prepare_inputs.py         # Unified first SSEBop step: Landsat + meteorology preparation
@@ -52,15 +54,15 @@ PySWEB/
 │   ├── gee_downloader.py                  # Earth Engine data download utilities
 │   └── thomas_solve_tridiagonal_matrix.py # Tridiagonal solver utility
 │
-├── visualisation/                         # Plotting and visualisation helpers
+├── visualisation/                         # Legacy wrapper scripts around pysweb.visualisation during the transition
 │   ├── plot_time_series.py                # Time-series extraction + plots for SSEBop and SWEB outputs
 │   └── plot_heatmap.py                    # Heatmap plotting for SWEB layers (optionally with SSEBop forcing panel)
 │
 ├── notebooks/                             # Example Jupyter notebooks
 │   ├── README.md                          # Notebook index and scope
-│   ├── 01_plot_heatmap.ipynb              # Heatmap plotting walkthrough
-│   ├── 02_plot_time_series.ipynb          # Time-series plotting walkthrough
-│   └── 03_run_with_pysweb.ipynb           # Direct package-driven walkthrough for prepare/run flows
+│   ├── 01_run_pysweb.ipynb                # Canonical notebook run example for SSEBop + SWB
+│   ├── 02_plot_heatmap.ipynb              # Heatmap plotting walkthrough
+│   └── 03_plot_time_series.ipynb          # Time-series plotting walkthrough
 │
 ├── README.md
 └── SWEB_logo.png
@@ -110,7 +112,7 @@ bash workflows/sweb_domain_runner.sh <run_subdir>
 
 In that wrapper sequence, the SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack` by default, so the handoff works without manually copying ERA5-Land stacks. If you still run the standalone ERA5-Land stack workflow, the SWEB wrapper can fall back to `1_era5land_stacks/<run_subdir>`.
 
-Plotting and notebook helpers are unchanged:
+For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python, prefer `pysweb.visualisation`. The legacy `visualisation/*.py` wrappers remain available during the transition:
 
 ```bash
 python visualisation/plot_time_series.py \
@@ -130,6 +132,8 @@ python visualisation/plot_heatmap.py \
 cd notebooks
 jupyter notebook
 ```
+
+The canonical package imports for those plotting paths are `pysweb.visualisation.plot_time_series` and `pysweb.visualisation.plot_heatmap`.
 
 Both wrapper scripts currently include environment-specific default paths (for example `/g/data/...`) near the top of each script. Update those values before running on another machine or filesystem.
 
@@ -157,6 +161,8 @@ This repository uses:
 - `pysweb/` for the canonical package code.
 - `workflows/` for runnable CLI entry points and convenience wrappers around package or workflow-owned implementations.
 - `core/` for legacy/reused modules that are still being folded into the package layout.
+
+For soil-source logic, `pysweb.soil` is now the canonical package location. Keep new soil backend selection and loading changes there, with workflows and wrappers delegating into that package.
 
 ## Development guidance
 Use this rule of thumb while the package-first refactor is still in progress:
@@ -212,6 +218,6 @@ This repository is actively evolving. Verify file paths, date ranges, and spatia
 
 The `notebooks/` directory currently contains:
 
-- `01_plot_heatmap.ipynb`: point or domain-mean heatmap plotting walkthrough
-- `02_plot_time_series.ipynb`: SSEBop + SWEB time-series plotting walkthrough
-- `03_run_with_pysweb.ipynb`: direct `import pysweb` walkthrough for package-backed execution paths
+- `01_run_pysweb.ipynb`: canonical notebook run example using `import pysweb` for SSEBop plus SWB preprocess/calibrate/run
+- `02_plot_heatmap.ipynb`: heatmap plotting walkthrough, with plotting modules exposed through `pysweb.visualisation`
+- `03_plot_time_series.ipynb`: SSEBop + SWEB time-series plotting walkthrough, with plotting modules exposed through `pysweb.visualisation`
