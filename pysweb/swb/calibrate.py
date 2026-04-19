@@ -46,4 +46,4 @@ sys.modules[__name__].__class__ = _CallableCalibrateModule
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

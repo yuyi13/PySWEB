@@ -85,3 +85,23 @@ def test_submodule_import_alias_remains_a_module(import_statement, module_name):
     exec(import_statement, namespace, namespace)
 
     assert inspect.ismodule(namespace[module_name])
+
+
+@pytest.mark.parametrize(
+    ("attribute_name",),
+    [
+        ("preprocess",),
+        ("calibrate",),
+    ],
+)
+def test_api_first_import_keeps_package_entry_points_as_callable_modules(attribute_name):
+    for module_name in list(sys.modules):
+        if module_name == "pysweb" or module_name.startswith("pysweb.swb"):
+            sys.modules.pop(module_name, None)
+
+    import_module("pysweb.swb.api")
+    swb = import_module("pysweb.swb")
+    value = getattr(swb, attribute_name)
+
+    assert inspect.ismodule(value)
+    assert callable(value)

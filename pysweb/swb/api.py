@@ -56,6 +56,4 @@ def run(**kwargs):
 
 _PACKAGE = sys.modules.get("pysweb.swb")
 if _PACKAGE is not None:
-    _PACKAGE.preprocess = preprocess
-    _PACKAGE.calibrate = calibrate
     _PACKAGE.run = run
