@@ -75,3 +75,22 @@ def test_readmes_point_to_canonical_package_modules():
     assert "pysweb.soil" in readme_text
     assert "pysweb.visualisation" in readme_text
     assert "pysweb.visualisation" in notebooks_readme_text
+
+
+def test_plotting_notebooks_use_package_entrypoints():
+    heatmap_notebook_text = _read_text("notebooks/02_plot_heatmap.ipynb")
+    time_series_notebook_text = _read_text("notebooks/03_plot_time_series.ipynb")
+
+    assert "pysweb.visualisation.plot_heatmap" in heatmap_notebook_text
+    assert "visualisation/plot_heatmap.py" not in heatmap_notebook_text
+
+    assert "pysweb.visualisation.plot_time_series" in time_series_notebook_text
+    assert "visualisation/plot_time_series.py" not in time_series_notebook_text
+
+
+def test_readme_drops_stale_wrapper_defaults_guidance():
+    readme_text = _read_text("README.md")
+
+    assert "pysweb.visualisation" in readme_text
+    assert "environment-specific default paths" not in readme_text
+    assert "near the top of each script" not in readme_text

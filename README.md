@@ -112,19 +112,19 @@ bash workflows/sweb_domain_runner.sh <run_subdir>
 
 In that wrapper sequence, the SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack` by default, so the handoff works without manually copying ERA5-Land stacks. If you still run the standalone ERA5-Land stack workflow, the SWEB wrapper can fall back to `1_era5land_stacks/<run_subdir>`.
 
-For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python, prefer `pysweb.visualisation`. The legacy `visualisation/*.py` wrappers remain available during the transition:
+For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the canonical modules under `pysweb.visualisation`. The legacy `visualisation/*.py` files are compatibility shims around those package entrypoints:
 
 ```bash
-python visualisation/plot_time_series.py \
+python -m pysweb.visualisation.plot_time_series \
   --run-subdir <run_subdir> \
   --output /g/data/ym05/sweb_model/figures/<run_subdir>_timeseries.png
 
-python visualisation/plot_heatmap.py \
+python -m pysweb.visualisation.plot_heatmap \
   --run-subdir <run_subdir> \
   --lat <latitude> --lon <longitude> \
   --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap.png
 
-python visualisation/plot_heatmap.py \
+python -m pysweb.visualisation.plot_heatmap \
   --run-subdir <run_subdir> \
   --domain-mean \
   --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap_domain.png
@@ -133,9 +133,7 @@ cd notebooks
 jupyter notebook
 ```
 
-The canonical package imports for those plotting paths are `pysweb.visualisation.plot_time_series` and `pysweb.visualisation.plot_heatmap`.
-
-Both wrapper scripts currently include environment-specific default paths (for example `/g/data/...`) near the top of each script. Update those values before running on another machine or filesystem.
+The canonical plotting modules are `pysweb.visualisation.plot_time_series` and `pysweb.visualisation.plot_heatmap`. Keep new automation and documentation pointed at those package entrypoints; use the wrapper scripts only when you need temporary compatibility with older workflows.
 
 The meteorology path is now ERA5-Land-based and globally usable. SWB soil texture/SOC inputs now default to Earth Engine OpenLandMap, and the reference SSM input now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`.
 
@@ -145,7 +143,7 @@ The meteorology path is now ERA5-Land-based and globally usable. SWB soil textur
 - From SWEB preprocess (`3_sweb_preprocess_inputs.py`): `rain_daily_*.nc`, `effective_precip_daily_*.nc`, `et_daily_*.nc`, `t_daily_*.nc`, `soil_*.nc`, and optionally `reference_ssm_daily_*.nc`. When invoked via `sweb_domain_runner.sh`, precipitation is sourced from the unified prepared stack first and only falls back to the legacy stack directory if needed.
 - From calibration (`4_sweb_calib_domain.py`): CSV with calibrated domain parameters.
 - From SWEB run (`5_sweb_run_model.py`): consolidated RZSM NetCDF, optionally split into burn-in and post-burn products by `sweb_domain_runner.sh`.
-- From visualisation helpers (`visualisation/plot_time_series.py`, `visualisation/plot_heatmap.py`):
+- From plotting modules (`pysweb.visualisation.plot_time_series`, `pysweb.visualisation.plot_heatmap`):
   PNG plots and optional extracted CSV tables.
 
 ## Requirements
