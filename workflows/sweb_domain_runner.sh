@@ -90,7 +90,7 @@ ET_VAR="ET"
 T_VAR="T"
 SOIL_TEXTURE_DIR="/g/data/yx97/EO_collections/TERN/SLGA/v2/SoilTexture"
 SOIL_SOC_DIR="/g/data/yx97/EO_collections/TERN/SLGA/v2/SoilOrganicCarbon"
-SMAP_DIR="/g/data/yx97/EO_collections/NASA/SMAP/SMAP-DS"
+REFERENCE_SSM_DIR="/g/data/yx97/EO_collections/NASA/SMAP/SMAP-DS"
 
 # Output locations.
 PREPROCESS_OUT_DIR="${PROJECT_DIR}/3_sweb_inputs"
@@ -418,7 +418,7 @@ run_preprocess_for_window() {
       --output-dir "${PREPROCESS_OUT_DIR}"
 }
 
-# Step 1: preprocess forcing + soil + SMAP SSM to common grid.
+# Step 1: preprocess forcing + soil + reference SSM to common grid.
 if [[ "${RUN_PREPROCESS}" == "true" ]]; then
   if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
     print_status "STEP 1/3" "Running one preprocessing pass for MODEL_RUN_PERIOD."
@@ -444,7 +444,7 @@ MODEL_PRECIP_FILE="${PREPROCESS_OUT_DIR}/rain_daily_${MODEL_START_FMT}_${MODEL_E
 MODEL_EFFECTIVE_PRECIP_FILE="${PREPROCESS_OUT_DIR}/effective_precip_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
 MODEL_ET_FILE="${PREPROCESS_OUT_DIR}/et_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
 MODEL_T_FILE="${PREPROCESS_OUT_DIR}/t_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
-MODEL_SMAP_SSM_FILE="${PREPROCESS_OUT_DIR}/smap_ssm_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
+MODEL_REFERENCE_SSM_FILE="${PREPROCESS_OUT_DIR}/reference_ssm_daily_${MODEL_START_FMT}_${MODEL_END_FMT}.nc"
 
 CALIB_START_FMT=$(date -d "${CALIB_START_DATE}" +%Y%m%d)
 CALIB_END_FMT=$(date -d "${CALIB_END_DATE}" +%Y%m%d)
@@ -452,20 +452,20 @@ CALIB_PERIOD_PRECIP_FILE="${PREPROCESS_OUT_DIR}/rain_daily_${CALIB_START_FMT}_${
 CALIB_PERIOD_EFFECTIVE_PRECIP_FILE="${PREPROCESS_OUT_DIR}/effective_precip_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 CALIB_PERIOD_ET_FILE="${PREPROCESS_OUT_DIR}/et_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 CALIB_PERIOD_T_FILE="${PREPROCESS_OUT_DIR}/t_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
-CALIB_PERIOD_SMAP_SSM_FILE="${PREPROCESS_OUT_DIR}/smap_ssm_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
+CALIB_PERIOD_REFERENCE_SSM_FILE="${PREPROCESS_OUT_DIR}/reference_ssm_daily_${CALIB_START_FMT}_${CALIB_END_FMT}.nc"
 
 if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
   CALIB_PRECIP_FILE="${MODEL_PRECIP_FILE}"
   CALIB_EFFECTIVE_PRECIP_FILE="${MODEL_EFFECTIVE_PRECIP_FILE}"
   CALIB_ET_FILE="${MODEL_ET_FILE}"
   CALIB_T_FILE="${MODEL_T_FILE}"
-  CALIB_SMAP_SSM_FILE="${MODEL_SMAP_SSM_FILE}"
+  CALIB_REFERENCE_SSM_FILE="${MODEL_REFERENCE_SSM_FILE}"
 else
   CALIB_PRECIP_FILE="${CALIB_PERIOD_PRECIP_FILE}"
   CALIB_EFFECTIVE_PRECIP_FILE="${CALIB_PERIOD_EFFECTIVE_PRECIP_FILE}"
   CALIB_ET_FILE="${CALIB_PERIOD_ET_FILE}"
   CALIB_T_FILE="${CALIB_PERIOD_T_FILE}"
-  CALIB_SMAP_SSM_FILE="${CALIB_PERIOD_SMAP_SSM_FILE}"
+  CALIB_REFERENCE_SSM_FILE="${CALIB_PERIOD_REFERENCE_SSM_FILE}"
 fi
 
 # Step 2: domain-wide calibration (single parameter set).
@@ -473,7 +473,7 @@ if [[ "${RUN_CALIB}" == "true" ]]; then
   if [[ "${UNCALIBRATED_MODE}" == "true" ]]; then
     print_skip "STEP 2/3" "Uncalibrated mode enabled; skipping domain calibration and using default parameters."
   else
-    print_status "STEP 2/3" "Running domain-wide calibration against SMAP-DS..."
+    print_status "STEP 2/3" "Running domain-wide calibration against reference SSM..."
     print_status "STEP 2/3" "Calibration range: ${CALIB_START_DATE} to ${CALIB_END_DATE}"
     print_status "STEP 2/3" "Calibration diff bounds (mm): ${CALIB_DIFF_MIN} to ${CALIB_DIFF_MAX}"
     print_status "STEP 2/3" "Workers: ${N_WORKERS}"
@@ -494,7 +494,7 @@ if [[ "${RUN_CALIB}" == "true" ]]; then
         --t "${CALIB_T_FILE}" \
         --t-var "t" \
         --soil-dir "${PREPROCESS_OUT_DIR}" \
-        --reference-ssm "${CALIB_SMAP_SSM_FILE}" \
+        --reference-ssm "${CALIB_REFERENCE_SSM_FILE}" \
         --date-range "${CALIB_START_DATE}" "${CALIB_END_DATE}" \
         --diff-bounds "${CALIB_DIFF_MIN}" "${CALIB_DIFF_MAX}" \
         --workers "${N_WORKERS}" \

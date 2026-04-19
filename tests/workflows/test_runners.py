@@ -79,3 +79,12 @@ def test_wrapper_handoff_prefers_prepared_precip_stack_contract():
     assert "met/era5land/stack" in sweb_text
     assert "1_era5land_stacks" in sweb_text
     assert sweb_text.index("1_ssebop_inputs") < sweb_text.index("1_era5land_stacks")
+
+
+def test_sweb_runner_uses_reference_ssm_filename_contract():
+    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
+
+    assert "reference_ssm_daily_" in sweb_text
+    assert "smap_ssm_daily_" not in sweb_text
+    assert '--reference-ssm "${CALIB_REFERENCE_SSM_FILE}"' in sweb_text
+    assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' not in sweb_text

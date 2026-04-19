@@ -78,5 +78,5 @@ def test_shell_runner_uses_reference_ssm_flag_for_calibration():
     runner_path = ROOT / "workflows" / "sweb_domain_runner.sh"
     runner_text = runner_path.read_text(encoding = "utf-8")
 
-    assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' in runner_text
-    assert '--smap-ssm "${CALIB_SMAP_SSM_FILE}"' not in runner_text
+    assert '--reference-ssm "${CALIB_REFERENCE_SSM_FILE}"' in runner_text
+    assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' not in runner_text
