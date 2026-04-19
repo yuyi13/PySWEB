@@ -8,11 +8,12 @@ Last updated: 2026-04-19
 Inputs: Package imports and direct facade calls exercised under pytest.
 Outputs: Test assertions.
 Usage: pytest tests/package/test_pysweb_imports.py
-Dependencies: pytest
+Dependencies: pytest, subprocess
 """
 from importlib import import_module
 import inspect
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -105,3 +106,25 @@ def test_api_first_import_keeps_package_entry_points_as_callable_modules(attribu
 
     assert inspect.ismodule(value)
     assert callable(value)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "arguments"),
+    [
+        ("pysweb.swb.preprocess", ["--output-dir", "/tmp/out"]),
+        (
+            "pysweb.swb.calibrate",
+            ["--reference-ssm", "/tmp/reference.nc", "--output", "/tmp/params.csv"],
+        ),
+    ],
+)
+def test_module_cli_execution_exits_cleanly(module_name, arguments):
+    result = subprocess.run(
+        [sys.executable, "-m", module_name, *arguments],
+        capture_output = True,
+        text = True,
+        check = False,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""

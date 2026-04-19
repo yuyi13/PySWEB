@@ -48,4 +48,4 @@ sys.modules[__name__].__class__ = _CallablePreprocessModule
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
