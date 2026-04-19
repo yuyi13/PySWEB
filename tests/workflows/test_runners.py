@@ -4,7 +4,7 @@ Script: test_runners.py
 Objective: Verify the workflow shell wrappers stay thin and point at the package-backed entrypoints.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-19
 Inputs: Workflow shell scripts and subprocess invocations supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_runners.py
@@ -88,3 +88,10 @@ def test_sweb_runner_uses_reference_ssm_filename_contract():
     assert "smap_ssm_daily_" not in sweb_text
     assert '--reference-ssm "${CALIB_REFERENCE_SSM_FILE}"' in sweb_text
     assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' not in sweb_text
+
+
+def test_sweb_runner_does_not_pass_legacy_soil_cli_flags():
+    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
+
+    assert "--soil-texture-dir" not in sweb_text
+    assert "--soil-soc-dir" not in sweb_text

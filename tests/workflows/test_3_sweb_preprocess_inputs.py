@@ -70,3 +70,34 @@ def test_workflow_main_forwards_to_package_preprocess(monkeypatch):
     assert recorded["output_dir"] == "/tmp/prepped"
     assert recorded["reference_source"] == "gssm1km"
     assert recorded["gee_project"] == "yiyu-research"
+
+
+def test_workflow_main_accepts_runner_preprocess_contract(monkeypatch):
+    workflow_module = _load_workflow_module()
+    recorded = {}
+
+    def fake_preprocess_inputs(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setattr(workflow_module, "preprocess_inputs", fake_preprocess_inputs)
+
+    workflow_module.main(
+        [
+            "--date-range", "2024-01-01", "2024-01-02",
+            "--extent", "147.2", "-35.1", "147.3", "-35.0",
+            "--sm-res", "0.00025",
+            "--workers", "4",
+            "--rain-file", "/tmp/rain.nc",
+            "--rain-var", "precipitation",
+            "--et-file", "/tmp/et.nc",
+            "--e-var", "E",
+            "--et-var", "ET",
+            "--t-var", "T",
+            "--output-dir", "/tmp/preprocessed",
+        ]
+    )
+
+    assert recorded["rain_file"] == "/tmp/rain.nc"
+    assert recorded["et_file"] == "/tmp/et.nc"
+    assert recorded["workers"] == 4
+    assert recorded["reference_source"] == "gssm1km"

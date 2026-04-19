@@ -80,7 +80,7 @@ DEFAULT_ROOT_BETA="0.96"
 CALIB_DIFF_MIN="0.0"
 CALIB_DIFF_MAX="10000.0"
 
-# Forcing and reference inputs.
+# Forcing inputs.
 PREPARED_INPUT_DIR_BASE="${PROJECT_DIR}/1_ssebop_inputs"
 LEGACY_PRECIP_DIR_BASE="${PROJECT_DIR}/1_era5land_stacks"
 ET_DIR="/g/data/ym05/sweb_model/2_ssebop_outputs"
@@ -88,9 +88,6 @@ ET_PATTERN="et_daily_ssebop_*.nc"
 E_VAR="E"
 ET_VAR="ET"
 T_VAR="T"
-SOIL_TEXTURE_DIR="/g/data/yx97/EO_collections/TERN/SLGA/v2/SoilTexture"
-SOIL_SOC_DIR="/g/data/yx97/EO_collections/TERN/SLGA/v2/SoilOrganicCarbon"
-REFERENCE_SSM_DIR="/g/data/yx97/EO_collections/NASA/SMAP/SMAP-DS"
 
 # Output locations.
 PREPROCESS_OUT_DIR="${PROJECT_DIR}/3_sweb_inputs"
@@ -413,8 +410,6 @@ run_preprocess_for_window() {
       --e-var "${E_VAR}" \
       --et-var "${ET_VAR}" \
       --t-var "${T_VAR}" \
-      --soil-texture-dir "${SOIL_TEXTURE_DIR}" \
-      --soil-soc-dir "${SOIL_SOC_DIR}" \
       --output-dir "${PREPROCESS_OUT_DIR}"
 }
 
