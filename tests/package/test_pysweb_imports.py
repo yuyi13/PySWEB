@@ -39,6 +39,11 @@ def test_subpackages_and_swb_modules_import_cleanly():
     assert import_module("pysweb.met").__name__ == "pysweb.met"
 
 
+def test_swb_modules_import_cleanly():
+    assert import_module("pysweb.swb.preprocess").__name__ == "pysweb.swb.preprocess"
+    assert import_module("pysweb.swb.calibrate").__name__ == "pysweb.swb.calibrate"
+
+
 def test_package_api_contracts():
     ssebop = import_module("pysweb.ssebop")
     swb = import_module("pysweb.swb")
@@ -111,10 +116,10 @@ def test_api_first_import_keeps_package_entry_points_as_callable_modules(attribu
 @pytest.mark.parametrize(
     ("module_name", "arguments"),
     [
-        ("pysweb.swb.preprocess", ["--output-dir", "/tmp/out"]),
+        ("pysweb.swb.preprocess", ["--help"]),
         (
             "pysweb.swb.calibrate",
-            ["--reference-ssm", "/tmp/reference.nc", "--output", "/tmp/params.csv"],
+            ["--help"],
         ),
     ],
 )

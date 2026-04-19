@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+import pysweb.swb.preprocess as preprocess_module
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -256,8 +257,8 @@ def test_load_reference_ssm_filters_bands_scales_values_and_uses_reference_name(
             name=name,
         )
 
-    monkeypatch.setattr("pysweb.swb.preprocess.ee", _FakeEE)
-    monkeypatch.setattr("pysweb.swb.preprocess._download_ee_multiband_image", fake_download)
+    monkeypatch.setattr(preprocess_module, "ee", _FakeEE)
+    monkeypatch.setattr(preprocess_module, "_download_ee_multiband_image", fake_download)
 
     result = _load_reference_ssm(
         extent=(148.0, -35.1, 148.1, -35.0),
@@ -297,8 +298,8 @@ def test_load_openlandmap_predictors_uses_openlandmap_export_scale(monkeypatch):
             name=name,
         )
 
-    monkeypatch.setattr("pysweb.swb.preprocess.ee", FakeEEForOpenLandMap)
-    monkeypatch.setattr("pysweb.swb.preprocess._download_ee_multiband_image", fake_download)
+    monkeypatch.setattr(preprocess_module, "ee", FakeEEForOpenLandMap)
+    monkeypatch.setattr(preprocess_module, "_download_ee_multiband_image", fake_download)
 
     predictors = _load_openlandmap_predictors((148.0, -35.1, 148.1, -35.0), "yiyu-research")
 
@@ -373,25 +374,30 @@ def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
         "conductivity_sat": _soil_array("conductivity_sat", np.full((5, 1, 1), 8.0, dtype=np.float32)),
     }
 
-    monkeypatch.setattr("pysweb.swb.preprocess.process_precipitation", lambda args, grid, start, end: rain)
+    monkeypatch.setattr(preprocess_module, "process_precipitation", lambda args, grid, start, end: rain)
     monkeypatch.setattr(
-        "pysweb.swb.preprocess.compute_effective_precipitation_smith",
+        preprocess_module,
+        "compute_effective_precipitation_smith",
         lambda raw_rain, dtype: effective_precip,
     )
     monkeypatch.setattr(
-        "pysweb.swb.preprocess.process_et",
+        preprocess_module,
+        "process_et",
         lambda args, grid, dates: {"et": et, "t": t},
     )
     monkeypatch.setattr(
-        "pysweb.swb.preprocess._load_openlandmap_predictors",
+        preprocess_module,
+        "_load_openlandmap_predictors",
         lambda extent, gee_project: {"clay": "clay", "sand": "sand", "soc": "soc"},
     )
     monkeypatch.setattr(
-        "pysweb.swb.preprocess.process_soil_properties_from_openlandmap",
+        preprocess_module,
+        "process_soil_properties_from_openlandmap",
         lambda args, grid, predictors: soil_arrays,
     )
     monkeypatch.setattr(
-        "pysweb.swb.preprocess._load_reference_ssm",
+        preprocess_module,
+        "_load_reference_ssm",
         lambda **kwargs: reference,
     )
 
