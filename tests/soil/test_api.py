@@ -32,6 +32,27 @@ def test_unknown_soil_source_fails_early():
         api.load_soil_properties(soil_source="bogus", args=None, grid=None)
 
 
+def test_validate_soil_source_accepts_openlandmap():
+    api = import_module("pysweb.soil.api")
+
+    assert api.validate_soil_source("openlandmap") is None
+
+
+def test_validate_soil_source_rejects_unknown_value():
+    api = import_module("pysweb.soil.api")
+
+    with pytest.raises(ValueError, match=r"Unsupported soil_source 'bogus'"):
+        api.validate_soil_source("bogus")
+
+
+@pytest.mark.parametrize("soil_source", ["mlcons", "slga", "custom"])
+def test_validate_soil_source_rejects_placeholder_backends(soil_source):
+    api = import_module("pysweb.soil.api")
+
+    with pytest.raises(NotImplementedError, match=rf"'{soil_source}'"):
+        api.validate_soil_source(soil_source)
+
+
 def test_openlandmap_dispatches_via_public_api(monkeypatch):
     api = import_module("pysweb.soil.api")
     openlandmap = import_module("pysweb.soil.openlandmap")
@@ -78,5 +99,5 @@ def test_openlandmap_dispatches_via_public_api(monkeypatch):
 def test_placeholder_backends_fail_via_public_api(soil_source):
     api = import_module("pysweb.soil.api")
 
-    with pytest.raises(NotImplementedError, match=soil_source):
+    with pytest.raises(NotImplementedError, match=rf"'{soil_source}'"):
         api.load_soil_properties(soil_source=soil_source, args=None, grid=None)

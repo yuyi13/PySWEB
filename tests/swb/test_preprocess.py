@@ -581,3 +581,27 @@ def test_preprocess_inputs_delegates_soil_loading_to_soil_api(monkeypatch, tmp_p
     assert recorded["grid"].lat_dim == "lat"
     assert recorded["grid"].lon_dim == "lon"
     assert recorded["reproject_to_template"] is preprocess_module._reproject_to_template
+
+
+def test_preprocess_inputs_rejects_placeholder_soil_source_before_forcing_work(monkeypatch, tmp_path: Path):
+    calls = []
+
+    def fail_if_called(*args, **kwargs):
+        calls.append("called")
+        raise AssertionError("forcing work should not start")
+
+    monkeypatch.setattr(preprocess_module, "process_precipitation", fail_if_called)
+    monkeypatch.setattr(preprocess_module, "process_et", fail_if_called)
+
+    with pytest.raises(NotImplementedError, match=r"'mlcons'"):
+        preprocess_inputs(
+            date_range=["2024-01-01", "2024-01-02"],
+            extent=[148.0, -35.1, 148.1, -35.0],
+            sm_res=0.1,
+            output_dir=str(tmp_path),
+            soil_source="mlcons",
+            skip_reference_ssm=True,
+            workers=1,
+        )
+
+    assert calls == []

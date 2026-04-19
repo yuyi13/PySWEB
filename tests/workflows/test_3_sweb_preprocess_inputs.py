@@ -30,7 +30,7 @@ def _load_workflow_module():
     return module
 
 
-def test_workflow_help_uses_reference_ssm_terms(monkeypatch, capsys):
+def test_workflow_help_documents_soil_source_backend_contract(monkeypatch, capsys):
     workflow_module = _load_workflow_module()
     monkeypatch.setattr(sys, "argv", ["3_sweb_preprocess_inputs.py", "--help"])
 
@@ -39,7 +39,10 @@ def test_workflow_help_uses_reference_ssm_terms(monkeypatch, capsys):
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
+    normalized_help = " ".join(captured.out.split())
     assert "--soil-source" in captured.out
+    assert "Supported values: openlandmap, mlcons, slga, custom." in normalized_help
+    assert "Implemented: openlandmap; placeholders: mlcons, slga, custom." in normalized_help
     assert "--reference-source" in captured.out
     assert "--reference-ssm-asset" in captured.out
     assert "--skip-reference-ssm" in captured.out

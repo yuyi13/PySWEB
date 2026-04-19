@@ -1132,7 +1132,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--soil-source",
         default = "openlandmap",
-        help = "Soil source backend. Supported values: openlandmap, mlcons, slga, custom.",
+        help = (
+            "Soil source backend. Supported values: openlandmap, mlcons, slga, custom. "
+            "Implemented: openlandmap; placeholders: mlcons, slga, custom."
+        ),
     )
     parser.add_argument("--reference-source", default = "gssm1km", help = "Reference SSM source. Only 'gssm1km' is supported.")
     parser.add_argument(
@@ -1168,6 +1171,7 @@ def preprocess_inputs(**kwargs):
     if args.workers < 1:
         raise ValueError("--workers must be >= 1.")
 
+    soil_api.validate_soil_source(args.soil_source)
     _validate_reference_source(args.reference_source)
     start, end = _ensure_date_inputs(args)
     dates = pd.date_range(start = start, end = end, freq = "D")
