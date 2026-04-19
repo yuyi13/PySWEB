@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script: test_preprocess.py
-Objective: Verify SWB preprocess helpers and package-owned preprocessing orchestration for OpenLandMap and GSSM inputs.
+Objective: Verify SWB preprocess helpers and package-owned preprocessing orchestration for forcing, soil dispatch, and reference SSM outputs.
 Author: Yi Yu
 Created: 2026-04-19
 Last updated: 2026-04-19
@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from pysweb.soil.api import SoilOutputs
 import pysweb.swb.preprocess as preprocess_module
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,18 +26,14 @@ if str(ROOT) not in sys.path:
 
 from pysweb.swb.preprocess import (
     GSSM_SCALE_FACTOR,
-    OPENLANDMAP_LAYER_SPECS,
     _build_args,
-    _build_layer_bottoms_mm,
     _build_target_grid,
-    _load_openlandmap_predictors,
     _load_reference_ssm,
     _matching_gssm_image_ids,
     _parse_gssm_band_date,
     _rename_reference_ssm,
     process_et,
     process_precipitation,
-    process_soil_properties_from_openlandmap,
     preprocess_inputs,
 )
 
@@ -60,6 +57,7 @@ def _forcing_array(
 
 
 def _soil_array(name: str, values: np.ndarray) -> xr.DataArray:
+    layer_bottoms_mm = [50.0, 150.0, 300.0, 600.0, 1000.0]
     return xr.DataArray(
         values.astype(np.float32, copy=False),
         dims=("layer", "lat", "lon"),
@@ -69,7 +67,7 @@ def _soil_array(name: str, values: np.ndarray) -> xr.DataArray:
             "lon": np.array([148.0], dtype=float),
         },
         name=name,
-        attrs={"layer_bottoms_mm": _build_layer_bottoms_mm().tolist()},
+        attrs={"layer_bottoms_mm": layer_bottoms_mm},
     )
 
 
@@ -165,17 +163,6 @@ class _FakeEE:
 def test_parse_gssm_band_date_parses_daily_band_names():
     assert _parse_gssm_band_date("band_2000_03_05_classification") == pd.Timestamp("2000-03-05")
     assert _parse_gssm_band_date("band_2020_12_31_classification") == pd.Timestamp("2020-12-31")
-
-
-def test_openlandmap_depth_mapping_matches_swb_layer_bottoms():
-    assert OPENLANDMAP_LAYER_SPECS == [
-        ("b0", 50.0),
-        ("b10", 150.0),
-        ("b30", 300.0),
-        ("b60", 600.0),
-        ("b100", 1000.0),
-    ]
-    np.testing.assert_allclose(_build_layer_bottoms_mm(), np.array([50.0, 150.0, 300.0, 600.0, 1000.0]))
 
 
 def test_reference_ssm_scaling_and_naming_are_neutral():
@@ -448,69 +435,6 @@ def test_process_et_rejects_netcdf_without_time_coordinate(tmp_path: Path):
         process_et(args, grid, pd.date_range("2024-01-01", "2024-01-02", freq="D"))
 
 
-def test_load_openlandmap_predictors_uses_openlandmap_export_scale(monkeypatch):
-    _FakeImageCollection.registry = {}
-    recorded_scales = []
-
-    dataset_bands = {band_name: idx + 1.0 for idx, (band_name, _) in enumerate(OPENLANDMAP_LAYER_SPECS)}
-
-    class FakeEEForOpenLandMap(_FakeEE):
-        @staticmethod
-        def Image(image_id):
-            return _FakeImage(dataset_bands, image_id=image_id)
-
-    def fake_download(image, extent, name, scale_m):
-        recorded_scales.append((name, scale_m, image.bandNames().getInfo()))
-        return xr.DataArray(
-            np.ones((len(OPENLANDMAP_LAYER_SPECS), 1, 1), dtype=np.float32),
-            dims=("band", "lat", "lon"),
-            coords={
-                "band": np.array([band_name for band_name, _ in OPENLANDMAP_LAYER_SPECS], dtype=object),
-                "lat": np.array([-35.0]),
-                "lon": np.array([148.0]),
-            },
-            name=name,
-        )
-
-    monkeypatch.setattr(preprocess_module, "ee", FakeEEForOpenLandMap)
-    monkeypatch.setattr(preprocess_module, "_download_ee_multiband_image", fake_download)
-
-    predictors = _load_openlandmap_predictors((148.0, -35.1, 148.1, -35.0), "yiyu-research")
-
-    assert set(predictors) == {"clay", "sand", "soc"}
-    assert [scale for _, scale, _ in recorded_scales] == [250.0, 250.0, 250.0]
-
-
-def test_openlandmap_soil_derivation_returns_five_layers_with_expected_depths():
-    args = _build_args({"dtype": "float32"})
-    grid = _build_target_grid(_grid_args(extent=[148.0, -35.2, 148.2, -35.0], sm_res=0.1))
-    band_names = np.array([band_name for band_name, _ in OPENLANDMAP_LAYER_SPECS], dtype=object)
-    coords = {
-        "band": band_names,
-        "lat": np.array([-35.05, -35.15], dtype=float),
-        "lon": np.array([148.05, 148.15], dtype=float),
-    }
-    soil_predictors = {
-        "clay": xr.DataArray(np.full((5, 2, 2), 30.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
-        "sand": xr.DataArray(np.full((5, 2, 2), 40.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
-        "soc": xr.DataArray(np.full((5, 2, 2), 10.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
-    }
-
-    soil_arrays = process_soil_properties_from_openlandmap(args, grid, soil_predictors)
-
-    assert set(soil_arrays) == {
-        "porosity",
-        "wilting_point",
-        "available_water_capacity",
-        "b_coefficient",
-        "conductivity_sat",
-    }
-    for da in soil_arrays.values():
-        assert da.shape == (5, 2, 2)
-        np.testing.assert_allclose(da.coords["layer_depth"].values, _build_layer_bottoms_mm())
-        assert da.attrs["layer_bottoms_mm"] == _build_layer_bottoms_mm().tolist()
-
-
 def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
     rain = _forcing_array(
         np.array([[[10.0]], [[11.0]]], dtype=np.float32),
@@ -560,14 +484,12 @@ def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
         lambda args, grid, dates: {"et": et, "t": t},
     )
     monkeypatch.setattr(
-        preprocess_module,
-        "_load_openlandmap_predictors",
-        lambda extent, gee_project: {"clay": "clay", "sand": "sand", "soc": "soc"},
-    )
-    monkeypatch.setattr(
-        preprocess_module,
-        "process_soil_properties_from_openlandmap",
-        lambda args, grid, predictors: soil_arrays,
+        preprocess_module.soil_api,
+        "load_soil_properties",
+        lambda *, soil_source, args, grid, reproject_to_template: SoilOutputs(
+            arrays=soil_arrays,
+            layer_bottoms_mm=np.array([50.0, 150.0, 300.0, 600.0, 1000.0], dtype=float),
+        ),
     )
     monkeypatch.setattr(
         preprocess_module,
@@ -604,3 +526,58 @@ def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
         assert path.exists(), f"missing output: {path}"
         with xr.open_dataset(path) as ds:
             assert variable in ds
+
+
+def test_preprocess_inputs_delegates_soil_loading_to_soil_api(monkeypatch, tmp_path: Path):
+    rain = _forcing_array(
+        np.array([[[10.0]], [[11.0]]], dtype=np.float32),
+        name="precipitation",
+        dates=["2024-01-01", "2024-01-02"],
+    )
+    et = _forcing_array(
+        np.array([[[4.0]], [[5.0]]], dtype=np.float32),
+        name="et",
+        dates=["2024-01-01", "2024-01-02"],
+    )
+    soil_arrays = {"porosity": _soil_array("porosity", np.full((5, 1, 1), 0.45, dtype=np.float32))}
+    recorded = {}
+
+    monkeypatch.setattr(preprocess_module, "process_precipitation", lambda args, grid, start, end: rain)
+    monkeypatch.setattr(
+        preprocess_module,
+        "compute_effective_precipitation_smith",
+        lambda raw_rain, dtype: rain.rename("effective_precipitation"),
+    )
+    monkeypatch.setattr(preprocess_module, "process_et", lambda args, grid, dates: {"et": et})
+    monkeypatch.setattr(
+        preprocess_module.soil_api,
+        "load_soil_properties",
+        lambda *, soil_source, args, grid, reproject_to_template: recorded.update(
+            {
+                "soil_source": soil_source,
+                "args": args,
+                "grid": grid,
+                "reproject_to_template": reproject_to_template,
+            }
+        )
+        or SoilOutputs(
+            arrays=soil_arrays,
+            layer_bottoms_mm=np.array([50.0, 150.0, 300.0, 600.0, 1000.0], dtype=float),
+        ),
+    )
+
+    preprocess_inputs(
+        date_range=["2024-01-01", "2024-01-02"],
+        extent=[148.0, -35.1, 148.1, -35.0],
+        sm_res=0.1,
+        output_dir=str(tmp_path),
+        skip_reference_ssm=True,
+        workers=1,
+    )
+
+    assert recorded["soil_source"] == "openlandmap"
+    assert recorded["args"].soil_source == "openlandmap"
+    assert recorded["args"].extent == [148.0, -35.1, 148.1, -35.0]
+    assert recorded["grid"].lat_dim == "lat"
+    assert recorded["grid"].lon_dim == "lon"
+    assert recorded["reproject_to_template"] is preprocess_module._reproject_to_template

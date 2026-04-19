@@ -39,6 +39,7 @@ def test_workflow_help_uses_reference_ssm_terms(monkeypatch, capsys):
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
+    assert "--soil-source" in captured.out
     assert "--reference-source" in captured.out
     assert "--reference-ssm-asset" in captured.out
     assert "--skip-reference-ssm" in captured.out
