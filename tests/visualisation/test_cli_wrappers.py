@@ -11,7 +11,7 @@ Usage: pytest tests/visualisation/test_cli_wrappers.py
 Dependencies: pytest, subprocess
 """
 from importlib import import_module
-import os
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -33,20 +33,31 @@ def test_package_visualisation_modules_import_cleanly(module_name):
 
 
 @pytest.mark.parametrize(
-    ("wrapper_path", "expected_import"),
+    ("wrapper_name", "wrapper_path", "package_module_name"),
     [
         (
+            "legacy_plot_time_series",
             ROOT / "visualisation" / "plot_time_series.py",
-            "from pysweb.visualisation.plot_time_series import main",
+            "pysweb.visualisation.plot_time_series",
         ),
         (
+            "legacy_plot_heatmap",
             ROOT / "visualisation" / "plot_heatmap.py",
-            "from pysweb.visualisation.plot_heatmap import main",
+            "pysweb.visualisation.plot_heatmap",
         ),
     ],
 )
-def test_legacy_wrappers_import_main_from_package(wrapper_path, expected_import):
-    assert expected_import in wrapper_path.read_text(encoding="utf-8")
+def test_legacy_wrappers_load_and_expose_package_main(wrapper_name, wrapper_path, package_module_name):
+    spec = importlib.util.spec_from_file_location(wrapper_name, wrapper_path)
+    module = importlib.util.module_from_spec(spec)
+
+    assert spec is not None
+    assert spec.loader is not None
+
+    spec.loader.exec_module(module)
+
+    package_module = import_module(package_module_name)
+    assert module.main is package_module.main
 
 
 @pytest.mark.parametrize(
@@ -59,17 +70,12 @@ def test_legacy_wrappers_import_main_from_package(wrapper_path, expected_import)
     ],
 )
 def test_visualisation_entrypoints_exit_cleanly_for_help(command):
-    env = os.environ.copy()
-    python_path = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(ROOT) if not python_path else f"{ROOT}:{python_path}"
-
     result = subprocess.run(
         command,
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
-        env=env,
     )
 
     assert result.returncode == 0

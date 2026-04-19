@@ -10,6 +10,13 @@ Outputs: Delegated plotting side effects from the package entrypoint.
 Usage: python visualisation/plot_time_series.py --help
 Dependencies: pysweb.visualisation.plot_time_series
 """
+import os
+import sys
+
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
 from pysweb.visualisation.plot_time_series import main
 
 
