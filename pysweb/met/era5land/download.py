@@ -15,6 +15,8 @@ ERA5LAND_BANDS = [
     "surface_solar_radiation_downwards_sum",
     "total_precipitation_sum",
 ]
+ERA5LAND_EXPORT_SCALE_METERS = 11132
+ERA5LAND_EXPORT_CRS = "EPSG:4326"
 
 
 def _parse_date(value: str) -> datetime:
@@ -63,8 +65,8 @@ def build_era5land_cfg(
         "end_month": end_dt.month,
         "end_day": end_dt.day,
         "bands": list(ERA5LAND_BANDS),
-        "scale": 11132,
-        "crs": "EPSG:4326",
+        "scale": ERA5LAND_EXPORT_SCALE_METERS,
+        "crs": ERA5LAND_EXPORT_CRS,
         "out_format": "tif",
         "auth_mode": "browser",
         "gee_project": gee_project,

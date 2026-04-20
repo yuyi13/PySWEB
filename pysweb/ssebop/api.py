@@ -86,6 +86,7 @@ def prepare_inputs(
     if not gee_project:
         raise ValueError("gee_project must be a non-empty string.")
     extent = _validate_extent(extent)
+    dem_api.validate_dem_source(dem_source)
 
     start_date, end_date = landsat.parse_date_range(date_range)
     if datetime.fromisoformat(start_date) > datetime.fromisoformat(end_date):

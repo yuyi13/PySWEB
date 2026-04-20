@@ -16,6 +16,10 @@ from pathlib import Path
 
 import rasterio
 import requests
+from pysweb.met.era5land.download import (
+    ERA5LAND_EXPORT_CRS,
+    ERA5LAND_EXPORT_SCALE_METERS,
+)
 
 try:
     import ee
@@ -82,7 +86,8 @@ def prepare_dem(*, gee_project: str, extent: list[float], output_path: str) -> s
         {
             "name": "nasadem",
             "region": region,
-            "crs": "EPSG:4326",
+            "crs": ERA5LAND_EXPORT_CRS,
+            "scale": ERA5LAND_EXPORT_SCALE_METERS,
             "format": "GEO_TIFF",
             "filePerBand": False,
         }

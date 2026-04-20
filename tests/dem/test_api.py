@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script: test_api.py
-Objective: Verify the DEM API contract and placeholder backend dispatch behavior.
+Objective: Verify the DEM API validates its public contract and dispatches current NASADEM requests correctly.
 Author: Yi Yu
 Created: 2026-04-20
 Last updated: 2026-04-20
@@ -36,15 +36,33 @@ def test_unknown_dem_source_fails_early():
         api.prepare_dem(dem_source="bogus", gee_project="test-project")
 
 
-def test_public_prepare_dem_dispatches_to_placeholder_backend():
+def test_public_prepare_dem_dispatches_to_backend_with_current_contract(monkeypatch):
     api = import_module("pysweb.dem.api")
+    recorded = {}
 
-    with pytest.raises(NotImplementedError, match="NASADEM"):
-        api.prepare_dem(
-            dem_source="nasadem",
-            gee_project="test-project",
-            output_dir="/tmp/dem",
-        )
+    class FakeBackendModule:
+        @staticmethod
+        def prepare_dem(*, gee_project, extent, output_path):
+            recorded["gee_project"] = gee_project
+            recorded["extent"] = extent
+            recorded["output_path"] = output_path
+            return output_path
+
+    monkeypatch.setattr(api, "import_module", lambda module_name: FakeBackendModule)
+
+    result = api.prepare_dem(
+        dem_source = "nasadem",
+        gee_project = "test-project",
+        extent = [147.2, -35.1, 147.3, -35.0],
+        output_path = "/tmp/nasadem.tif",
+    )
+
+    assert result == "/tmp/nasadem.tif"
+    assert recorded == {
+        "gee_project": "test-project",
+        "extent": [147.2, -35.1, 147.3, -35.0],
+        "output_path": "/tmp/nasadem.tif",
+    }
 
 
 def test_prepare_dem_rejects_empty_gee_project():
@@ -66,10 +84,3 @@ def test_prepare_dem_rejects_whitespace_only_gee_project():
 
     with pytest.raises(ValueError, match="gee_project must be a non-empty string"):
         api.prepare_dem(dem_source="nasadem", gee_project="   ")
-
-
-def test_nasadem_backend_is_a_stub_for_now():
-    nasadem = import_module("pysweb.dem.nasadem")
-
-    with pytest.raises(NotImplementedError, match="NASADEM"):
-        nasadem.prepare_dem(gee_project="test-project")

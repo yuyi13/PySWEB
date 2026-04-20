@@ -152,6 +152,7 @@ def test_prepare_dem_downloads_clipped_nasadem_geotiff(monkeypatch, tmp_path: Pa
         "name": "nasadem",
         "region": {"type": "Rectangle", "coords": [147.2, -35.1, 147.3, -35.0]},
         "crs": "EPSG:4326",
+        "scale": 11132,
         "format": "GEO_TIFF",
         "filePerBand": False,
     }
