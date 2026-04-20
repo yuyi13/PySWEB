@@ -28,8 +28,46 @@ def _load_config_payload(path: Path) -> dict:
     try:
         import yaml
     except ModuleNotFoundError:
-        return json.loads(payload)
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            parsed = {}
+            current_key = None
+            for raw_line in payload.splitlines():
+                line = raw_line.rstrip()
+                if not line:
+                    continue
+                if line.startswith("  - "):
+                    parsed.setdefault(current_key, []).append(_coerce_yaml_scalar(line[4:]))
+                    continue
+                key, value = line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                if value:
+                    parsed[key] = _coerce_yaml_scalar(value)
+                    current_key = None
+                else:
+                    parsed[key] = []
+                    current_key = key
+            return parsed
     return yaml.safe_load(payload)
+
+
+def _coerce_yaml_scalar(value):
+    if value.startswith(("'", '"')) and value.endswith(("'", '"')):
+        return value[1:-1]
+    if value == "null" or value == "~":
+        return None
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
 
 
 def test_canonical_landsat_module_exports_helper_contract(tmp_path: Path):
@@ -93,13 +131,13 @@ def test_update_gee_config_preserves_yaml_template_support_and_injects_project(t
             if not line:
                 continue
             if line.startswith("  - "):
-                parsed.setdefault(current_key, []).append(json.loads(line[4:]))
+                parsed.setdefault(current_key, []).append(_coerce_yaml_scalar(line[4:]))
                 continue
             key, value = line.split(":", 1)
             key = key.strip()
             value = value.strip()
             if value:
-                parsed[key] = value
+                parsed[key] = _coerce_yaml_scalar(value)
                 current_key = None
             else:
                 parsed[key] = []
@@ -107,8 +145,20 @@ def test_update_gee_config_preserves_yaml_template_support_and_injects_project(t
         return parsed
 
     def fake_yaml_safe_dump(payload, sort_keys=False):
-        del sort_keys
-        return json.dumps(payload, indent=2)
+        keys = sorted(payload) if sort_keys else list(payload)
+        lines = []
+        for key in keys:
+            value = payload[key]
+            if isinstance(value, list):
+                lines.append(f"{key}:")
+                for item in value:
+                    lines.append(f"  - {json.dumps(item) if isinstance(item, str) else item}")
+                continue
+            if isinstance(value, str):
+                lines.append(f"{key}: {value}")
+            else:
+                lines.append(f"{key}: {value}")
+        return "\n".join(lines) + "\n"
 
     fake_yaml = type(
         "FakeYaml",
@@ -122,12 +172,12 @@ def test_update_gee_config_preserves_yaml_template_support_and_injects_project(t
     canonical_landsat._load_yaml_module = lambda: fake_yaml
     try:
         cfg_path = canonical_landsat.update_gee_config(
-        base_config_path=str(template_path),
-        start_date="2024-01-01",
-        end_date="2024-01-03",
-        extent=[147.2, -35.1, 147.3, -35.0],
-        out_dir=str(out_dir),
-        gee_project="yaml-template-project",
+            base_config_path=str(template_path),
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(out_dir),
+            gee_project="yaml-template-project",
         )
     finally:
         canonical_landsat._load_yaml_module = original_loader

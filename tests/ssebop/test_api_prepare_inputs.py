@@ -11,6 +11,7 @@ Usage: pytest tests/ssebop/test_api_prepare_inputs.py
 Dependencies: pytest
 """
 from pathlib import Path
+import json
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +21,15 @@ if str(ROOT) not in sys.path:
 
 from pysweb.ssebop.api import prepare_inputs
 from pysweb.ssebop.inputs.landsat import update_gee_config
+
+
+def _load_config_payload(path: Path) -> dict:
+    payload = path.read_text(encoding="utf-8")
+    try:
+        import yaml
+    except ModuleNotFoundError:
+        return json.loads(payload)
+    return yaml.safe_load(payload) or {}
 
 
 def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: Path):
@@ -142,9 +152,9 @@ def test_update_gee_config_forces_download_dir_to_requested_out_dir(tmp_path: Pa
         "workflow-project",
     )
 
-    payload = Path(cfg_path).read_text(encoding="utf-8")
-    assert '"download_dir": "/tmp/old-dir"' not in payload
-    assert f'"download_dir": "{out_dir}"' in payload
+    payload = _load_config_payload(Path(cfg_path))
+    assert payload["download_dir"] == str(out_dir)
+    assert payload["coords"] == [147.2, -35.1, 147.3, -35.0]
 
 
 def test_prepare_inputs_rejects_blank_gee_project_before_side_effects(monkeypatch, tmp_path: Path):
