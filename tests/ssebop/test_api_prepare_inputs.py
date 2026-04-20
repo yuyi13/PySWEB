@@ -4,7 +4,7 @@ Script: test_api_prepare_inputs.py
 Objective: Verify the SSEBop package API orchestrates Landsat and meteorological input preparation steps.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-20
 Inputs: Temporary paths and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_prepare_inputs.py
@@ -47,6 +47,7 @@ def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: 
         met_stack_dir=str(tmp_path / "stack"),
         dem=str(tmp_path / "dem.tif"),
         gee_config="/tmp/gee.yaml",
+        gee_project="workflow-project",
     )
 
     assert recorded == [
@@ -55,8 +56,9 @@ def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: 
             {
                 "date_range": "2024-01-01 to 2024-01-03",
                 "extent": [147.2, -35.1, 147.3, -35.0],
-                "gee_config": "/tmp/gee.yaml",
                 "out_dir": str(tmp_path / "landsat"),
+                "gee_project": "workflow-project",
+                "gee_config_template": "/tmp/gee.yaml",
             },
         ),
         (
@@ -66,6 +68,7 @@ def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: 
                 "end_date": "2024-01-03",
                 "extent": [147.2, -35.1, 147.3, -35.0],
                 "output_dir": str(tmp_path / "raw"),
+                "gee_project": "workflow-project",
             },
         ),
         (
@@ -107,6 +110,7 @@ def test_prepare_inputs_rejects_unsupported_met_source_before_any_side_effects(m
             met_stack_dir=str(tmp_path / "stack"),
             dem=str(tmp_path / "dem.tif"),
             gee_config="/tmp/gee.yaml",
+            gee_project="workflow-project",
         )
     except NotImplementedError as exc:
         assert "Unsupported met_source: silo" == str(exc)
@@ -140,3 +144,39 @@ def test_update_gee_config_forces_download_dir_to_requested_out_dir(tmp_path: Pa
     payload = Path(cfg_path).read_text(encoding="utf-8")
     assert '"download_dir": "/tmp/old-dir"' not in payload
     assert f'"download_dir": "{out_dir}"' in payload
+
+
+def test_prepare_inputs_rejects_blank_gee_project_before_side_effects(monkeypatch, tmp_path: Path):
+    recorded = []
+
+    monkeypatch.setattr(
+        "pysweb.ssebop.inputs.landsat.prepare_landsat_inputs",
+        lambda **kwargs: recorded.append(("landsat", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.met.era5land.download.download_era5land_daily",
+        lambda **kwargs: recorded.append(("era5land_download", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.met.era5land.stack.stack_era5land_daily_inputs",
+        lambda **kwargs: recorded.append(("era5land_stack", kwargs)),
+    )
+
+    try:
+        prepare_inputs(
+            date_range="2024-01-01 to 2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            met_source="era5land",
+            landsat_dir=str(tmp_path / "landsat"),
+            met_raw_dir=str(tmp_path / "raw"),
+            met_stack_dir=str(tmp_path / "stack"),
+            dem=str(tmp_path / "dem.tif"),
+            gee_config="/tmp/gee.yaml",
+            gee_project="   ",
+        )
+    except ValueError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected prepare_inputs to reject blank gee_project values")
+
+    assert recorded == []

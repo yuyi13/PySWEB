@@ -31,6 +31,13 @@ def _validate_extent(extent: Iterable[float]) -> list[float]:
     return coords
 
 
+def _validate_gee_project(gee_project: str) -> str:
+    project = gee_project.strip()
+    if not project:
+        raise ValueError("gee_project must be a non-empty string.")
+    return project
+
+
 def build_era5land_cfg(
     start_date: str,
     end_date: str,
@@ -38,6 +45,7 @@ def build_era5land_cfg(
     out_dir: str,
     gee_project: str,
 ) -> dict:
+    gee_project = _validate_gee_project(gee_project)
     start_dt = _parse_date(start_date)
     end_dt = _parse_date(end_date)
     if start_dt > end_dt:

@@ -4,8 +4,8 @@ Script: 1_ssebop_prepare_inputs.py
 Objective: Parse CLI arguments and delegate the unified first SSEBop preparation step to the package API.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-17
-Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-config, --out-dir, --dem).
+Last updated: 2026-04-20
+Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --gee-config, --out-dir, --dem).
 Outputs: Package-managed Landsat and meteorology inputs for the requested SSEBop run.
 Usage: python workflows/1_ssebop_prepare_inputs.py --help
 Dependencies: argparse, os, sys, pysweb.ssebop, pysweb.ssebop.inputs.landsat
@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date-range", required=True, help="Date range string like '2024-01-01 to 2024-01-03'")
     parser.add_argument("--extent", required=True, help="min_lon,min_lat,max_lon,max_lat")
     parser.add_argument("--met-source", default="era5land", choices=["era5land"])
+    parser.add_argument("--gee-project", required=True, help="Google Earth Engine project for Landsat and ERA5-Land downloads")
     parser.add_argument("--gee-config", required=True, help="Path to the base GEE config template")
     parser.add_argument("--out-dir", required=True, help="Base output directory for prepared inputs")
     parser.add_argument("--dem", required=True, help="DEM raster used for stacked meteorology inputs")
@@ -37,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    gee_project = args.gee_project.strip()
+    if not gee_project:
+        raise ValueError("gee_project must be a non-empty string.")
     out_dir = os.path.abspath(args.out_dir)
     prepare_inputs(
         date_range = args.date_range,
@@ -47,6 +51,7 @@ def main(argv: list[str] | None = None) -> None:
         met_stack_dir = os.path.join(out_dir, "met", args.met_source, "stack"),
         dem = args.dem,
         gee_config = args.gee_config,
+        gee_project = gee_project,
     )
 
 

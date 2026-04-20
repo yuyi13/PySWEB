@@ -109,6 +109,21 @@ def test_build_era5land_cfg_requires_explicit_gee_project(tmp_path):
         raise AssertionError("Expected build_era5land_cfg to require gee_project explicitly")
 
 
+def test_build_era5land_cfg_rejects_blank_gee_project(tmp_path):
+    try:
+        build_era5land_cfg(
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(tmp_path / "raw"),
+            gee_project="   ",
+        )
+    except ValueError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected build_era5land_cfg to reject blank gee_project values")
+
+
 def test_write_era5land_config_writes_expected_config_file(tmp_path):
     cfg_path = write_era5land_config(
         start_date="2024-01-01",

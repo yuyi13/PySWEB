@@ -39,6 +39,13 @@ def parse_extent(extent_str: str) -> list[float]:
     return [float(part) for part in parts]
 
 
+def _validate_gee_project(gee_project: str) -> str:
+    project = gee_project.strip()
+    if not project:
+        raise ValueError("gee_project must be a non-empty string.")
+    return project
+
+
 def _read_gee_config(base_config_path: str) -> dict:
     payload = Path(base_config_path).read_text(encoding="utf-8")
     yaml = _load_yaml_module()
@@ -118,6 +125,7 @@ def prepare_landsat_inputs(
     gee_project: str,
     gee_config_template: str | None = None,
 ) -> str:
+    gee_project = _validate_gee_project(gee_project)
     start_date, end_date = parse_date_range(date_range)
     _safe_mkdir(out_dir)
     if gee_config_template is not None:

@@ -194,3 +194,19 @@ def test_prepare_landsat_inputs_uses_optional_template_override(monkeypatch, tmp
     assert payload["download_dir"] == str(out_dir)
     assert recorded["init_paths"] == [str(Path(cfg_path))]
     assert recorded["run_calls"] == 1
+
+
+def test_prepare_landsat_inputs_rejects_blank_gee_project(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(canonical_landsat, "_safe_mkdir", lambda path: Path(path).mkdir(parents=True, exist_ok=True))
+
+    try:
+        canonical_landsat.prepare_landsat_inputs(
+            date_range="2024-01-01 to 2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(tmp_path / "landsat"),
+            gee_project="   ",
+        )
+    except ValueError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected prepare_landsat_inputs to reject blank gee_project values")

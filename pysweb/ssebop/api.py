@@ -3,7 +3,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-20
 Inputs: API parameters, optional YAML config, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: Imported as `pysweb.ssebop.api`
@@ -56,7 +56,12 @@ def prepare_inputs(
     met_stack_dir: str,
     dem: str,
     gee_config: str,
+    gee_project: str,
 ) -> None:
+    gee_project = gee_project.strip()
+    if not gee_project:
+        raise ValueError("gee_project must be a non-empty string.")
+
     start_date, end_date = landsat.parse_date_range(date_range)
 
     if met_source != "era5land":
@@ -65,8 +70,9 @@ def prepare_inputs(
     landsat.prepare_landsat_inputs(
         date_range = date_range,
         extent = extent,
-        gee_config = gee_config,
         out_dir = landsat_dir,
+        gee_project = gee_project,
+        gee_config_template = gee_config,
     )
 
     era5land_download.download_era5land_daily(
@@ -74,6 +80,7 @@ def prepare_inputs(
         end_date = end_date,
         extent = extent,
         output_dir = met_raw_dir,
+        gee_project = gee_project,
     )
     era5land_stack.stack_era5land_daily_inputs(
         raw_dir = met_raw_dir,
