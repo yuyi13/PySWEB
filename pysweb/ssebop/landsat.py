@@ -68,8 +68,9 @@ def _write_gee_config(
     end_date: str,
     extent: list[float],
     out_dir: str,
-    gee_project: str | None = None,
+    gee_project: str,
 ) -> str:
+    gee_project = _validate_gee_project(gee_project)
     if "coords" not in cfg or cfg["coords"] is None:
         cfg["coords"] = extent
 
@@ -84,8 +85,7 @@ def _write_gee_config(
     cfg["end_year"] = end_dt.year
     cfg["end_month"] = end_dt.month
     cfg["end_day"] = end_dt.day
-    if gee_project is not None:
-        cfg["gee_project"] = gee_project
+    cfg["gee_project"] = gee_project
 
     cfg_path = Path(out_dir) / f"gee_config_{start_date}_{end_date}.yaml"
     _write_gee_payload(cfg_path, cfg)
@@ -98,7 +98,7 @@ def update_gee_config(
     end_date: str,
     extent: list[float],
     out_dir: str,
-    gee_project: str | None = None,
+    gee_project: str,
 ) -> str:
     cfg = _read_gee_config(base_config_path)
     return _write_gee_config(cfg, start_date, end_date, extent, out_dir, gee_project=gee_project)
@@ -110,7 +110,7 @@ def write_gee_config_from_cfg(
     end_date: str,
     extent: list[float],
     out_dir: str,
-    gee_project: str | None = None,
+    gee_project: str,
 ) -> str:
     if not isinstance(gee_cfg, dict) or not gee_cfg:
         raise ValueError("gee config must be a non-empty dict")

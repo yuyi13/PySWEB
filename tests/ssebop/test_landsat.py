@@ -138,6 +138,105 @@ def test_update_gee_config_preserves_yaml_template_support_and_injects_project(t
     assert payload["coords"] == [147.2, -35.1, 147.3, -35.0]
 
 
+def test_update_gee_config_requires_explicit_gee_project(tmp_path: Path):
+    template_path = tmp_path / "template.json"
+    template_path.write_text(
+        json.dumps(
+            {
+                "collection": "LANDSAT/LC08/C02/T1_L2",
+                "auth_mode": "browser",
+                "download_dir": "/tmp/original",
+                "coords": [0, 0, 1, 1],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        canonical_landsat.update_gee_config(
+            base_config_path=str(template_path),
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(tmp_path / "landsat"),
+        )
+    except TypeError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected update_gee_config to require gee_project explicitly")
+
+
+def test_write_gee_config_from_cfg_requires_explicit_gee_project(tmp_path: Path):
+    try:
+        canonical_landsat.write_gee_config_from_cfg(
+            gee_cfg={
+                "collection": "LANDSAT/LC08/C02/T1_L2",
+                "auth_mode": "browser",
+            },
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(tmp_path / "landsat"),
+        )
+    except TypeError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected write_gee_config_from_cfg to require gee_project explicitly")
+
+
+def test_update_gee_config_rejects_blank_gee_project(tmp_path: Path):
+    template_path = tmp_path / "template.json"
+    out_dir = tmp_path / "landsat"
+    out_dir.mkdir()
+    template_path.write_text(
+        json.dumps(
+            {
+                "collection": "LANDSAT/LC08/C02/T1_L2",
+                "auth_mode": "browser",
+                "download_dir": "/tmp/original",
+                "coords": [0, 0, 1, 1],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        canonical_landsat.update_gee_config(
+            base_config_path=str(template_path),
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(out_dir),
+            gee_project="   ",
+        )
+    except ValueError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected update_gee_config to reject blank gee_project values")
+
+
+def test_write_gee_config_from_cfg_rejects_blank_gee_project(tmp_path: Path):
+    out_dir = tmp_path / "landsat"
+    out_dir.mkdir()
+
+    try:
+        canonical_landsat.write_gee_config_from_cfg(
+            gee_cfg={
+                "collection": "LANDSAT/LC08/C02/T1_L2",
+                "auth_mode": "browser",
+            },
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(out_dir),
+            gee_project="   ",
+        )
+    except ValueError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected write_gee_config_from_cfg to reject blank gee_project values")
+
+
 def test_prepare_landsat_inputs_requires_explicit_gee_project(tmp_path: Path):
     out_dir = tmp_path / "landsat"
     out_dir.mkdir()

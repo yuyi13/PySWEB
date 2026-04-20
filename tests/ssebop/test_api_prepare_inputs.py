@@ -139,6 +139,7 @@ def test_update_gee_config_forces_download_dir_to_requested_out_dir(tmp_path: Pa
         "2024-01-03",
         [147.2, -35.1, 147.3, -35.0],
         str(out_dir),
+        "workflow-project",
     )
 
     payload = Path(cfg_path).read_text(encoding="utf-8")
