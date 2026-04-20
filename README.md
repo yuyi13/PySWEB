@@ -152,7 +152,7 @@ The meteorology path is now ERA5-Land-based and globally usable. SWB soil textur
 - Core packages: `numpy`, `pandas`, `xarray`, `rioxarray`, `rasterio`, `netCDF4`, `scipy`, `pyproj`, `pyyaml`, `tqdm`
 - System libs for geospatial reprojection: GDAL/PROJ
 - Access to forcing and ancillary datasets (Landsat, ERA5-Land, DEM, SSEBop-ready ET products)
-- Google Earth Engine access for OpenLandMap and `users/qianrswaterr/GlobalSSM1km0509` (for example with project `yiyu-research`)
+- Google Earth Engine access for OpenLandMap and `users/qianrswaterr/GlobalSSM1km0509` (for example with project `your-gee-project`)
 
 ## Naming convention
 This repository uses:

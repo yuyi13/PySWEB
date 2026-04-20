@@ -92,6 +92,7 @@ def test_readmes_document_explicit_gee_project_and_prepared_dem_contract():
     for text in (readme_text, notebooks_readme_text):
         assert "--gee-project" in text
         assert "--gee-config" not in text
+        assert "yiyu-research" not in text
 
     assert "run_inputs/dem/nasadem.tif" in readme_text
     assert "/path/to/run_inputs/dem/nasadem.tif" in notebooks_readme_text

@@ -128,7 +128,7 @@ GAPFILL_ETF="true"
 GAPFILL_WINDOW_DAYS="32"
 GAPFILL_MIN_SAMPLES="5"
 N_WORKERS="${N_WORKERS:-${PBS_NCPUS:-4}}"
-GEE_PROJECT="${GEE_PROJECT:-yiyu-research}"
+GEE_PROJECT="${GEE_PROJECT:-}"
 LANDCOVER_PATH="/g/data/yx97/EO_collections/ESA/WorldCover/ESA_WorldCover_100m_v200.tif"
 
 # Step toggles (set via CLI flags).
@@ -190,6 +190,10 @@ if [[ ! "${N_WORKERS}" =~ ^[0-9]+$ ]] || (( N_WORKERS < 1 )); then
   echo "Invalid --workers value '${N_WORKERS}'. Must be an integer >= 1." >&2
   exit 1
 fi
+if [[ "${RUN_DOWNLOAD}" == "true" ]] && [[ -z "${GEE_PROJECT//[[:space:]]/}" ]]; then
+  echo "GEE_PROJECT is required when Step 1 download is enabled." >&2
+  exit 1
+fi
 
 mkdir -p "${RUN_PREPARED_DIR}" "${RUN_LANDSAT_DIR}" "${RUN_MET_STACK_DIR}" "${RUN_OUTPUT_DIR}"
 
@@ -198,7 +202,9 @@ print_status "CONFIG" "Date range : ${DATE_RANGE}"
 print_status "CONFIG" "Extent     : ${EXTENT}"
 print_status "CONFIG" "Prepared dir: ${RUN_PREPARED_DIR}"
 print_status "CONFIG" "Landsat dir : ${RUN_LANDSAT_DIR}"
-print_status "CONFIG" "GEE project : ${GEE_PROJECT}"
+if [[ "${RUN_DOWNLOAD}" == "true" ]]; then
+  print_status "CONFIG" "GEE project : ${GEE_PROJECT}"
+fi
 print_status "CONFIG" "ERA5 stack : ${RUN_MET_STACK_DIR}"
 print_status "CONFIG" "Output dir : ${RUN_OUTPUT_DIR}"
 echo

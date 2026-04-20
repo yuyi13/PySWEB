@@ -59,6 +59,7 @@ def test_ssebop_runner_uses_package_backed_workflow_scripts():
     assert "--gee-config" not in script_text
     assert 'RUN_DEM_PATH="${RUN_PREPARED_DIR}/dem/nasadem.tif"' in script_text
     assert '--dem "${RUN_DEM_PATH}"' in script_text
+    assert 'GEE_PROJECT="${GEE_PROJECT:-yiyu-research}"' not in script_text
 
 
 def test_ssebop_runner_step1_matches_current_prepare_cli_contract():
@@ -69,6 +70,14 @@ def test_ssebop_runner_step1_matches_current_prepare_cli_contract():
     assert '--out-dir "${RUN_PREPARED_DIR}"' in script_text
     assert "mktemp" not in script_text
     assert "GEE_CONFIG" not in script_text
+
+
+def test_ssebop_runner_requires_gee_project_only_when_step1_runs():
+    script_text = (WORKFLOWS_DIR / "ssebop_runner_landsat.sh").read_text(encoding = "utf-8")
+
+    assert 'GEE_PROJECT="${GEE_PROJECT:-}"' in script_text
+    assert 'if [[ "${RUN_DOWNLOAD}" == "true" ]] && [[ -z "${GEE_PROJECT//[[:space:]]/}" ]]; then' in script_text
+    assert 'GEE_PROJECT is required when Step 1 download is enabled.' in script_text
 
 
 def test_sweb_runner_uses_script_dir_relative_workflow_entrypoints():
