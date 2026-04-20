@@ -16,6 +16,15 @@ __all__ = [
     "prepare_landsat_inputs",
 ]
 
+_DEFAULT_LANDSAT_GEE_CFG = {
+    "collection": "LANDSAT/LC08/C02/T1_L2",
+    "bands": ["ST_B10", "SR_B4", "SR_B5"],
+    "scale": 30,
+    "out_format": "tif",
+    "auth_mode": "browser",
+    "filename_prefix": "Landsat",
+}
+
 
 def _load_yaml_module():
     try:
@@ -139,10 +148,7 @@ def prepare_landsat_inputs(
         )
     else:
         cfg_path = write_gee_config_from_cfg(
-            {
-                "collection": "LANDSAT/LC08/C02/T1_L2",
-                "auth_mode": "browser",
-            },
+            _DEFAULT_LANDSAT_GEE_CFG,
             start_date,
             end_date,
             extent,

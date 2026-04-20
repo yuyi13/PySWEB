@@ -295,6 +295,41 @@ def test_prepare_landsat_inputs_uses_optional_template_override(monkeypatch, tmp
     assert recorded["run_calls"] == 1
 
 
+def test_prepare_landsat_inputs_writes_valid_default_config(monkeypatch, tmp_path: Path):
+    out_dir = tmp_path / "landsat"
+    recorded = {"init_paths": [], "run_calls": 0}
+
+    class FakeDownloader:
+        def __init__(self, config_path):
+            recorded["init_paths"].append(config_path)
+
+        def run(self):
+            recorded["run_calls"] += 1
+
+    monkeypatch.setattr(canonical_landsat, "GEEDownloader", FakeDownloader)
+    monkeypatch.setattr(canonical_landsat, "_safe_mkdir", lambda path: Path(path).mkdir(parents=True, exist_ok=True))
+
+    cfg_path = canonical_landsat.prepare_landsat_inputs(
+        date_range="2024-01-01 to 2024-01-03",
+        extent=[147.2, -35.1, 147.3, -35.0],
+        out_dir=str(out_dir),
+        gee_project="canonical-project",
+        gee_config_template=None,
+    )
+
+    payload = _load_config_payload(Path(cfg_path))
+    assert payload["collection"] == "LANDSAT/LC08/C02/T1_L2"
+    assert payload["auth_mode"] == "browser"
+    assert payload["bands"] == ["ST_B10", "SR_B4", "SR_B5"]
+    assert payload["scale"] == 30
+    assert payload["out_format"] == "tif"
+    assert payload["filename_prefix"] == "Landsat"
+    assert payload["gee_project"] == "canonical-project"
+    assert payload["download_dir"] == str(out_dir)
+    assert recorded["init_paths"] == [str(Path(cfg_path))]
+    assert recorded["run_calls"] == 1
+
+
 def test_prepare_landsat_inputs_rejects_blank_gee_project(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(canonical_landsat, "_safe_mkdir", lambda path: Path(path).mkdir(parents=True, exist_ok=True))
 
