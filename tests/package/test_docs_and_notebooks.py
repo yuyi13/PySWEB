@@ -51,6 +51,14 @@ def test_run_notebook_uses_package_backed_swb_calls():
     assert "SWB preprocess and calibration are still driven by" not in markdown_text
     assert "workflow-script-only" not in markdown_text
     assert "/g/data/ym05/sweb_model/notebook_runs" not in code_text
+    assert "GEE_PROJECT" in code_text
+    assert "GEE_CONFIG" not in code_text
+    assert 'DEM_DIR = RUN_DIR / "inputs" / "dem"' in code_text
+    assert 'PREPARED_DEM = DEM_DIR / "nasadem.tif"' in code_text
+    assert "gee_project = GEE_PROJECT" in code_text
+    assert "dem_dir = str(DEM_DIR)" in code_text
+    assert "dem = str(PREPARED_DEM)" in code_text
+    assert "`SM_RES` is the SWB preprocess target grid resolution." in markdown_text
 
 
 def test_readmes_list_actual_notebook_files():
@@ -75,6 +83,18 @@ def test_readmes_point_to_canonical_package_modules():
     assert "pysweb.soil" in readme_text
     assert "pysweb.visualisation" in readme_text
     assert "pysweb.visualisation" in notebooks_readme_text
+
+
+def test_readmes_document_explicit_gee_project_and_prepared_dem_contract():
+    readme_text = _read_text("README.md")
+    notebooks_readme_text = _read_text("notebooks/README.md")
+
+    for text in (readme_text, notebooks_readme_text):
+        assert "--gee-project" in text
+        assert "--gee-config" not in text
+
+    assert "run_inputs/dem/nasadem.tif" in readme_text
+    assert "/path/to/run_inputs/dem/nasadem.tif" in notebooks_readme_text
 
 
 def test_plotting_notebooks_use_package_entrypoints():

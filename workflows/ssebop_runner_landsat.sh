@@ -3,11 +3,11 @@
 # Objective: Orchestrate unified SSEBop input preparation and model runs for a selected run subdirectory.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-04-17
+# Last updated: 2026-04-20
 # Inputs: run_subdir plus optional flags (--mute-download, --mute-run, --workers) and configured data paths.
 # Outputs: Prepared Landsat and ERA5-Land inputs plus ET model outputs under run-specific project directories.
 # Usage: bash workflows/ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--workers N]
-# Requirements: bash, date, mktemp, python, workflow CLIs from this repository, access to Landsat/ERA5-Land/DEM/landcover data
+# Requirements: bash, date, find, python, workflow CLIs from this repository, Earth Engine access with a configured gee_project, access to Landsat/ERA5-Land/landcover data
 set -euo pipefail
 
 # Terminal style helpers for an HPC-like startup badge and log lines.
@@ -128,7 +128,7 @@ GAPFILL_ETF="true"
 GAPFILL_WINDOW_DAYS="32"
 GAPFILL_MIN_SAMPLES="5"
 N_WORKERS="${N_WORKERS:-${PBS_NCPUS:-4}}"
-DEM_PATH="/g/data/yx97/EO_collections/GA/DEM_30m_v01/dems1sv1_0/w001000.adf"
+GEE_PROJECT="${GEE_PROJECT:-yiyu-research}"
 LANDCOVER_PATH="/g/data/yx97/EO_collections/ESA/WorldCover/ESA_WorldCover_100m_v200.tif"
 
 # Step toggles (set via CLI flags).
@@ -178,6 +178,7 @@ done
 
 RUN_PREPARED_DIR="${PREPARED_DIR_BASE}/${RUN_SUBDIR}"
 RUN_LANDSAT_DIR="${RUN_PREPARED_DIR}/landsat"
+RUN_DEM_PATH="${RUN_PREPARED_DIR}/dem/nasadem.tif"
 RUN_MET_STACK_DIR="${RUN_PREPARED_DIR}/met/era5land/stack"
 RUN_OUTPUT_DIR="${OUTPUT_DIR}/${RUN_SUBDIR}"
 
@@ -197,42 +198,10 @@ print_status "CONFIG" "Date range : ${DATE_RANGE}"
 print_status "CONFIG" "Extent     : ${EXTENT}"
 print_status "CONFIG" "Prepared dir: ${RUN_PREPARED_DIR}"
 print_status "CONFIG" "Landsat dir : ${RUN_LANDSAT_DIR}"
+print_status "CONFIG" "GEE project : ${GEE_PROJECT}"
 print_status "CONFIG" "ERA5 stack : ${RUN_MET_STACK_DIR}"
 print_status "CONFIG" "Output dir : ${RUN_OUTPUT_DIR}"
 echo
-
-# GEE download config is written to a temporary YAML file so the downloader
-# can reuse its existing config loader.
-GEE_CONFIG="$(mktemp)"
-cleanup() {
-  rm -f "${GEE_CONFIG}"
-}
-trap cleanup EXIT
-
-# GEE parameters for Landsat C2 L2 downloads.
-cat > "${GEE_CONFIG}" <<'YAML'
-filename_prefix: "Landsat_30m"
-# Preferred multi-collection setting (Landsat 8 + Landsat 9).
-collections:
-  - "LANDSAT/LC08/C02/T1_L2"
-  - "LANDSAT/LC09/C02/T1_L2"
-# Backward-compatible fallback for single-collection consumers.
-collection: "LANDSAT/LC08/C02/T1_L2"
-bands: ["SR_B4", "SR_B5", "ST_B10"]
-scale: 30
-out_format: "tif"
-auth_mode: "browser"
-max_images: null
-cloud_mask:
-  enabled: true
-  band: "QA_PIXEL"
-  type: "bits_any"
-  bits: [0,1,2,3,4,5]
-  keep: false
-postprocess:
-  maskval_to_na: true
-  enforce_float32: false
-YAML
 
 # Step 1: run the unified preparation workflow for Landsat plus meteorology.
 if [[ "${RUN_DOWNLOAD}" == "true" ]]; then
@@ -240,8 +209,8 @@ if [[ "${RUN_DOWNLOAD}" == "true" ]]; then
   python "${SCRIPT_DIR}/1_ssebop_prepare_inputs.py" \
     --date-range "${DATE_RANGE}" \
     --extent "${EXTENT}" \
-    --gee-config "${GEE_CONFIG}" \
-    --dem "${DEM_PATH}" \
+    --met-source era5land \
+    --gee-project "${GEE_PROJECT}" \
     --out-dir "${RUN_PREPARED_DIR}"
 else
   print_skip "STEP 1/2" "Skipping unified Landsat + ERA5-Land preparation."
@@ -293,7 +262,7 @@ if [[ "${RUN_SSEBOP}" == "true" ]]; then
     --lst-band "${LST_BAND}"
     --met-dir "${RUN_MET_STACK_DIR}"
     --met-temp-units "${MET_TEMP_UNITS}"
-    --dem "${DEM_PATH}"
+    --dem "${RUN_DEM_PATH}"
     --landcover "${LANDCOVER_PATH}"
     --output-dir "${RUN_OUTPUT_DIR}"
     --max-gap-days "${MAX_GAP_DAYS}"

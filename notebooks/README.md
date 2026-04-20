@@ -38,24 +38,25 @@ Use this when you want the old operational pattern with minimal changes:
 This is the closest equivalent to the previous `/g/data/ym05/sweb_model/code/operations` workflow.
 
 #### 2. Call the workflow CLIs directly
-Use this when you want more explicit control over paths like `gee_config`, `dem`, or output directories:
+Use this when you want more explicit control over paths like `gee_project`, prepared DEM location, or output directories:
 
 ```python
 !python workflows/1_ssebop_prepare_inputs.py \
     --date-range "2024-01-01 to 2024-01-31" \
     --extent "147.20,-35.10,147.30,-35.00" \
     --met-source era5land \
-    --gee-config /path/to/base_gee.yaml \
-    --dem /path/to/dem.tif \
+    --gee-project your-gee-project \
     --out-dir /path/to/run_inputs
 
 !python workflows/2_ssebop_run_model.py \
     --date-range "2024-01-01 to 2024-01-31" \
     --landsat-dir /path/to/run_inputs/landsat \
     --met-dir /path/to/run_inputs/met/era5land/stack \
-    --dem /path/to/dem.tif \
+    --dem /path/to/run_inputs/dem/nasadem.tif \
     --output-dir /path/to/ssebop_outputs
 ```
+
+Step 1 now prepares the DEM artifact under `/path/to/run_inputs/dem/nasadem.tif`, and Step 2 should use that prepared file rather than an unrelated external DEM path.
 
 For the SWB side, the workflow CLIs remain convenient notebook-facing wrappers, but the underlying package APIs are now wired as well.
 
@@ -72,11 +73,12 @@ At present:
 
 So if you want a pure notebook-driven flow today, you can drive both SSEBop and SWB directly from `pysweb`, while still falling back to the workflow CLIs or shell wrappers when that is more convenient for path-heavy operational runs. For plotting-oriented notebooks and library imports, prefer `pysweb.visualisation`.
 
-### `gee_config` note
-If you previously relied on a fixed operations path such as `/g/data/ym05/sweb_model/code/gee_config`, the current package/workflow path does not assume that location automatically. Pass the config path explicitly when using:
+### `gee_project` note
+The current package/workflow path requires an explicit Earth Engine project when Landsat, ERA5-Land, NASADEM, OpenLandMap, or reference SSM downloads are involved. Pass `gee_project` explicitly when using:
 
 - `workflows/1_ssebop_prepare_inputs.py`
 - `pysweb.ssebop.prepare_inputs(...)`
+- `pysweb.swb.preprocess(...)`
 
 ## Current notebooks
 - `01_run_pysweb.ipynb`: Canonical run example showing package-backed SSEBop plus SWB preprocess/calibrate/run usage from a notebook with `import pysweb`.

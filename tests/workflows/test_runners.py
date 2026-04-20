@@ -55,6 +55,20 @@ def test_ssebop_runner_uses_package_backed_workflow_scripts():
     assert "1c_stack_era5land_daily.py" not in script_text
     assert '${RUN_PREPARED_DIR}/landsat' in script_text
     assert '${RUN_PREPARED_DIR}/met/era5land/stack' in script_text
+    assert '--gee-project "${GEE_PROJECT}"' in script_text
+    assert "--gee-config" not in script_text
+    assert 'RUN_DEM_PATH="${RUN_PREPARED_DIR}/dem/nasadem.tif"' in script_text
+    assert '--dem "${RUN_DEM_PATH}"' in script_text
+
+
+def test_ssebop_runner_step1_matches_current_prepare_cli_contract():
+    script_text = (WORKFLOWS_DIR / "ssebop_runner_landsat.sh").read_text(encoding = "utf-8")
+
+    assert '--met-source era5land' in script_text
+    assert '--gee-project "${GEE_PROJECT}"' in script_text
+    assert '--out-dir "${RUN_PREPARED_DIR}"' in script_text
+    assert "mktemp" not in script_text
+    assert "GEE_CONFIG" not in script_text
 
 
 def test_sweb_runner_uses_script_dir_relative_workflow_entrypoints():
@@ -74,6 +88,7 @@ def test_wrapper_handoff_prefers_prepared_precip_stack_contract():
     prepared_dir_base = _extract_assignment(ssebop_text, "PREPARED_DIR_BASE")
     assert prepared_dir_base == "${PROJECT_DIR}/1_ssebop_inputs"
     assert 'RUN_MET_STACK_DIR="${RUN_PREPARED_DIR}/met/era5land/stack"' in ssebop_text
+    assert 'RUN_DEM_PATH="${RUN_PREPARED_DIR}/dem/nasadem.tif"' in ssebop_text
 
     assert "1_ssebop_inputs" in sweb_text
     assert "met/era5land/stack" in sweb_text
