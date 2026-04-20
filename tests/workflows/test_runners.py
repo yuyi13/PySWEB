@@ -38,6 +38,8 @@ def test_ssebop_runner_help_returns_zero():
     result = _run_help("ssebop_runner_landsat.sh")
 
     assert result.returncode == 0, result.stderr
+    assert "GEE_PROJECT" in result.stdout
+    assert "Required when Step 1 download is enabled" in result.stdout
 
 
 def test_sweb_runner_help_returns_zero():
@@ -78,6 +80,7 @@ def test_ssebop_runner_requires_gee_project_only_when_step1_runs():
     assert 'GEE_PROJECT="${GEE_PROJECT:-}"' in script_text
     assert 'if [[ "${RUN_DOWNLOAD}" == "true" ]] && [[ -z "${GEE_PROJECT//[[:space:]]/}" ]]; then' in script_text
     assert 'GEE_PROJECT is required when Step 1 download is enabled.' in script_text
+    assert "Required when Step 1 download is enabled. Not required for Step 2-only runs." in script_text
 
 
 def test_sweb_runner_uses_script_dir_relative_workflow_entrypoints():

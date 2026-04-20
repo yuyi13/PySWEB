@@ -18,7 +18,7 @@ the closest current equivalents in this repository are:
 ```bash
 cd /path/to/PySWEB
 
-bash workflows/ssebop_runner_landsat.sh Llara --workers 40
+GEE_PROJECT=your-gee-project bash workflows/ssebop_runner_landsat.sh Llara --workers 40
 bash workflows/sweb_domain_runner.sh Llara --workers 40
 ```
 
@@ -31,11 +31,11 @@ You can drive the project from a notebook in three ways.
 Use this when you want the old operational pattern with minimal changes:
 
 ```python
-!bash workflows/ssebop_runner_landsat.sh Llara --workers 40
+!GEE_PROJECT=your-gee-project bash workflows/ssebop_runner_landsat.sh Llara --workers 40
 !bash workflows/sweb_domain_runner.sh Llara --workers 40
 ```
 
-This is the closest equivalent to the previous `/g/data/ym05/sweb_model/code/operations` workflow.
+This is the closest equivalent to the previous `/g/data/ym05/sweb_model/code/operations` workflow. `GEE_PROJECT` must be set whenever the SSEBop wrapper runs Step 1.
 
 #### 2. Call the workflow CLIs directly
 Use this when you want more explicit control over paths like `gee_project`, prepared DEM location, or output directories:

@@ -107,13 +107,13 @@ Convenience wrappers remain available for environment-specific end-to-end runs, 
 
 ```bash
 # Step A: prepare Landsat + meteorology inputs and run SSEBop
-bash workflows/ssebop_runner_landsat.sh <run_subdir>
+GEE_PROJECT=your-gee-project bash workflows/ssebop_runner_landsat.sh <run_subdir>
 
 # Step B: preprocess, calibrate, and run SWEB against the same run_subdir
 bash workflows/sweb_domain_runner.sh <run_subdir>
 ```
 
-In that wrapper sequence, the SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack` by default, so the handoff works without manually copying ERA5-Land stacks. If you still run the standalone ERA5-Land stack workflow, the SWEB wrapper can fall back to `1_era5land_stacks/<run_subdir>`.
+In that wrapper sequence, `GEE_PROJECT` must be provided when the SSEBop wrapper runs Step 1. The SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack` by default, so the handoff works without manually copying ERA5-Land stacks. If you still run the standalone ERA5-Land stack workflow, the SWEB wrapper can fall back to `1_era5land_stacks/<run_subdir>`.
 
 For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the canonical modules under `pysweb.visualisation`. The legacy `visualisation/*.py` files are compatibility shims around those package entrypoints:
 

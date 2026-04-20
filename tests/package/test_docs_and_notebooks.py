@@ -95,6 +95,7 @@ def test_readmes_document_explicit_gee_project_and_prepared_dem_contract():
         assert "--gee-project" in text
         assert "--gee-config" not in text
         assert "yiyu-research" not in text
+        assert "GEE_PROJECT=your-gee-project bash workflows/ssebop_runner_landsat.sh" in text
 
     assert "run_inputs/dem/nasadem.tif" in readme_text
     assert "/path/to/run_inputs/dem/nasadem.tif" in notebooks_readme_text

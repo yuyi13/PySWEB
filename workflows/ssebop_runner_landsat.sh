@@ -161,6 +161,9 @@ Usage: ssebop_runner_landsat.sh <run_subdir> [--mute-download] [--mute-run] [--w
   --mute-download  Skip Step 1 (unified Landsat + ERA5-Land preparation).
   --mute-run       Skip Step 2 (SSEBop model run).
   --workers N      Number of parallel scene workers for Step 2.
+
+Environment:
+  GEE_PROJECT      Required when Step 1 download is enabled. Not required for Step 2-only runs.
 USAGE
       exit 0
       ;;
