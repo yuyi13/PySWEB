@@ -36,6 +36,24 @@ def test_unknown_dem_source_fails_early():
         api.prepare_dem(dem_source="bogus", gee_project="test-project")
 
 
+def test_public_prepare_dem_dispatches_to_placeholder_backend():
+    api = import_module("pysweb.dem.api")
+
+    with pytest.raises(NotImplementedError, match="NASADEM"):
+        api.prepare_dem(
+            dem_source="nasadem",
+            gee_project="test-project",
+            output_dir="/tmp/dem",
+        )
+
+
+def test_prepare_dem_rejects_empty_gee_project():
+    api = import_module("pysweb.dem.api")
+
+    with pytest.raises(ValueError, match="gee_project must be a non-empty string"):
+        api.prepare_dem(dem_source="nasadem", gee_project="")
+
+
 def test_nasadem_backend_is_a_stub_for_now():
     nasadem = import_module("pysweb.dem.nasadem")
 

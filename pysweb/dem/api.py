@@ -27,5 +27,7 @@ def validate_dem_source(dem_source: str) -> None:
 
 def prepare_dem(*, dem_source: str, gee_project: str, **kwargs):
     validate_dem_source(dem_source)
+    if not gee_project:
+        raise ValueError("gee_project must be a non-empty string.")
     backend = import_module(f"pysweb.dem.{dem_source}")
     return backend.prepare_dem(gee_project=gee_project, **kwargs)
