@@ -34,7 +34,13 @@ def _require_ee():
 
 def prepare_dem(*, gee_project: str, extent: list[float], output_path: str) -> str:
     ee_module = _require_ee()
-    ee_module.Initialize(project = gee_project)
+    try:
+        ee_module.Initialize(project = gee_project)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to initialize Earth Engine for NASADEM backend with gee_project "
+            f"'{gee_project}'."
+        ) from exc
 
     region = ee_module.Geometry.Rectangle(extent, proj = "EPSG:4326", geodesic = False)
     image = ee_module.Image(NASADEM_IMAGE_ID).select(NASADEM_BAND).clip(region)

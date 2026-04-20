@@ -21,7 +21,7 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 from pysweb.ssebop import prepare_inputs  # noqa: E402
-from pysweb.ssebop.inputs.landsat import parse_extent  # noqa: E402
+from pysweb.ssebop.landsat import parse_extent  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:

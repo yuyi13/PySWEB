@@ -44,6 +44,7 @@ def test_unified_first_step_cli_exposes_met_source():
     assert args.gee_project == "workflow-project"
     assert not hasattr(args, "dem")
     assert not hasattr(args, "gee_config")
+    assert module.parse_extent.__module__ == "pysweb.ssebop.landsat"
 
 
 def test_unified_first_step_cli_rejects_unwired_met_source():

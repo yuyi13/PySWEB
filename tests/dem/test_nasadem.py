@@ -198,3 +198,19 @@ def test_prepare_dem_rejects_empty_download(monkeypatch, tmp_path: Path):
             extent = [147.2, -35.1, 147.3, -35.0],
             output_path = str(tmp_path / "nasadem.tif"),
         )
+
+
+def test_prepare_dem_wraps_ee_initialization_failures(monkeypatch, tmp_path: Path):
+    class FakeEE:
+        @staticmethod
+        def Initialize(project = None):
+            raise ValueError(f"unknown project: {project}")
+
+    monkeypatch.setattr(nasadem, "ee", FakeEE)
+
+    with pytest.raises(RuntimeError, match = "NASADEM backend"):
+        nasadem.prepare_dem(
+            gee_project = "broken-project",
+            extent = [147.2, -35.1, 147.3, -35.0],
+            output_path = str(tmp_path / "nasadem.tif"),
+        )
