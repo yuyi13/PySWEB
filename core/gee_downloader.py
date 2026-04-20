@@ -4,7 +4,7 @@ Script: gee_downloader.py
 Objective: Download and post-process Google Earth Engine composites used by SSEBop preprocessing workflows, including tiled fallback for oversized requests.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-16
+Last updated: 2026-04-20
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
 Usage: python core/gee_downloader.py <config.yaml>
@@ -376,11 +376,12 @@ class GEEDownloader:
     def initialize(self):
         mode = str(self.cfg["auth_mode"]).lower()
         if mode == "browser":
+            project = str(self.cfg.get("gee_project", "yiyu-research")).strip() or "yiyu-research"
             try:
-                ee.Initialize(project="yiyu-research")
+                ee.Initialize(project=project)
             except Exception:
                 ee.Authenticate()
-                ee.Initialize(project="yiyu-research")
+                ee.Initialize(project=project)
         elif mode == "service":
             email = self.cfg.get("service_account_email")
             key = self.cfg.get("service_account_key")

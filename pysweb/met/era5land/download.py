@@ -36,6 +36,7 @@ def build_era5land_cfg(
     end_date: str,
     extent: Iterable[float],
     out_dir: str,
+    gee_project: str = "yiyu-research",
 ) -> dict:
     start_dt = _parse_date(start_date)
     end_dt = _parse_date(end_date)
@@ -58,6 +59,7 @@ def build_era5land_cfg(
         "crs": "EPSG:4326",
         "out_format": "tif",
         "auth_mode": "browser",
+        "gee_project": gee_project,
         "filename_prefix": "ERA5LandDaily",
         "daily_strategy": "first",
         "postprocess": {
@@ -72,12 +74,14 @@ def write_era5land_config(
     end_date: str,
     extent: list[float],
     output_dir: str,
+    gee_project: str = "yiyu-research",
 ) -> Path:
     cfg = build_era5land_cfg(
         start_date = start_date,
         end_date   = end_date,
         extent     = extent,
         out_dir    = output_dir,
+        gee_project = gee_project,
     )
     cfg_path = Path(output_dir) / f"gee_config_era5land_{start_date}_{end_date}.yaml"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -90,6 +94,7 @@ def download_era5land_daily(
     end_date: str,
     extent: list[float],
     output_dir: str,
+    gee_project: str = "yiyu-research",
     downloader_cls=None,
 ) -> Path:
     if downloader_cls is None:
@@ -101,6 +106,7 @@ def download_era5land_daily(
         end_date   = end_date,
         extent     = extent,
         output_dir = output_dir,
+        gee_project = gee_project,
     )
     downloader_cls(str(cfg_path)).run()
     return cfg_path
