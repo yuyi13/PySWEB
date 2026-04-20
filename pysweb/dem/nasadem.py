@@ -8,12 +8,13 @@ Last updated: 2026-04-20
 Inputs: Earth Engine project name, geographic extent, and a local GeoTIFF output path.
 Outputs: A non-empty NASADEM GeoTIFF on disk at the requested output path.
 Usage: Imported via `pysweb.dem.nasadem`
-Dependencies: pathlib, earthengine-api, requests
+Dependencies: pathlib, earthengine-api, requests, rasterio
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+import rasterio
 import requests
 
 try:
@@ -32,7 +33,40 @@ def _require_ee():
     return ee
 
 
+def _validate_extent(extent: list[float]) -> list[float]:
+    if not isinstance(extent, (list, tuple)) or len(extent) != 4:
+        raise ValueError(
+            "extent must be a four-value sequence: [min_lon, min_lat, max_lon, max_lat]."
+        )
+
+    try:
+        min_lon, min_lat, max_lon, max_lat = [float(value) for value in extent]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "extent must contain numeric min/max longitude and latitude values."
+        ) from exc
+
+    if min_lon >= max_lon or min_lat >= max_lat:
+        raise ValueError(
+            "extent must satisfy min_lon < max_lon and min_lat < max_lat."
+        )
+
+    return [min_lon, min_lat, max_lon, max_lat]
+
+
+def _validate_downloaded_raster(output_file: Path) -> None:
+    try:
+        with rasterio.open(output_file) as dataset:
+            dataset.count
+    except Exception as exc:
+        raise RuntimeError(
+            f"Earth Engine NASADEM download produced an unreadable raster at "
+            f"'{output_file}'."
+        ) from exc
+
+
 def prepare_dem(*, gee_project: str, extent: list[float], output_path: str) -> str:
+    extent = _validate_extent(extent)
     ee_module = _require_ee()
     try:
         ee_module.Initialize(project = gee_project)
@@ -67,5 +101,6 @@ def prepare_dem(*, gee_project: str, extent: list[float], output_path: str) -> s
     output_file.write_bytes(payload)
     if output_file.stat().st_size == 0:
         raise RuntimeError("Earth Engine NASADEM download wrote an empty output.")
+    _validate_downloaded_raster(output_file)
 
     return str(output_file)

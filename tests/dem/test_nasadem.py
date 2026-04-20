@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import rasterio
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -21,6 +22,16 @@ if str(ROOT) not in sys.path:
 
 from pysweb.dem import api as dem_api
 from pysweb.dem import nasadem
+
+
+class _FakeRaster:
+    count = 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_prepare_dem_dispatches_to_nasadem_backend(monkeypatch):
@@ -115,6 +126,7 @@ def test_prepare_dem_downloads_clipped_nasadem_geotiff(monkeypatch, tmp_path: Pa
 
     monkeypatch.setattr(nasadem, "ee", FakeEE)
     monkeypatch.setattr(nasadem.requests, "get", fake_requests_get)
+    monkeypatch.setattr(nasadem.rasterio, "open", lambda path: _FakeRaster())
 
     output_path = tmp_path / "nested" / "nasadem.tif"
     result = nasadem.prepare_dem(
@@ -211,6 +223,80 @@ def test_prepare_dem_wraps_ee_initialization_failures(monkeypatch, tmp_path: Pat
     with pytest.raises(RuntimeError, match = "NASADEM backend"):
         nasadem.prepare_dem(
             gee_project = "broken-project",
+            extent = [147.2, -35.1, 147.3, -35.0],
+            output_path = str(tmp_path / "nasadem.tif"),
+        )
+
+
+def test_prepare_dem_rejects_malformed_extent_before_ee_work(monkeypatch, tmp_path: Path):
+    init_called = {"value": False}
+
+    class FakeEE:
+        @staticmethod
+        def Initialize(project = None):
+            init_called["value"] = True
+
+    monkeypatch.setattr(nasadem, "ee", FakeEE)
+
+    with pytest.raises(ValueError, match = "extent must be a four-value sequence"):
+        nasadem.prepare_dem(
+            gee_project = "demo-project",
+            extent = [147.2, -35.1, 147.3],
+            output_path = str(tmp_path / "nasadem.tif"),
+        )
+
+    assert init_called["value"] is False
+
+
+def test_prepare_dem_rejects_corrupt_raster_payload(monkeypatch, tmp_path: Path):
+    class FakeImage:
+        def select(self, band_name: str):
+            return self
+
+        def clip(self, region):
+            return self
+
+        def getDownloadURL(self, params):
+            return "https://example.invalid/nasadem-corrupt.tif"
+
+    class FakeGeometry:
+        @staticmethod
+        def Rectangle(coords, proj = None, geodesic = None):
+            return {"type": "Rectangle", "coords": coords}
+
+    class FakeEE:
+        Geometry = FakeGeometry
+
+        @staticmethod
+        def Initialize(project = None):
+            return None
+
+        @staticmethod
+        def Image(image_id: str):
+            return FakeImage()
+
+    class FakeResponse:
+        content = b"not-a-real-raster"
+
+        def raise_for_status(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_open(path):
+        raise rasterio.errors.RasterioIOError("not a supported file format")
+
+    monkeypatch.setattr(nasadem, "ee", FakeEE)
+    monkeypatch.setattr(nasadem.requests, "get", lambda url, timeout: FakeResponse())
+    monkeypatch.setattr(nasadem.rasterio, "open", fake_open)
+
+    with pytest.raises(RuntimeError, match = "unreadable raster"):
+        nasadem.prepare_dem(
+            gee_project = "demo-project",
             extent = [147.2, -35.1, 147.3, -35.0],
             output_path = str(tmp_path / "nasadem.tif"),
         )
