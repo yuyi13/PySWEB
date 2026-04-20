@@ -54,6 +54,13 @@ def test_prepare_dem_rejects_empty_gee_project():
         api.prepare_dem(dem_source="nasadem", gee_project="")
 
 
+def test_prepare_dem_rejects_non_string_gee_project():
+    api = import_module("pysweb.dem.api")
+
+    with pytest.raises(ValueError, match="gee_project must be a non-empty string"):
+        api.prepare_dem(dem_source="nasadem", gee_project=123)
+
+
 def test_nasadem_backend_is_a_stub_for_now():
     nasadem = import_module("pysweb.dem.nasadem")
 
