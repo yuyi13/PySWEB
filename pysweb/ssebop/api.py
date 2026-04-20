@@ -80,13 +80,6 @@ def prepare_inputs(
         gee_config_template = gee_config_template,
     )
 
-    prepared_dem_path = dem_api.prepare_dem(
-        dem_source = dem_source,
-        gee_project = gee_project,
-        extent = extent,
-        output_path = str(Path(dem_dir) / "nasadem.tif"),
-    )
-
     era5land_download.download_era5land_daily(
         start_date = start_date,
         end_date = end_date,
@@ -94,6 +87,14 @@ def prepare_inputs(
         output_dir = met_raw_dir,
         gee_project = gee_project,
     )
+
+    prepared_dem_path = dem_api.prepare_dem(
+        dem_source = dem_source,
+        gee_project = gee_project,
+        extent = extent,
+        output_path = str(Path(dem_dir) / "nasadem.tif"),
+    )
+
     era5land_stack.stack_era5land_daily_inputs(
         raw_dir = met_raw_dir,
         dem = prepared_dem_path,

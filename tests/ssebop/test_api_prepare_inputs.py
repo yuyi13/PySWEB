@@ -32,7 +32,7 @@ def _load_config_payload(path: Path) -> dict:
     return yaml.safe_load(payload) or {}
 
 
-def test_prepare_inputs_calls_landsat_dem_and_era5land_steps(monkeypatch, tmp_path: Path):
+def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, tmp_path: Path):
     recorded = []
 
     monkeypatch.setattr(
@@ -77,15 +77,6 @@ def test_prepare_inputs_calls_landsat_dem_and_era5land_steps(monkeypatch, tmp_pa
             },
         ),
         (
-            "dem",
-            {
-                "dem_source": "nasadem",
-                "gee_project": "workflow-project",
-                "extent": [147.2, -35.1, 147.3, -35.0],
-                "output_path": str(tmp_path / "dem" / "nasadem.tif"),
-            },
-        ),
-        (
             "era5land_download",
             {
                 "start_date": "2024-01-01",
@@ -93,6 +84,15 @@ def test_prepare_inputs_calls_landsat_dem_and_era5land_steps(monkeypatch, tmp_pa
                 "extent": [147.2, -35.1, 147.3, -35.0],
                 "output_dir": str(tmp_path / "raw"),
                 "gee_project": "workflow-project",
+            },
+        ),
+        (
+            "dem",
+            {
+                "dem_source": "nasadem",
+                "gee_project": "workflow-project",
+                "extent": [147.2, -35.1, 147.3, -35.0],
+                "output_path": str(tmp_path / "dem" / "nasadem.tif"),
             },
         ),
         (
