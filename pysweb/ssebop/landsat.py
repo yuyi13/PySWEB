@@ -114,19 +114,32 @@ def prepare_landsat_inputs(
     *,
     date_range: str,
     extent: list[float],
-    gee_config: str,
     out_dir: str,
-    gee_project: str | None = None,
+    gee_project: str,
+    gee_config_template: str | None = None,
 ) -> str:
     start_date, end_date = parse_date_range(date_range)
     _safe_mkdir(out_dir)
-    cfg_path = update_gee_config(
-        gee_config,
-        start_date,
-        end_date,
-        extent,
-        out_dir,
-        gee_project=gee_project,
-    )
+    if gee_config_template is not None:
+        cfg_path = update_gee_config(
+            gee_config_template,
+            start_date,
+            end_date,
+            extent,
+            out_dir,
+            gee_project=gee_project,
+        )
+    else:
+        cfg_path = write_gee_config_from_cfg(
+            {
+                "collection": "LANDSAT/LC08/C02/T1_L2",
+                "auth_mode": "browser",
+            },
+            start_date,
+            end_date,
+            extent,
+            out_dir,
+            gee_project=gee_project,
+        )
     GEEDownloader(cfg_path).run()
     return cfg_path

@@ -136,3 +136,61 @@ def test_update_gee_config_preserves_yaml_template_support_and_injects_project(t
     assert payload["gee_project"] == "yaml-template-project"
     assert payload["download_dir"] == str(out_dir)
     assert payload["coords"] == [147.2, -35.1, 147.3, -35.0]
+
+
+def test_prepare_landsat_inputs_requires_explicit_gee_project(tmp_path: Path):
+    out_dir = tmp_path / "landsat"
+    out_dir.mkdir()
+
+    try:
+        canonical_landsat.prepare_landsat_inputs(
+            date_range="2024-01-01 to 2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(out_dir),
+        )
+    except TypeError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected prepare_landsat_inputs to require gee_project explicitly")
+
+
+def test_prepare_landsat_inputs_uses_optional_template_override(monkeypatch, tmp_path: Path):
+    out_dir = tmp_path / "landsat"
+    template_path = tmp_path / "template.json"
+    template_path.write_text(
+        json.dumps(
+            {
+                "collection": "LANDSAT/LC08/C02/T1_L2",
+                "auth_mode": "browser",
+                "download_dir": "/tmp/original",
+                "coords": [0, 0, 1, 1],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recorded = {"init_paths": [], "run_calls": 0}
+
+    class FakeDownloader:
+        def __init__(self, config_path):
+            recorded["init_paths"].append(config_path)
+
+        def run(self):
+            recorded["run_calls"] += 1
+
+    monkeypatch.setattr(canonical_landsat, "GEEDownloader", FakeDownloader)
+    monkeypatch.setattr(canonical_landsat, "_safe_mkdir", lambda path: Path(path).mkdir(parents=True, exist_ok=True))
+
+    cfg_path = canonical_landsat.prepare_landsat_inputs(
+        date_range="2024-01-01 to 2024-01-03",
+        extent=[147.2, -35.1, 147.3, -35.0],
+        out_dir=str(out_dir),
+        gee_project="canonical-project",
+        gee_config_template=str(template_path),
+    )
+
+    payload = _load_config_payload(Path(cfg_path))
+    assert payload["gee_project"] == "canonical-project"
+    assert payload["download_dir"] == str(out_dir)
+    assert recorded["init_paths"] == [str(Path(cfg_path))]
+    assert recorded["run_calls"] == 1
