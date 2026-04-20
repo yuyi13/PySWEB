@@ -26,7 +26,7 @@ def validate_dem_source(dem_source: str) -> None:
 
 
 def validate_gee_project(gee_project: str) -> None:
-    if not isinstance(gee_project, str) or not gee_project:
+    if not isinstance(gee_project, str) or not gee_project.strip():
         raise ValueError("gee_project must be a non-empty string.")
 
 
