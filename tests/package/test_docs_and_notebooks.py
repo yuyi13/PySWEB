@@ -4,7 +4,7 @@ Script: test_docs_and_notebooks.py
 Objective: Verify the run notebook and README files document the canonical package-backed notebook workflow.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-04-20
 Inputs: Repository README files and the notebooks/01_run_pysweb.ipynb notebook.
 Outputs: Pytest assertions.
 Usage: python -m pytest tests/package/test_docs_and_notebooks.py -q

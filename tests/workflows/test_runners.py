@@ -4,7 +4,7 @@ Script: test_runners.py
 Objective: Verify the workflow shell wrappers stay thin and point at the package-backed entrypoints.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-19
+Last updated: 2026-04-20
 Inputs: Workflow shell scripts and subprocess invocations supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_runners.py

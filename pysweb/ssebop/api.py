@@ -1,10 +1,11 @@
+#!/usr/bin/env python3
 """
 Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu
 Created: 2026-04-17
 Last updated: 2026-04-20
-Inputs: API parameters, optional YAML config, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
+Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: Imported as `pysweb.ssebop.api`
 Dependencies: numpy, pandas, xarray, rasterio, rioxarray, pyproj, scipy, pyyaml

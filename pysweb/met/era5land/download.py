@@ -1,4 +1,15 @@
-"""ERA5-Land download configuration and execution helpers for pysweb."""
+#!/usr/bin/env python3
+"""
+Script: download.py
+Objective: Build and run ERA5-Land daily download configurations for package-backed meteorology preparation.
+Author: Yi Yu
+Created: 2026-04-16
+Last updated: 2026-04-20
+Inputs: Date range, geographic extent, Earth Engine project, and local output directory.
+Outputs: ERA5-Land download configs and daily GeoTIFF downloads.
+Usage: Imported as `pysweb.met.era5land.download`
+Dependencies: json, pathlib, datetime
+"""
 from __future__ import annotations
 
 import json
