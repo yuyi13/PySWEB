@@ -95,6 +95,20 @@ def test_build_era5land_cfg_rejects_reversed_date_range(tmp_path):
         raise AssertionError("Expected build_era5land_cfg to reject a reversed date range")
 
 
+def test_build_era5land_cfg_requires_explicit_gee_project(tmp_path):
+    try:
+        build_era5land_cfg(
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            out_dir=str(tmp_path / "raw"),
+        )
+    except TypeError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected build_era5land_cfg to require gee_project explicitly")
+
+
 def test_write_era5land_config_writes_expected_config_file(tmp_path):
     cfg_path = write_era5land_config(
         start_date="2024-01-01",
@@ -231,6 +245,47 @@ def test_legacy_downloader_browser_mode_uses_configured_gee_project(monkeypatch,
     assert calls == [("Initialize", (), {"project": "configured-ee-project"})]
 
 
+def test_legacy_downloader_browser_mode_requires_configured_gee_project(monkeypatch, tmp_path):
+    fake_yaml = types.SimpleNamespace(
+        safe_load=lambda payload: json.loads(payload.read() if hasattr(payload, "read") else payload)
+    )
+    monkeypatch.setitem(sys.modules, "yaml", fake_yaml)
+    import core.gee_downloader as gee_downloader_module
+
+    cfg_path = tmp_path / "gee_config.yaml"
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "collection": "ECMWF/ERA5_LAND/DAILY_AGGR",
+                "coords": [147.2, -35.1, 147.3, -35.0],
+                "download_dir": str(tmp_path / "out"),
+                "start_year": 2024,
+                "start_month": 1,
+                "start_day": 1,
+                "end_year": 2024,
+                "end_month": 1,
+                "end_day": 3,
+                "bands": EXPECTED_BANDS,
+                "scale": 11132,
+                "out_format": "tif",
+                "auth_mode": "browser",
+                "filename_prefix": "ERA5LandDaily",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    downloader = gee_downloader_module.GEEDownloader(str(cfg_path))
+
+    try:
+        downloader.initialize()
+    except ValueError as exc:
+        assert "gee_project" in str(exc)
+    else:
+        raise AssertionError("Expected browser mode to require an explicit gee_project")
+
+
 def test_workflow_writes_config_and_invokes_downloader(tmp_path, monkeypatch):
     recorded = {
         "init_paths": [],
@@ -257,6 +312,8 @@ def test_workflow_writes_config_and_invokes_downloader(tmp_path, monkeypatch):
             "147.2,-35.1,147.3,-35.0",
             "--output-dir",
             str(tmp_path / "out"),
+            "--gee-project",
+            "workflow-project",
         ],
     )
 
@@ -265,6 +322,26 @@ def test_workflow_writes_config_and_invokes_downloader(tmp_path, monkeypatch):
     cfg_path = tmp_path / "out" / "gee_config_era5land_2024-01-01_2024-01-03.yaml"
     assert cfg_path.exists()
     payload = json.loads(cfg_path.read_text(encoding="utf-8"))
-    assert payload["gee_project"] == "yiyu-research"
+    assert payload["gee_project"] == "workflow-project"
     assert recorded["init_paths"] == [str(cfg_path)]
     assert recorded["run_calls"] == 1
+
+
+def test_workflow_cli_requires_gee_project(monkeypatch):
+    workflow_module = _load_workflow_module(monkeypatch)
+
+    try:
+        workflow_module.parse_args(
+            [
+                "--date-range",
+                "2024-01-01 to 2024-01-03",
+                "--extent",
+                "147.2,-35.1,147.3,-35.0",
+                "--output-dir",
+                "/tmp/out",
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected workflow CLI to require --gee-project")

@@ -376,7 +376,9 @@ class GEEDownloader:
     def initialize(self):
         mode = str(self.cfg["auth_mode"]).lower()
         if mode == "browser":
-            project = str(self.cfg.get("gee_project", "yiyu-research")).strip() or "yiyu-research"
+            project = str(self.cfg.get("gee_project", "")).strip()
+            if not project:
+                raise ValueError("For auth_mode=browser, provide gee_project.")
             try:
                 ee.Initialize(project=project)
             except Exception:

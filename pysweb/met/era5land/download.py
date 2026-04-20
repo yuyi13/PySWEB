@@ -36,7 +36,7 @@ def build_era5land_cfg(
     end_date: str,
     extent: Iterable[float],
     out_dir: str,
-    gee_project: str = "yiyu-research",
+    gee_project: str,
 ) -> dict:
     start_dt = _parse_date(start_date)
     end_dt = _parse_date(end_date)
@@ -74,7 +74,7 @@ def write_era5land_config(
     end_date: str,
     extent: list[float],
     output_dir: str,
-    gee_project: str = "yiyu-research",
+    gee_project: str,
 ) -> Path:
     cfg = build_era5land_cfg(
         start_date = start_date,
@@ -94,7 +94,7 @@ def download_era5land_daily(
     end_date: str,
     extent: list[float],
     output_dir: str,
-    gee_project: str = "yiyu-research",
+    gee_project: str,
     downloader_cls=None,
 ) -> Path:
     if downloader_cls is None:

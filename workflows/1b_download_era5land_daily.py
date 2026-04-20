@@ -4,8 +4,8 @@ Script: 1b_download_era5land_daily.py
 Objective: Write and run an ERA5-Land DAILY_AGGR GEE download config from CLI arguments.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-04-17
-Inputs: --date-range, --extent, and --output-dir CLI arguments.
+Last updated: 2026-04-20
+Inputs: --date-range, --extent, --gee-project, and --output-dir CLI arguments.
 Outputs: ERA5-Land YAML config and downloaded daily GeoTIFFs.
 Usage: python workflows/1b_download_era5land_daily.py --help
 Dependencies: argparse, os, re, sys, pysweb.io.gee, pysweb.met.era5land.download
@@ -42,6 +42,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download ERA5-Land DAILY_AGGR inputs from Google Earth Engine")
     parser.add_argument("--date-range", required=True, help="Date range string like '2024-01-01 to 2024-01-03'")
     parser.add_argument("--extent", required=True, help="min_lon,min_lat,max_lon,max_lat")
+    parser.add_argument("--gee-project", required=True, help="Google Earth Engine project for browser auth")
     parser.add_argument("--output-dir", required=True, help="Directory for config and downloaded GeoTIFFs")
     return parser.parse_args(argv)
 
@@ -61,6 +62,7 @@ def main(argv: list[str] | None = None) -> None:
         start_date = start_date,
         end_date = end_date,
         extent = extent,
+        gee_project = args.gee_project,
         output_dir = args.output_dir,
         downloader_cls = _resolve_downloader_cls(),
     )
