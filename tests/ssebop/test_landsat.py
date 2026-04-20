@@ -72,7 +72,6 @@ def _coerce_yaml_scalar(value):
 
 def test_canonical_landsat_module_exports_helper_contract(tmp_path: Path):
     out_dir = tmp_path / "landsat"
-    out_dir.mkdir()
 
     cfg_path = canonical_landsat.write_gee_config_from_cfg(
         gee_cfg={
@@ -102,12 +101,18 @@ def test_legacy_shim_re_exports_canonical_landsat_helpers():
 def test_update_gee_config_preserves_yaml_template_support_and_injects_project(tmp_path: Path):
     template_path = tmp_path / "template.yaml"
     out_dir = tmp_path / "landsat"
-    out_dir.mkdir()
     template_path.write_text(
         "\n".join(
             [
                 "collection: LANDSAT/LC08/C02/T1_L2",
+                "bands:",
+                "  - ST_B10",
+                "  - SR_B4",
+                "  - SR_B5",
                 "auth_mode: browser",
+                "scale: 30",
+                "out_format: tif",
+                "filename_prefix: Landsat",
                 "download_dir: /tmp/original",
                 "coords:",
                 "  - 0",
@@ -237,7 +242,6 @@ def test_write_gee_config_from_cfg_requires_explicit_gee_project(tmp_path: Path)
 def test_update_gee_config_rejects_blank_gee_project(tmp_path: Path):
     template_path = tmp_path / "template.json"
     out_dir = tmp_path / "landsat"
-    out_dir.mkdir()
     template_path.write_text(
         json.dumps(
             {
@@ -267,7 +271,6 @@ def test_update_gee_config_rejects_blank_gee_project(tmp_path: Path):
 
 def test_write_gee_config_from_cfg_rejects_blank_gee_project(tmp_path: Path):
     out_dir = tmp_path / "landsat"
-    out_dir.mkdir()
 
     try:
         canonical_landsat.write_gee_config_from_cfg(
@@ -310,7 +313,11 @@ def test_prepare_landsat_inputs_uses_optional_template_override(monkeypatch, tmp
         json.dumps(
             {
                 "collection": "LANDSAT/LC08/C02/T1_L2",
+                "bands": ["ST_B10", "SR_B4", "SR_B5"],
                 "auth_mode": "browser",
+                "scale": 30,
+                "out_format": "tif",
+                "filename_prefix": "Landsat",
                 "download_dir": "/tmp/original",
                 "coords": [0, 0, 1, 1],
             }
@@ -339,6 +346,11 @@ def test_prepare_landsat_inputs_uses_optional_template_override(monkeypatch, tmp
     )
 
     payload = _load_config_payload(Path(cfg_path))
+    assert payload["collection"] == "LANDSAT/LC08/C02/T1_L2"
+    assert payload["bands"] == ["ST_B10", "SR_B4", "SR_B5"]
+    assert payload["scale"] == 30
+    assert payload["out_format"] == "tif"
+    assert payload["filename_prefix"] == "Landsat"
     assert payload["gee_project"] == "canonical-project"
     assert payload["download_dir"] == str(out_dir)
     assert recorded["init_paths"] == [str(Path(cfg_path))]

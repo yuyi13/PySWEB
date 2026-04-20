@@ -63,6 +63,8 @@ def prepare_inputs(
         raise ValueError("gee_project must be a non-empty string.")
 
     start_date, end_date = landsat.parse_date_range(date_range)
+    if datetime.fromisoformat(start_date) > datetime.fromisoformat(end_date):
+        raise ValueError("date_range start date must be on or before the end date.")
 
     if met_source != "era5land":
         raise NotImplementedError(f"Unsupported met_source: {met_source}")

@@ -80,6 +80,7 @@ def _write_gee_config(
     gee_project: str,
 ) -> str:
     gee_project = _validate_gee_project(gee_project)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
     if "coords" not in cfg or cfg["coords"] is None:
         cfg["coords"] = extent
 

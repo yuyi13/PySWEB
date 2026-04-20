@@ -191,3 +191,39 @@ def test_prepare_inputs_rejects_blank_gee_project_before_side_effects(monkeypatc
         raise AssertionError("Expected prepare_inputs to reject blank gee_project values")
 
     assert recorded == []
+
+
+def test_prepare_inputs_rejects_reversed_date_range_before_any_side_effects(monkeypatch, tmp_path: Path):
+    recorded = []
+
+    monkeypatch.setattr(
+        "pysweb.ssebop.inputs.landsat.prepare_landsat_inputs",
+        lambda **kwargs: recorded.append(("landsat", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.met.era5land.download.download_era5land_daily",
+        lambda **kwargs: recorded.append(("era5land_download", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.met.era5land.stack.stack_era5land_daily_inputs",
+        lambda **kwargs: recorded.append(("era5land_stack", kwargs)),
+    )
+
+    try:
+        prepare_inputs(
+            date_range="2024-01-03 to 2024-01-01",
+            extent=[147.2, -35.1, 147.3, -35.0],
+            met_source="era5land",
+            landsat_dir=str(tmp_path / "landsat"),
+            met_raw_dir=str(tmp_path / "raw"),
+            met_stack_dir=str(tmp_path / "stack"),
+            dem=str(tmp_path / "dem.tif"),
+            gee_config="/tmp/gee.yaml",
+            gee_project="workflow-project",
+        )
+    except ValueError as exc:
+        assert "date_range" in str(exc)
+    else:
+        raise AssertionError("Expected prepare_inputs to reject reversed date ranges")
+
+    assert recorded == []
