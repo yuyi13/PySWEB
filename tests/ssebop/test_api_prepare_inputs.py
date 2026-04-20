@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pysweb.ssebop.api import prepare_inputs
-from pysweb.ssebop.inputs.landsat import update_gee_config
+from pysweb.ssebop.landsat import update_gee_config
 
 
 def _load_config_payload(path: Path) -> dict:
@@ -32,12 +32,16 @@ def _load_config_payload(path: Path) -> dict:
     return yaml.safe_load(payload) or {}
 
 
-def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: Path):
+def test_prepare_inputs_calls_landsat_dem_and_era5land_steps(monkeypatch, tmp_path: Path):
     recorded = []
 
     monkeypatch.setattr(
-        "pysweb.ssebop.inputs.landsat.prepare_landsat_inputs",
+        "pysweb.ssebop.landsat.prepare_landsat_inputs",
         lambda **kwargs: recorded.append(("landsat", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.dem.api.prepare_dem",
+        lambda **kwargs: recorded.append(("dem", kwargs)) or kwargs["output_path"],
     )
     monkeypatch.setattr(
         "pysweb.met.era5land.download.download_era5land_daily",
@@ -55,8 +59,9 @@ def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: 
         landsat_dir=str(tmp_path / "landsat"),
         met_raw_dir=str(tmp_path / "raw"),
         met_stack_dir=str(tmp_path / "stack"),
-        dem=str(tmp_path / "dem.tif"),
-        gee_config="/tmp/gee.yaml",
+        dem_dir=str(tmp_path / "dem"),
+        dem_source="nasadem",
+        gee_config_template="/tmp/gee.yaml",
         gee_project="workflow-project",
     )
 
@@ -69,6 +74,15 @@ def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: 
                 "out_dir": str(tmp_path / "landsat"),
                 "gee_project": "workflow-project",
                 "gee_config_template": "/tmp/gee.yaml",
+            },
+        ),
+        (
+            "dem",
+            {
+                "dem_source": "nasadem",
+                "gee_project": "workflow-project",
+                "extent": [147.2, -35.1, 147.3, -35.0],
+                "output_path": str(tmp_path / "dem" / "nasadem.tif"),
             },
         ),
         (
@@ -85,7 +99,7 @@ def test_prepare_inputs_calls_landsat_and_era5land_steps(monkeypatch, tmp_path: 
             "era5land_stack",
             {
                 "raw_dir": str(tmp_path / "raw"),
-                "dem": str(tmp_path / "dem.tif"),
+                "dem": str(tmp_path / "dem" / "nasadem.tif"),
                 "start_date": "2024-01-01",
                 "end_date": "2024-01-03",
                 "output_dir": str(tmp_path / "stack"),
@@ -98,8 +112,12 @@ def test_prepare_inputs_rejects_unsupported_met_source_before_any_side_effects(m
     recorded = []
 
     monkeypatch.setattr(
-        "pysweb.ssebop.inputs.landsat.prepare_landsat_inputs",
+        "pysweb.ssebop.landsat.prepare_landsat_inputs",
         lambda **kwargs: recorded.append(("landsat", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.dem.api.prepare_dem",
+        lambda **kwargs: recorded.append(("dem", kwargs)),
     )
     monkeypatch.setattr(
         "pysweb.met.era5land.download.download_era5land_daily",
@@ -118,8 +136,9 @@ def test_prepare_inputs_rejects_unsupported_met_source_before_any_side_effects(m
             landsat_dir=str(tmp_path / "landsat"),
             met_raw_dir=str(tmp_path / "raw"),
             met_stack_dir=str(tmp_path / "stack"),
-            dem=str(tmp_path / "dem.tif"),
-            gee_config="/tmp/gee.yaml",
+            dem_dir=str(tmp_path / "dem"),
+            dem_source="nasadem",
+            gee_config_template="/tmp/gee.yaml",
             gee_project="workflow-project",
         )
     except NotImplementedError as exc:
@@ -161,8 +180,12 @@ def test_prepare_inputs_rejects_blank_gee_project_before_side_effects(monkeypatc
     recorded = []
 
     monkeypatch.setattr(
-        "pysweb.ssebop.inputs.landsat.prepare_landsat_inputs",
+        "pysweb.ssebop.landsat.prepare_landsat_inputs",
         lambda **kwargs: recorded.append(("landsat", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.dem.api.prepare_dem",
+        lambda **kwargs: recorded.append(("dem", kwargs)),
     )
     monkeypatch.setattr(
         "pysweb.met.era5land.download.download_era5land_daily",
@@ -181,8 +204,9 @@ def test_prepare_inputs_rejects_blank_gee_project_before_side_effects(monkeypatc
             landsat_dir=str(tmp_path / "landsat"),
             met_raw_dir=str(tmp_path / "raw"),
             met_stack_dir=str(tmp_path / "stack"),
-            dem=str(tmp_path / "dem.tif"),
-            gee_config="/tmp/gee.yaml",
+            dem_dir=str(tmp_path / "dem"),
+            dem_source="nasadem",
+            gee_config_template="/tmp/gee.yaml",
             gee_project="   ",
         )
     except ValueError as exc:
@@ -197,8 +221,12 @@ def test_prepare_inputs_rejects_reversed_date_range_before_any_side_effects(monk
     recorded = []
 
     monkeypatch.setattr(
-        "pysweb.ssebop.inputs.landsat.prepare_landsat_inputs",
+        "pysweb.ssebop.landsat.prepare_landsat_inputs",
         lambda **kwargs: recorded.append(("landsat", kwargs)),
+    )
+    monkeypatch.setattr(
+        "pysweb.dem.api.prepare_dem",
+        lambda **kwargs: recorded.append(("dem", kwargs)),
     )
     monkeypatch.setattr(
         "pysweb.met.era5land.download.download_era5land_daily",
@@ -217,8 +245,9 @@ def test_prepare_inputs_rejects_reversed_date_range_before_any_side_effects(monk
             landsat_dir=str(tmp_path / "landsat"),
             met_raw_dir=str(tmp_path / "raw"),
             met_stack_dir=str(tmp_path / "stack"),
-            dem=str(tmp_path / "dem.tif"),
-            gee_config="/tmp/gee.yaml",
+            dem_dir=str(tmp_path / "dem"),
+            dem_source="nasadem",
+            gee_config_template="/tmp/gee.yaml",
             gee_project="workflow-project",
         )
     except ValueError as exc:

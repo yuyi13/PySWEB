@@ -5,10 +5,10 @@ Objective: Parse CLI arguments and delegate the unified first SSEBop preparation
 Author: Yi Yu
 Created: 2026-02-17
 Last updated: 2026-04-20
-Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --gee-config, --out-dir, --dem).
-Outputs: Package-managed Landsat and meteorology inputs for the requested SSEBop run.
+Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --out-dir).
+Outputs: Package-managed Landsat, NASADEM, and meteorology inputs for the requested SSEBop run.
 Usage: python workflows/1_ssebop_prepare_inputs.py --help
-Dependencies: argparse, os, sys, pysweb.ssebop, pysweb.ssebop.inputs.landsat
+Dependencies: argparse, os, sys, pysweb.ssebop, pysweb.ssebop.landsat
 """
 from __future__ import annotations
 
@@ -30,9 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extent", required=True, help="min_lon,min_lat,max_lon,max_lat")
     parser.add_argument("--met-source", default="era5land", choices=["era5land"])
     parser.add_argument("--gee-project", required=True, help="Google Earth Engine project for Landsat and ERA5-Land downloads")
-    parser.add_argument("--gee-config", required=True, help="Path to the base GEE config template")
     parser.add_argument("--out-dir", required=True, help="Base output directory for prepared inputs")
-    parser.add_argument("--dem", required=True, help="DEM raster used for stacked meteorology inputs")
     return parser
 
 
@@ -46,12 +44,13 @@ def main(argv: list[str] | None = None) -> None:
         date_range = args.date_range,
         extent = parse_extent(args.extent),
         met_source = args.met_source,
+        gee_project = gee_project,
         landsat_dir = os.path.join(out_dir, "landsat"),
         met_raw_dir = os.path.join(out_dir, "met", args.met_source, "raw"),
         met_stack_dir = os.path.join(out_dir, "met", args.met_source, "stack"),
-        dem = args.dem,
-        gee_config = args.gee_config,
-        gee_project = gee_project,
+        dem_dir = os.path.join(out_dir, "dem"),
+        dem_source = "nasadem",
+        gee_config_template = None,
     )
 
 

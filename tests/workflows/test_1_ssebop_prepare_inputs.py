@@ -36,14 +36,14 @@ def test_unified_first_step_cli_exposes_met_source():
             "--extent", "147.2,-35.1,147.3,-35.0",
             "--met-source", "era5land",
             "--gee-project", "workflow-project",
-            "--gee-config", "/tmp/gee.yaml",
             "--out-dir", "/tmp/out",
-            "--dem", "/tmp/dem.tif",
         ]
     )
 
     assert args.met_source == "era5land"
     assert args.gee_project == "workflow-project"
+    assert not hasattr(args, "dem")
+    assert not hasattr(args, "gee_config")
 
 
 def test_unified_first_step_cli_rejects_unwired_met_source():
@@ -62,9 +62,7 @@ def test_unified_first_step_cli_rejects_unwired_met_source():
                 "--extent", "147.2,-35.1,147.3,-35.0",
                 "--met-source", "silo",
                 "--gee-project", "workflow-project",
-                "--gee-config", "/tmp/gee.yaml",
                 "--out-dir", "/tmp/out",
-                "--dem", "/tmp/dem.tif",
             ]
         )
 
@@ -85,9 +83,7 @@ def test_unified_first_step_cli_calls_package_api(monkeypatch, tmp_path: Path):
             "--extent", "147.2,-35.1,147.3,-35.0",
             "--met-source", "era5land",
             "--gee-project", "workflow-project",
-            "--gee-config", "/tmp/gee.yaml",
             "--out-dir", str(tmp_path / "out"),
-            "--dem", str(tmp_path / "dem.tif"),
         ]
     )
 
@@ -95,8 +91,9 @@ def test_unified_first_step_cli_calls_package_api(monkeypatch, tmp_path: Path):
     assert recorded["extent"] == [147.2, -35.1, 147.3, -35.0]
     assert recorded["met_source"] == "era5land"
     assert recorded["gee_project"] == "workflow-project"
-    assert recorded["gee_config"] == "/tmp/gee.yaml"
-    assert recorded["dem"] == str(tmp_path / "dem.tif")
+    assert recorded["gee_config_template"] is None
+    assert recorded["dem_source"] == "nasadem"
+    assert recorded["dem_dir"] == str(tmp_path / "out" / "dem")
     assert recorded["landsat_dir"] == str(tmp_path / "out" / "landsat")
     assert recorded["met_raw_dir"] == str(tmp_path / "out" / "met" / "era5land" / "raw")
     assert recorded["met_stack_dir"] == str(tmp_path / "out" / "met" / "era5land" / "stack")
@@ -117,9 +114,7 @@ def test_unified_first_step_cli_requires_gee_project():
                 "--date-range", "2024-01-01 to 2024-01-03",
                 "--extent", "147.2,-35.1,147.3,-35.0",
                 "--met-source", "era5land",
-                "--gee-config", "/tmp/gee.yaml",
                 "--out-dir", "/tmp/out",
-                "--dem", "/tmp/dem.tif",
             ]
         )
 
@@ -141,9 +136,7 @@ def test_unified_first_step_cli_rejects_blank_gee_project(monkeypatch, tmp_path:
                 "--extent", "147.2,-35.1,147.3,-35.0",
                 "--met-source", "era5land",
                 "--gee-project", "   ",
-                "--gee-config", "/tmp/gee.yaml",
                 "--out-dir", str(tmp_path / "out"),
-                "--dem", str(tmp_path / "dem.tif"),
             ]
         )
     except ValueError as exc:

@@ -18,6 +18,7 @@ import re
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from itertools import repeat
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -27,6 +28,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from pyproj import CRS, Transformer
 
+from pysweb.dem import api as dem_api
 from pysweb.met.era5land import download as era5land_download
 from pysweb.met.era5land import stack as era5land_stack
 from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
@@ -37,7 +39,7 @@ from pysweb.ssebop.core import (
     tcold_fano_simple_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
-from pysweb.ssebop.inputs import landsat
+from pysweb.ssebop import landsat
 from pysweb.ssebop.landcover import (
     load_worldcover_landcover,
     worldcover_masks,
@@ -51,12 +53,13 @@ def prepare_inputs(
     date_range: str,
     extent: list[float],
     met_source: str,
+    gee_project: str,
     landsat_dir: str,
     met_raw_dir: str,
     met_stack_dir: str,
-    dem: str,
-    gee_config: str,
-    gee_project: str,
+    dem_dir: str,
+    dem_source: str = "nasadem",
+    gee_config_template: str | None = None,
 ) -> None:
     gee_project = gee_project.strip()
     if not gee_project:
@@ -74,7 +77,14 @@ def prepare_inputs(
         extent = extent,
         out_dir = landsat_dir,
         gee_project = gee_project,
-        gee_config_template = gee_config,
+        gee_config_template = gee_config_template,
+    )
+
+    prepared_dem_path = dem_api.prepare_dem(
+        dem_source = dem_source,
+        gee_project = gee_project,
+        extent = extent,
+        output_path = str(Path(dem_dir) / "nasadem.tif"),
     )
 
     era5land_download.download_era5land_daily(
@@ -86,7 +96,7 @@ def prepare_inputs(
     )
     era5land_stack.stack_era5land_daily_inputs(
         raw_dir = met_raw_dir,
-        dem = dem,
+        dem = prepared_dem_path,
         start_date = start_date,
         end_date = end_date,
         output_dir = met_stack_dir,
