@@ -48,6 +48,27 @@ from pysweb.ssebop.landcover import (
 _SCENE_WORKER_CONTEXT: Optional[Dict[str, object]] = None
 
 
+def _validate_extent(extent: list[float]) -> list[float]:
+    if not isinstance(extent, (list, tuple)) or len(extent) != 4:
+        raise ValueError(
+            "extent must be a four-value sequence: [min_lon, min_lat, max_lon, max_lat]."
+        )
+
+    try:
+        min_lon, min_lat, max_lon, max_lat = [float(value) for value in extent]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "extent must contain numeric min/max longitude and latitude values."
+        ) from exc
+
+    if min_lon >= max_lon or min_lat >= max_lat:
+        raise ValueError(
+            "extent must satisfy min_lon < max_lon and min_lat < max_lat."
+        )
+
+    return [min_lon, min_lat, max_lon, max_lat]
+
+
 def prepare_inputs(
     *,
     date_range: str,
@@ -64,6 +85,7 @@ def prepare_inputs(
     gee_project = gee_project.strip()
     if not gee_project:
         raise ValueError("gee_project must be a non-empty string.")
+    extent = _validate_extent(extent)
 
     start_date, end_date = landsat.parse_date_range(date_range)
     if datetime.fromisoformat(start_date) > datetime.fromisoformat(end_date):
