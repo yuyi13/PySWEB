@@ -14,6 +14,7 @@ The package-first refactor is now the main execution path. The canonical code la
 ```
 PySWEB/
 ├── pysweb/                                # Canonical package code
+│   ├── dem/                               # DEM backend dispatch and NASADEM preparation
 │   ├── io/                                # Shared I/O helpers
 │   ├── met/                               # Meteorology path resolution and source-specific helpers
 │   │   ├── era5land/
@@ -21,7 +22,8 @@ PySWEB/
 │   ├── soil/                              # Canonical soil-source discovery and loading logic
 │   ├── ssebop/                            # Package-backed SSEBop prepare/run logic
 │   │   ├── api.py
-│   │   └── inputs/
+│   │   ├── landsat.py
+│   │   └── inputs/                        # Legacy shim path during the transition
 │   ├── swb/                               # Package-backed SWB preprocess/calibrate/run logic
 │       ├── __init__.py
 │       ├── api.py

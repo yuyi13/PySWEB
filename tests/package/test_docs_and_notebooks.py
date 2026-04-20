@@ -80,6 +80,8 @@ def test_readmes_point_to_canonical_package_modules():
     readme_text = _read_text("README.md")
     notebooks_readme_text = _read_text("notebooks/README.md")
 
+    assert "├── dem/" in readme_text
+    assert "│   │   ├── landsat.py" in readme_text
     assert "pysweb.soil" in readme_text
     assert "pysweb.visualisation" in readme_text
     assert "pysweb.visualisation" in notebooks_readme_text
