@@ -4,7 +4,7 @@ Script: test_pysweb_imports.py
 Objective: Verify the package exposes importable subpackages and callable facade entry points.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-19
+Last updated: 2026-04-20
 Inputs: Package imports and direct facade calls exercised under pytest.
 Outputs: Test assertions.
 Usage: pytest tests/package/test_pysweb_imports.py
@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 def test_top_level_package_exposes_ssebop_and_swb():
     pysweb = import_module("pysweb")
 
+    assert hasattr(pysweb, "dem")
     assert hasattr(pysweb, "ssebop")
     assert hasattr(pysweb, "soil")
     assert hasattr(pysweb, "swb")
@@ -34,6 +35,7 @@ def test_top_level_package_exposes_ssebop_and_swb():
 
 
 def test_subpackages_and_swb_modules_import_cleanly():
+    assert import_module("pysweb.dem").__name__ == "pysweb.dem"
     assert import_module("pysweb.ssebop").__name__ == "pysweb.ssebop"
     assert import_module("pysweb.soil").__name__ == "pysweb.soil"
     assert import_module("pysweb.swb").__name__ == "pysweb.swb"
@@ -41,6 +43,15 @@ def test_subpackages_and_swb_modules_import_cleanly():
     assert import_module("pysweb.swb.run").__name__ == "pysweb.swb.run"
     assert import_module("pysweb.met").__name__ == "pysweb.met"
     assert import_module("pysweb.visualisation").__name__ == "pysweb.visualisation"
+
+
+def test_dem_package_lazy_attributes_resolve_real_modules_and_callables():
+    dem = import_module("pysweb.dem")
+
+    assert inspect.ismodule(dem.api)
+    assert inspect.ismodule(dem.nasadem)
+    assert callable(dem.prepare_dem)
+    assert dem.prepare_dem is dem.api.prepare_dem
 
 
 def test_package_facade_attributes_are_available_and_callable():
