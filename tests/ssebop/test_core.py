@@ -25,7 +25,7 @@ CORE_DIR = PROJECT_ROOT / "core"
 if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
 
-from core.ssebop_au import open_silo_et_short_crop, open_silo_variable
+from core.ssebop_au import SsebopAuConfig, open_silo_et_short_crop, open_silo_variable
 from pysweb.ssebop.core import build_doy_climatology, compute_dt_daily, daily_et_from_etf, et_fraction_xr
 from pysweb.ssebop.grid import reproject_match
 from pysweb.ssebop.landcover import worldcover_masks
@@ -62,6 +62,16 @@ def _load_local_fano_core():
     from pysweb.ssebop.core import LocalFanoConfig, tcold_fano_local_xr
 
     return LocalFanoConfig, tcold_fano_local_xr
+
+
+def test_ssebop_au_config_preserves_legacy_ndvi_alias():
+    config = SsebopAuConfig(anchor_ndvi_threshold=0.45)
+
+    assert config.anchor_ndvi_threshold == 0.45
+    assert config.veg_ndvi_threshold == 0.45
+    assert config.fine_scale_m == 240.0
+    assert config.coarse_scale_m == 4800.0
+    assert config.smooth_scale_m == 240.0
 
 
 def test_tcold_fano_local_xr_preserves_lst_sensitivity():

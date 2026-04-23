@@ -4,7 +4,7 @@ Script: ssebop_au.py
 Objective: Provide Australia-focused SSEBop helper functions for dT climatology, ET fraction, and reprojection.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-17
+Last updated: 2026-04-23
 Inputs: xarray datasets/raster grids, Landsat/SILO-derived variables, and geospatial metadata.
 Outputs: Processed geospatial arrays including masks, climatologies, ET fraction, and daily ET products.
 Usage: Imported by workflows/2_ssebop_run_model.py; not intended as a standalone CLI script.
@@ -64,14 +64,21 @@ AU_SSEBOP_SOURCE_CANDIDATES: Dict[str, Dict[str, str]] = {
 class SsebopAuConfig:
     """Configuration hints for AU SSEBop processing."""
 
-    et_reference_type: str = "alfalfa"  # or "grass"
+    et_reference_type: str = "alfalfa"
     et_reference_unit: str = "mm/day"
     dt_coeff: float = 0.125
     high_ndvi_threshold: float = 0.9
-    veg_ndvi_threshold: float = 0.4
+    anchor_ndvi_threshold: float = 0.4
+    fine_scale_m: float = 240.0
+    coarse_scale_m: float = 4800.0
+    smooth_scale_m: float = 240.0
     etf_clamp_max: float = 1.0
     etf_mask_max: float = 2.0
     worldcover_path: str = AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"]
+
+    @property
+    def veg_ndvi_threshold(self) -> float:
+        return self.anchor_ndvi_threshold
 
 
 def _ensure_spatial_dims(data_array: xr.DataArray) -> xr.DataArray:
