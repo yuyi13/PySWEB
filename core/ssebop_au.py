@@ -60,7 +60,7 @@ AU_SSEBOP_SOURCE_CANDIDATES: Dict[str, Dict[str, str]] = {
 }
 
 
-@dataclass
+@dataclass(init=False)
 class SsebopAuConfig:
     """Configuration hints for AU SSEBop processing."""
 
@@ -75,6 +75,36 @@ class SsebopAuConfig:
     etf_clamp_max: float = 1.0
     etf_mask_max: float = 2.0
     worldcover_path: str = AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"]
+
+    def __init__(
+        self,
+        et_reference_type: str = "alfalfa",
+        et_reference_unit: str = "mm/day",
+        dt_coeff: float = 0.125,
+        high_ndvi_threshold: float = 0.9,
+        anchor_ndvi_threshold: float = 0.4,
+        veg_ndvi_threshold: float | None = None,
+        fine_scale_m: float = 240.0,
+        coarse_scale_m: float = 4800.0,
+        smooth_scale_m: float = 240.0,
+        etf_clamp_max: float = 1.0,
+        etf_mask_max: float = 2.0,
+        worldcover_path: str = AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"],
+    ) -> None:
+        if veg_ndvi_threshold is not None:
+            anchor_ndvi_threshold = float(veg_ndvi_threshold)
+
+        self.et_reference_type = et_reference_type
+        self.et_reference_unit = et_reference_unit
+        self.dt_coeff = dt_coeff
+        self.high_ndvi_threshold = high_ndvi_threshold
+        self.anchor_ndvi_threshold = anchor_ndvi_threshold
+        self.fine_scale_m = fine_scale_m
+        self.coarse_scale_m = coarse_scale_m
+        self.smooth_scale_m = smooth_scale_m
+        self.etf_clamp_max = etf_clamp_max
+        self.etf_mask_max = etf_mask_max
+        self.worldcover_path = worldcover_path
 
     @property
     def veg_ndvi_threshold(self) -> float:

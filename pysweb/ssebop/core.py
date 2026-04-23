@@ -61,11 +61,18 @@ def _config_value(config: TcoldConfig | None, name: str, default: float) -> floa
     return float(getattr(config, name, default))
 
 
+def _validate_local_fano_raster(data: xr.DataArray, name: str) -> None:
+    if data.ndim != 2 or set(data.dims) != {"y", "x"}:
+        raise ValueError(f"{name} must be a 2D spatial y/x raster")
+
+
 def _window_from_scale(data: xr.DataArray, scale_m: float) -> tuple[int, int]:
     if scale_m <= 0:
         raise ValueError("scale_m must be > 0")
     if data.rio.crs is None:
         raise ValueError("Input raster must have a CRS for local FANO window sizing")
+    if not data.rio.crs.is_projected:
+        raise ValueError("Input raster must use a projected CRS for local FANO window sizing")
 
     x_res, y_res = data.rio.resolution()
     x_window = max(1, int(round(scale_m / abs(float(x_res)))))
@@ -203,6 +210,10 @@ def tcold_fano_local_xr(
     config: TcoldConfig | None = None,
 ) -> xr.DataArray:
     """Build a local multiscale FANO-style cold boundary for full-scene ETf."""
+    _validate_local_fano_raster(lst_k, "lst_k")
+    _validate_local_fano_raster(ndvi, "ndvi")
+    _validate_local_fano_raster(dt_k, "dt_k")
+
     dt_coeff = _config_value(config, "dt_coeff", 0.125)
     high_ndvi_threshold = _config_value(config, "high_ndvi_threshold", 0.9)
     anchor_ndvi_threshold = _config_value(

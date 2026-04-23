@@ -74,6 +74,13 @@ def test_ssebop_au_config_preserves_legacy_ndvi_alias():
     assert config.smooth_scale_m == 240.0
 
 
+def test_ssebop_au_config_accepts_legacy_veg_ndvi_threshold_keyword():
+    config = SsebopAuConfig(veg_ndvi_threshold=0.35)
+
+    assert config.anchor_ndvi_threshold == 0.35
+    assert config.veg_ndvi_threshold == 0.35
+
+
 def test_tcold_fano_local_xr_preserves_lst_sensitivity():
     LocalFanoConfig, tcold_fano_local_xr = _load_local_fano_core()
     config = LocalFanoConfig(
@@ -138,6 +145,27 @@ def test_tcold_fano_local_xr_falls_back_without_anchor_pixels():
     assert etf.shape == lst.shape
     assert np.isfinite(tcold.values).all()
     assert np.isfinite(etf.values).all()
+
+
+def test_tcold_fano_local_xr_requires_2d_yx_rasters():
+    _, tcold_fano_local_xr = _load_local_fano_core()
+    time = pd.to_datetime(["2024-01-01"])
+    lst = _spatial_raster(np.full((4, 4), 300.0, dtype=float), "lst").expand_dims(time=time)
+    ndvi = _spatial_raster(np.full((4, 4), 0.6, dtype=float), "ndvi").expand_dims(time=time)
+    dt = _spatial_raster(np.full((4, 4), 10.0, dtype=float), "dt").expand_dims(time=time)
+
+    with pytest.raises(ValueError, match="2D spatial y/x"):
+        tcold_fano_local_xr(lst, ndvi, dt)
+
+
+def test_tcold_fano_local_xr_requires_projected_crs():
+    _, tcold_fano_local_xr = _load_local_fano_core()
+    lst = _spatial_raster(np.full((4, 4), 300.0, dtype=float), "lst").rio.write_crs("EPSG:4326")
+    ndvi = _spatial_raster(np.full((4, 4), 0.6, dtype=float), "ndvi").rio.write_crs("EPSG:4326")
+    dt = _spatial_raster(np.full((4, 4), 10.0, dtype=float), "dt").rio.write_crs("EPSG:4326")
+
+    with pytest.raises(ValueError, match="projected CRS"):
+        tcold_fano_local_xr(lst, ndvi, dt)
 
 
 def test_build_doy_climatology_groups_by_dayofyear():
