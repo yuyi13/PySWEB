@@ -26,14 +26,7 @@ if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
 
 from core.ssebop_au import open_silo_et_short_crop, open_silo_variable
-from pysweb.ssebop.core import (
-    LocalFanoConfig,
-    build_doy_climatology,
-    compute_dt_daily,
-    daily_et_from_etf,
-    et_fraction_xr,
-    tcold_fano_local_xr,
-)
+from pysweb.ssebop.core import build_doy_climatology, compute_dt_daily, daily_et_from_etf, et_fraction_xr
 from pysweb.ssebop.grid import reproject_match
 from pysweb.ssebop.landcover import worldcover_masks
 
@@ -54,9 +47,9 @@ def _spatial_raster(values: np.ndarray, name: str) -> xr.DataArray:
     y = np.arange(rows, dtype=float)[::-1] * 30.0 + 15.0
     data = xr.DataArray(
         values,
-        coords = {"y": y, "x": x},
-        dims = ("y", "x"),
-        name = name,
+        coords={"y": y, "x": x},
+        dims=("y", "x"),
+        name=name,
     )
     data = data.rio.write_crs("EPSG:32755")
     data = data.rio.write_transform(
@@ -65,12 +58,19 @@ def _spatial_raster(values: np.ndarray, name: str) -> xr.DataArray:
     return data
 
 
+def _load_local_fano_core():
+    from pysweb.ssebop.core import LocalFanoConfig, tcold_fano_local_xr
+
+    return LocalFanoConfig, tcold_fano_local_xr
+
+
 def test_tcold_fano_local_xr_preserves_lst_sensitivity():
+    LocalFanoConfig, tcold_fano_local_xr = _load_local_fano_core()
     config = LocalFanoConfig(
-        anchor_ndvi_threshold = 0.4,
-        fine_scale_m = 60.0,
-        coarse_scale_m = 120.0,
-        smooth_scale_m = 60.0,
+        anchor_ndvi_threshold=0.4,
+        fine_scale_m=60.0,
+        coarse_scale_m=120.0,
+        smooth_scale_m=60.0,
     )
     lst = _spatial_raster(
         np.array(
@@ -80,28 +80,31 @@ def test_tcold_fano_local_xr_preserves_lst_sensitivity():
                 [302.0, 304.0, 306.0, 308.0],
                 [303.0, 305.0, 307.0, 309.0],
             ],
-            dtype = float,
+            dtype=float,
         ),
         "lst",
     )
     ndvi = _spatial_raster(np.full((4, 4), 0.6, dtype=float), "ndvi")
     dt = _spatial_raster(np.full((4, 4), 10.0, dtype=float), "dt")
 
-    tcold = tcold_fano_local_xr(lst, ndvi, dt, config = config)
+    tcold = tcold_fano_local_xr(lst, ndvi, dt, config=config)
     etf = et_fraction_xr(lst, tcold, dt)
     collapsed = np.clip(1.25 * ndvi.values - 0.125, 0.0, 1.0)
 
     assert np.isfinite(tcold.values).all()
     assert etf.values[0, 0] > etf.values[-1, -1]
-    assert not np.allclose(etf.values, collapsed)
+    assert np.ptp(etf.values) > 0.01
+    assert etf.values[0, 0] - etf.values[-1, -1] > 0.01
+    assert np.max(np.abs(etf.values - collapsed)) > 0.01
 
 
 def test_tcold_fano_local_xr_falls_back_without_anchor_pixels():
+    LocalFanoConfig, tcold_fano_local_xr = _load_local_fano_core()
     config = LocalFanoConfig(
-        anchor_ndvi_threshold = 0.4,
-        fine_scale_m = 60.0,
-        coarse_scale_m = 120.0,
-        smooth_scale_m = 60.0,
+        anchor_ndvi_threshold=0.4,
+        fine_scale_m=60.0,
+        coarse_scale_m=120.0,
+        smooth_scale_m=60.0,
     )
     lst = _spatial_raster(
         np.array(
@@ -111,14 +114,14 @@ def test_tcold_fano_local_xr_falls_back_without_anchor_pixels():
                 [310.0, 311.0, 312.0, 313.0],
                 [309.0, 310.0, 311.0, 312.0],
             ],
-            dtype = float,
+            dtype=float,
         ),
         "lst",
     )
     ndvi = _spatial_raster(np.full((4, 4), 0.2, dtype=float), "ndvi")
     dt = _spatial_raster(np.full((4, 4), 12.0, dtype=float), "dt")
 
-    tcold = tcold_fano_local_xr(lst, ndvi, dt, config = config)
+    tcold = tcold_fano_local_xr(lst, ndvi, dt, config=config)
     etf = et_fraction_xr(lst, tcold, dt)
 
     assert tcold.shape == lst.shape
