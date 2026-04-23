@@ -64,6 +64,32 @@ def _load_local_fano_core():
     return LocalFanoConfig, tcold_fano_local_xr
 
 
+def test_tcold_fano_simple_xr_preserves_plain_array_compatibility():
+    from pysweb.ssebop.core import LocalFanoConfig, tcold_fano_simple_xr
+
+    config = LocalFanoConfig(dt_coeff=0.2, high_ndvi_threshold=0.85)
+    lst = xr.DataArray(
+        np.array([[300.0, 301.0], [302.0, 303.0]], dtype=float),
+        dims=("y", "x"),
+        name="lst",
+    )
+    ndvi = xr.DataArray(
+        np.array([[0.2, 0.4], [0.6, 0.8]], dtype=float),
+        dims=("y", "x"),
+        name="ndvi",
+    )
+    dt = xr.DataArray(
+        np.full((2, 2), 10.0, dtype=float),
+        dims=("y", "x"),
+        name="dt",
+    )
+
+    result = tcold_fano_simple_xr(lst, ndvi, dt, config=config)
+
+    expected = lst - (config.dt_coeff * dt * (config.high_ndvi_threshold - ndvi) * 10.0)
+    xr.testing.assert_equal(result, expected)
+
+
 def test_ssebop_au_config_preserves_legacy_ndvi_alias():
     config = SsebopAuConfig(anchor_ndvi_threshold=0.45)
 

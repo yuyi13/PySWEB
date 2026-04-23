@@ -483,10 +483,10 @@ def process_landsat_scene(
     apply_water_mask: bool,
     water_mask: Optional[xr.DataArray],
     dt_clim: xr.DataArray,
-    tcold_config: LocalFanoConfig,
     template_crs: Optional[CRS],
     etf_dir: str,
     ndvi_dir: str,
+    tcold_config: LocalFanoConfig | None = None,
 ) -> Tuple[np.datetime64, str, str]:
     date_str = parse_date_from_filename(tif_path)
     doy = datetime.fromisoformat(date_str).timetuple().tm_yday
@@ -510,6 +510,8 @@ def process_landsat_scene(
         ndvi = ndvi.where(water_mask == 0)
 
     dt = reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear")
+    if tcold_config is None:
+        tcold_config = LocalFanoConfig()
     tcold = tcold_fano_local_xr(lst, ndvi, dt, config=tcold_config)
     etf = et_fraction_xr(lst, tcold, dt).rename("etf")
     ts = np.datetime64(date_str, "ns")

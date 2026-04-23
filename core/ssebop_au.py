@@ -22,7 +22,6 @@ from pysweb.ssebop.core import (
     daily_et_from_etf,
     dt_fao56_xr,
     et_fraction_xr,
-    tcold_fano_simple_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
 from pysweb.ssebop.landcover import (

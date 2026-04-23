@@ -193,6 +193,26 @@ def et_fraction_xr(
     return etf.clip(0.0, clamp_max)
 
 
+def _tcold_fano_same_pixel_xr(
+    lst_k: xr.DataArray,
+    ndvi: xr.DataArray,
+    dt_k: xr.DataArray,
+    config: TcoldConfig | None = None,
+) -> xr.DataArray:
+    dt_coeff = _config_value(config, "dt_coeff", 0.125)
+    high_ndvi_threshold = _config_value(config, "high_ndvi_threshold", 0.9)
+    return lst_k - (dt_coeff * dt_k * (high_ndvi_threshold - ndvi) * 10.0)
+
+
+def _supports_local_fano(*rasters: xr.DataArray) -> bool:
+    for raster in rasters:
+        if raster.ndim != 2 or set(raster.dims) != {"y", "x"}:
+            return False
+        if raster.rio.crs is None or not raster.rio.crs.is_projected:
+            return False
+    return True
+
+
 def tcold_fano_simple_xr(
     lst_k: xr.DataArray,
     ndvi: xr.DataArray,
@@ -200,6 +220,8 @@ def tcold_fano_simple_xr(
     config: TcoldConfig | None = None,
 ) -> xr.DataArray:
     """Compatibility wrapper over the multiscale local FANO cold-boundary builder."""
+    if not _supports_local_fano(lst_k, ndvi, dt_k):
+        return _tcold_fano_same_pixel_xr(lst_k, ndvi, dt_k, config=config)
     return tcold_fano_local_xr(lst_k, ndvi, dt_k, config=config)
 
 
@@ -214,8 +236,6 @@ def tcold_fano_local_xr(
     _validate_local_fano_raster(ndvi, "ndvi")
     _validate_local_fano_raster(dt_k, "dt_k")
 
-    dt_coeff = _config_value(config, "dt_coeff", 0.125)
-    high_ndvi_threshold = _config_value(config, "high_ndvi_threshold", 0.9)
     anchor_ndvi_threshold = _config_value(
         config,
         "anchor_ndvi_threshold",
@@ -226,7 +246,7 @@ def tcold_fano_local_xr(
     smooth_scale_m = _config_value(config, "smooth_scale_m", fine_scale_m)
 
     valid = np.isfinite(lst_k) & np.isfinite(ndvi) & np.isfinite(dt_k)
-    tc_fine = lst_k - (dt_coeff * dt_k * (high_ndvi_threshold - ndvi) * 10.0)
+    tc_fine = _tcold_fano_same_pixel_xr(lst_k, ndvi, dt_k, config=config)
 
     fine_y, fine_x = _window_from_scale(lst_k, fine_scale_m)
     coarse_y, coarse_x = _window_from_scale(lst_k, coarse_scale_m)
