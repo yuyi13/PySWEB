@@ -4,7 +4,7 @@ Script: test_core.py
 Objective: Verify extracted SSEBop package helpers preserve expected ET fraction, climatology, landcover, grid, and compatibility-shim behavior.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-23
 Inputs: In-memory xarray arrays, pandas timestamps, and temporary NetCDF files.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_core.py -q
@@ -27,10 +27,12 @@ if str(CORE_DIR) not in sys.path:
 
 from core.ssebop_au import open_silo_et_short_crop, open_silo_variable
 from pysweb.ssebop.core import (
+    LocalFanoConfig,
     build_doy_climatology,
     compute_dt_daily,
     daily_et_from_etf,
     et_fraction_xr,
+    tcold_fano_local_xr,
 )
 from pysweb.ssebop.grid import reproject_match
 from pysweb.ssebop.landcover import worldcover_masks
@@ -44,6 +46,85 @@ def test_et_fraction_xr_clamps_and_masks():
     result = et_fraction_xr(lst, tcold, dt, clamp_max=1.0, mask_max=2.0)
 
     np.testing.assert_allclose(result.values, [[0.0]])
+
+
+def _spatial_raster(values: np.ndarray, name: str) -> xr.DataArray:
+    rows, cols = values.shape
+    x = np.arange(cols, dtype=float) * 30.0 + 15.0
+    y = np.arange(rows, dtype=float)[::-1] * 30.0 + 15.0
+    data = xr.DataArray(
+        values,
+        coords = {"y": y, "x": x},
+        dims = ("y", "x"),
+        name = name,
+    )
+    data = data.rio.write_crs("EPSG:32755")
+    data = data.rio.write_transform(
+        Affine.translation(0.0, rows * 30.0) * Affine.scale(30.0, -30.0)
+    )
+    return data
+
+
+def test_tcold_fano_local_xr_preserves_lst_sensitivity():
+    config = LocalFanoConfig(
+        anchor_ndvi_threshold = 0.4,
+        fine_scale_m = 60.0,
+        coarse_scale_m = 120.0,
+        smooth_scale_m = 60.0,
+    )
+    lst = _spatial_raster(
+        np.array(
+            [
+                [300.0, 302.0, 304.0, 306.0],
+                [301.0, 303.0, 305.0, 307.0],
+                [302.0, 304.0, 306.0, 308.0],
+                [303.0, 305.0, 307.0, 309.0],
+            ],
+            dtype = float,
+        ),
+        "lst",
+    )
+    ndvi = _spatial_raster(np.full((4, 4), 0.6, dtype=float), "ndvi")
+    dt = _spatial_raster(np.full((4, 4), 10.0, dtype=float), "dt")
+
+    tcold = tcold_fano_local_xr(lst, ndvi, dt, config = config)
+    etf = et_fraction_xr(lst, tcold, dt)
+    collapsed = np.clip(1.25 * ndvi.values - 0.125, 0.0, 1.0)
+
+    assert np.isfinite(tcold.values).all()
+    assert etf.values[0, 0] > etf.values[-1, -1]
+    assert not np.allclose(etf.values, collapsed)
+
+
+def test_tcold_fano_local_xr_falls_back_without_anchor_pixels():
+    config = LocalFanoConfig(
+        anchor_ndvi_threshold = 0.4,
+        fine_scale_m = 60.0,
+        coarse_scale_m = 120.0,
+        smooth_scale_m = 60.0,
+    )
+    lst = _spatial_raster(
+        np.array(
+            [
+                [312.0, 313.0, 314.0, 315.0],
+                [311.0, 312.0, 313.0, 314.0],
+                [310.0, 311.0, 312.0, 313.0],
+                [309.0, 310.0, 311.0, 312.0],
+            ],
+            dtype = float,
+        ),
+        "lst",
+    )
+    ndvi = _spatial_raster(np.full((4, 4), 0.2, dtype=float), "ndvi")
+    dt = _spatial_raster(np.full((4, 4), 12.0, dtype=float), "dt")
+
+    tcold = tcold_fano_local_xr(lst, ndvi, dt, config = config)
+    etf = et_fraction_xr(lst, tcold, dt)
+
+    assert tcold.shape == lst.shape
+    assert etf.shape == lst.shape
+    assert np.isfinite(tcold.values).all()
+    assert np.isfinite(etf.values).all()
 
 
 def test_build_doy_climatology_groups_by_dayofyear():
