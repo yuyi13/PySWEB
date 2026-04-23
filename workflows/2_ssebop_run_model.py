@@ -4,7 +4,7 @@ Script: 2_ssebop_run_model.py
 Objective: Provide a thin CLI wrapper around the package-owned SSEBop run API.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-17
+Last updated: 2026-04-23
 Inputs: YAML config/CLI options, Landsat GeoTIFFs, meteorology NetCDF files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: python workflows/2_ssebop_run_model.py --help
@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gapfill-etf", action="store_true")
     parser.add_argument("--gapfill-window-days", type=int, default=None)
     parser.add_argument("--gapfill-min-samples", type=int, default=5)
+    parser.add_argument("--tcold-dt-coeff", type=float, default=0.125)
+    parser.add_argument("--tcold-high-ndvi-threshold", type=float, default=0.9)
+    parser.add_argument("--tcold-anchor-ndvi-threshold", type=float, default=0.4)
+    parser.add_argument("--tcold-fine-scale-m", type=float, default=240.0)
+    parser.add_argument("--tcold-coarse-scale-m", type=float, default=4800.0)
+    parser.add_argument("--tcold-smooth-scale-m", type=float, default=240.0)
     parser.add_argument("--workers", type=int, default=1)
     return parser
 

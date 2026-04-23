@@ -4,7 +4,7 @@ Script: test_2_ssebop_run_model.py
 Objective: Verify meteorology path resolution and workflow bootstrap behavior for the SSEBop runner.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-04-17
+Last updated: 2026-04-23
 Inputs: Temporary paths, helper-module imports, and workflow CLI invocations.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_2_ssebop_run_model.py
@@ -158,6 +158,19 @@ def test_workflow_help_includes_met_dir_and_bootstraps_project_root(monkeypatch,
     assert "meteorology" in captured.out.lower()
 
 
+def test_workflow_help_includes_tcold_fano_options(monkeypatch, capsys):
+    workflow_module = _load_workflow_module(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["2_ssebop_run_model.py", "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        workflow_module.main()
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "--tcold-anchor-ndvi-threshold" in captured.out
+    assert "--tcold-coarse-scale-m" in captured.out
+
+
 def test_workflow_main_forwards_parsed_args_to_package_run(monkeypatch):
     workflow_module = _load_workflow_module(monkeypatch)
     recorded = {}
@@ -194,3 +207,51 @@ def test_workflow_main_forwards_parsed_args_to_package_run(monkeypatch):
     assert recorded["dem"] == "/tmp/dem.tif"
     assert recorded["output_dir"] == "/tmp/out"
     assert recorded["workers"] == 3
+
+
+def test_workflow_main_forwards_tcold_fano_args(monkeypatch):
+    workflow_module = _load_workflow_module(monkeypatch)
+    recorded = {}
+
+    def fake_run_ssebop_workflow(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setattr(workflow_module, "run_ssebop_workflow", fake_run_ssebop_workflow)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "2_ssebop_run_model.py",
+            "--date-range",
+            "2024-01-01 to 2024-01-03",
+            "--landsat-dir",
+            "/tmp/landsat",
+            "--met-dir",
+            "/tmp/met",
+            "--dem",
+            "/tmp/dem.tif",
+            "--output-dir",
+            "/tmp/out",
+            "--tcold-dt-coeff",
+            "0.15",
+            "--tcold-high-ndvi-threshold",
+            "0.85",
+            "--tcold-anchor-ndvi-threshold",
+            "0.35",
+            "--tcold-fine-scale-m",
+            "240",
+            "--tcold-coarse-scale-m",
+            "4800",
+            "--tcold-smooth-scale-m",
+            "240",
+        ],
+    )
+
+    workflow_module.main()
+
+    assert recorded["tcold_dt_coeff"] == 0.15
+    assert recorded["tcold_high_ndvi_threshold"] == 0.85
+    assert recorded["tcold_anchor_ndvi_threshold"] == 0.35
+    assert recorded["tcold_fine_scale_m"] == 240.0
+    assert recorded["tcold_coarse_scale_m"] == 4800.0
+    assert recorded["tcold_smooth_scale_m"] == 240.0

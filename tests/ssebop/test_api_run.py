@@ -4,7 +4,7 @@ Script: test_api_run.py
 Objective: Verify the SSEBop package run API validates incomplete calls while forwarding supported workflow inputs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-04-23
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_run.py
@@ -126,6 +126,41 @@ def test_ssebop_run_forwards_explicit_direct_kwargs_intact(monkeypatch):
         "ea": "/tmp/ea.nc",
         "workers": 2,
     }
+
+
+def test_ssebop_run_forwards_tcold_fano_kwargs_intact(monkeypatch):
+    recorded = {}
+
+    def fake_run_ssebop_workflow(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setattr(ssebop_api, "run_ssebop_workflow", fake_run_ssebop_workflow)
+
+    run(
+        date_range="2024-01-01 to 2024-01-03",
+        landsat_dir="/tmp/landsat",
+        dem="/tmp/dem.tif",
+        output_dir="/tmp/out",
+        et_short_crop="/tmp/eto.nc",
+        tmax="/tmp/tmax.nc",
+        tmin="/tmp/tmin.nc",
+        rs="/tmp/rs.nc",
+        ea="/tmp/ea.nc",
+        tcold_dt_coeff=0.15,
+        tcold_high_ndvi_threshold=0.85,
+        tcold_anchor_ndvi_threshold=0.35,
+        tcold_fine_scale_m=240.0,
+        tcold_coarse_scale_m=4800.0,
+        tcold_smooth_scale_m=240.0,
+        workers=2,
+    )
+
+    assert recorded["tcold_dt_coeff"] == 0.15
+    assert recorded["tcold_high_ndvi_threshold"] == 0.85
+    assert recorded["tcold_anchor_ndvi_threshold"] == 0.35
+    assert recorded["tcold_fine_scale_m"] == 240.0
+    assert recorded["tcold_coarse_scale_m"] == 4800.0
+    assert recorded["tcold_smooth_scale_m"] == 240.0
 
 
 def test_open_meteorology_da_prefers_field_defaults_for_custom_files(tmp_path: Path):

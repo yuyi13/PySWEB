@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-20
+Last updated: 2026-04-23
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: Imported as `pysweb.ssebop.api`
@@ -34,10 +34,11 @@ from pysweb.met.era5land import download as era5land_download
 from pysweb.met.era5land import stack as era5land_stack
 from pysweb.met.paths import infer_met_var_from_path, resolve_met_input_paths
 from pysweb.ssebop.core import (
+    LocalFanoConfig,
     build_doy_climatology,
     compute_dt_daily,
     et_fraction_xr,
-    tcold_fano_simple_xr,
+    tcold_fano_local_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
 from pysweb.ssebop import landsat
@@ -466,6 +467,7 @@ def _process_landsat_scene_worker(tif_path: str) -> Tuple[np.datetime64, str, st
         apply_water_mask = bool(_SCENE_WORKER_CONTEXT["apply_water_mask"]),
         water_mask = _SCENE_WORKER_CONTEXT["water_mask"],  # type: ignore[arg-type]
         dt_clim = _SCENE_WORKER_CONTEXT["dt_clim"],  # type: ignore[arg-type]
+        tcold_config = _SCENE_WORKER_CONTEXT["tcold_config"],  # type: ignore[arg-type]
         template_crs = _SCENE_WORKER_CONTEXT["template_crs"],  # type: ignore[arg-type]
         etf_dir = str(_SCENE_WORKER_CONTEXT["etf_dir"]),
         ndvi_dir = str(_SCENE_WORKER_CONTEXT["ndvi_dir"]),
@@ -481,6 +483,7 @@ def process_landsat_scene(
     apply_water_mask: bool,
     water_mask: Optional[xr.DataArray],
     dt_clim: xr.DataArray,
+    tcold_config: LocalFanoConfig,
     template_crs: Optional[CRS],
     etf_dir: str,
     ndvi_dir: str,
@@ -507,7 +510,7 @@ def process_landsat_scene(
         ndvi = ndvi.where(water_mask == 0)
 
     dt = reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear")
-    tcold = tcold_fano_simple_xr(lst, ndvi, dt)
+    tcold = tcold_fano_local_xr(lst, ndvi, dt, config=tcold_config)
     etf = et_fraction_xr(lst, tcold, dt).rename("etf")
     ts = np.datetime64(date_str, "ns")
     etf = etf.assign_coords(time=ts).expand_dims("time")
@@ -613,7 +616,26 @@ def run_ssebop_workflow(
     gapfill_etf = bool(_cfg_value(cfg, args, "gapfill_etf", default=False))
     gapfill_window_days = _cfg_value(cfg, args, "gapfill_window_days")
     gapfill_min_samples = int(_cfg_value(cfg, args, "gapfill_min_samples", default=5))
+    tcold_dt_coeff = float(_cfg_value(cfg, args, "tcold_dt_coeff", default=0.125))
+    tcold_high_ndvi_threshold = float(
+        _cfg_value(cfg, args, "tcold_high_ndvi_threshold", default=0.9)
+    )
+    tcold_anchor_ndvi_threshold = float(
+        _cfg_value(cfg, args, "tcold_anchor_ndvi_threshold", default=0.4)
+    )
+    tcold_fine_scale_m = float(_cfg_value(cfg, args, "tcold_fine_scale_m", default=240.0))
+    tcold_coarse_scale_m = float(_cfg_value(cfg, args, "tcold_coarse_scale_m", default=4800.0))
+    tcold_smooth_scale_m = float(_cfg_value(cfg, args, "tcold_smooth_scale_m", default=240.0))
     workers = int(_cfg_value(cfg, args, "workers", default=1))
+
+    tcold_config = LocalFanoConfig(
+        dt_coeff=tcold_dt_coeff,
+        high_ndvi_threshold=tcold_high_ndvi_threshold,
+        anchor_ndvi_threshold=tcold_anchor_ndvi_threshold,
+        fine_scale_m=tcold_fine_scale_m,
+        coarse_scale_m=tcold_coarse_scale_m,
+        smooth_scale_m=tcold_smooth_scale_m,
+    )
 
     if workers < 1:
         raise ValueError("workers must be >= 1")
@@ -742,6 +764,7 @@ def run_ssebop_workflow(
                     apply_water_mask = apply_water_mask,
                     water_mask = water_mask,
                     dt_clim = dt_clim,
+                    tcold_config = tcold_config,
                     template_crs = template_crs,
                     etf_dir = etf_dir,
                     ndvi_dir = ndvi_dir,
@@ -756,6 +779,7 @@ def run_ssebop_workflow(
             "apply_water_mask": apply_water_mask,
             "water_mask": water_mask,
             "dt_clim": dt_clim,
+            "tcold_config": tcold_config,
             "template_crs": template_crs,
             "etf_dir": etf_dir,
             "ndvi_dir": ndvi_dir,
