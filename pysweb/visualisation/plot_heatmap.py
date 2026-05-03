@@ -285,7 +285,7 @@ def _default_title(args: argparse.Namespace) -> str:
     return "SWEB layer heatmap"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot SWEB layer heatmaps with optional SSEBop panel (point mode by default)."
     )
@@ -336,7 +336,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=300, help="Figure DPI.")
     parser.add_argument("--show", action="store_true", help="Display plot interactively after saving.")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.run_subdir and not args.sweb_path:
         parser.error("Provide --run-subdir or --sweb-path.")
@@ -356,8 +356,8 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main():
-    args = parse_args()
+def main(argv: Optional[Sequence[str]] = None):
+    args = parse_args(argv)
     numpy = _require_numpy()
     pyplot, _ = _require_matplotlib()
     extract_lat = None if args.domain_mean else args.lat

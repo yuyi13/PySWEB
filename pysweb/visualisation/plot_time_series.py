@@ -435,7 +435,7 @@ def _build_title(args: argparse.Namespace) -> str:
     return base
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot time series from SSEBop and SWEB NetCDF outputs.")
     parser.add_argument("--run-subdir", help="Run subdirectory under default output roots.")
 
@@ -463,7 +463,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=300, help="Figure DPI.")
     parser.add_argument("--show", action="store_true", help="Display plot interactively after saving.")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.run_subdir and not args.ssebop_path and not args.sweb_path:
         parser.error("Provide --run-subdir or at least one of --ssebop-path / --sweb-path.")
     if (args.lat is None) ^ (args.lon is None):
@@ -473,8 +473,8 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main():
-    args = parse_args()
+def main(argv: Optional[Sequence[str]] = None):
+    args = parse_args(argv)
 
     ssebop_path = _resolve_product_path(
         explicit_path=args.ssebop_path,

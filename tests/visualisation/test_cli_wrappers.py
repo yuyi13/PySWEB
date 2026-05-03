@@ -60,6 +60,38 @@ def test_plot_font_configuration_registers_user_font_path(tmp_path):
     assert FakePyplot.rcParams["font.family"] == "Arial"
 
 
+def test_time_series_parse_args_accepts_explicit_argv(tmp_path):
+    module = import_module("pysweb.visualisation.plot_time_series")
+    output = tmp_path / "ts.png"
+
+    args = module.parse_args([
+        "--ssebop-path",
+        str(tmp_path / "input.nc"),
+        "--output",
+        str(output),
+    ])
+
+    assert args.ssebop_path == str(tmp_path / "input.nc")
+    assert args.output == str(output)
+
+
+def test_heatmap_parse_args_accepts_explicit_argv(tmp_path):
+    module = import_module("pysweb.visualisation.plot_heatmap")
+    output = tmp_path / "heatmap.png"
+
+    args = module.parse_args([
+        "--sweb-path",
+        str(tmp_path / "input.nc"),
+        "--domain-mean",
+        "--output",
+        str(output),
+    ])
+
+    assert args.sweb_path == str(tmp_path / "input.nc")
+    assert args.domain_mean is True
+    assert args.output == str(output)
+
+
 @pytest.mark.parametrize(
     ("wrapper_name", "wrapper_path", "package_module_name"),
     [
