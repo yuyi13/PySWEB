@@ -4,7 +4,7 @@ Script: test_docs_and_notebooks.py
 Objective: Verify the run notebook and README files document the canonical package-backed notebook workflow.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-05-02
+Last updated: 2026-05-03
 Inputs: Repository README files and the notebooks/01_run_pysweb.ipynb notebook.
 Outputs: Pytest assertions.
 Usage: python -m pytest tests/package/test_docs_and_notebooks.py -q
@@ -90,6 +90,8 @@ def test_readmes_point_to_canonical_package_modules():
     assert "pysweb.soil" in readme_text
     assert "pysweb.visualisation" in readme_text
     assert "pysweb.visualisation" in notebooks_readme_text
+    assert "workflows/6_plot_results.py" in readme_text
+    assert "workflows/6_plot_results.py" in notebooks_readme_text
 
 
 def test_readmes_document_explicit_gee_project_and_prepared_dem_contract():

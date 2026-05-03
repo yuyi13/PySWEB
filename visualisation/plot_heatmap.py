@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Script: plot_heatmap.py
-Objective: Provide a legacy CLI wrapper for the package heatmap plotting entrypoint.
+Objective: Provide a deprecated compatibility wrapper for the package heatmap plotting entrypoint.
 Author: Yi Yu
 Created: 2026-02-20
-Last updated: 2026-04-19
+Last updated: 2026-05-03
 Inputs: CLI arguments forwarded to `pysweb.visualisation.plot_heatmap`.
 Outputs: Delegated plotting side effects from the package entrypoint.
-Usage: python visualisation/plot_heatmap.py --help
+Usage: python visualisation/plot_heatmap.py --help; prefer python workflows/6_plot_results.py heatmap --help
 Dependencies: pysweb.visualisation.plot_heatmap
 """
 import os

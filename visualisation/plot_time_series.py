@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Script: plot_time_series.py
-Objective: Provide a legacy CLI wrapper for the package time-series plotting entrypoint.
+Objective: Provide a deprecated compatibility wrapper for the package time-series plotting entrypoint.
 Author: Yi Yu
 Created: 2026-02-20
-Last updated: 2026-04-19
+Last updated: 2026-05-03
 Inputs: CLI arguments forwarded to `pysweb.visualisation.plot_time_series`.
 Outputs: Delegated plotting side effects from the package entrypoint.
-Usage: python visualisation/plot_time_series.py --help
+Usage: python visualisation/plot_time_series.py --help; prefer python workflows/6_plot_results.py time-series --help
 Dependencies: pysweb.visualisation.plot_time_series
 """
 import os

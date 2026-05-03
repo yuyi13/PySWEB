@@ -42,6 +42,7 @@ PySWEB/
 │   ├── 3_sweb_preprocess_inputs.py        # Thin CLI wrapper over the package-backed SWB preprocess workflow
 │   ├── 4_sweb_calib_domain.py             # Thin CLI wrapper over the package-backed SWB calibration workflow
 │   ├── 5_sweb_run_model.py                # Thin CLI wrapper over the package-backed SWB run workflow
+│   ├── 6_plot_results.py                  # Optional post-run plotting wrapper over pysweb.visualisation
 │   ├── ssebop_runner_landsat.sh           # Convenience bash wrapper for Steps 1-2
 │   └── sweb_domain_runner.sh              # Convenience bash wrapper for Steps 3-5
 │
@@ -78,6 +79,7 @@ Runtime outputs are written under the unified prepared-input layout rooted at `1
 3. `workflows/3_sweb_preprocess_inputs.py`: thin wrapper over `pysweb.swb.preprocess`; it aligns ERA5-Land precipitation, SSEBop `E/T/ET`, OpenLandMap soil properties, and optional `gssm1km` reference SSM to one grid.
 4. `workflows/4_sweb_calib_domain.py`: thin wrapper over `pysweb.swb.calibrate`; it calibrates domain-wide SWEB parameters (`diff_factor`, `sm_max_factor`, `sm_min_factor`, `root_beta`).
 5. `workflows/5_sweb_run_model.py`: thin CLI wrapper over the package-backed SWB run workflow.
+6. `workflows/6_plot_results.py`: optional post-processing wrapper over `pysweb.visualisation` for heatmaps and time-series plots.
 
 The standalone `1b_download_era5land_daily.py` and `1c_stack_era5land_daily.py` utilities are still available, but they are no longer the primary first step for the package-backed SSEBop path.
 The wrapper handoff follows the same contract: `ssebop_runner_landsat.sh` prepares meteorology under `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, and `sweb_domain_runner.sh` consumes that location by default. `sweb_domain_runner.sh` falls back to `1_era5land_stacks/<run_subdir>` only for legacy standalone `1c_stack_era5land_daily.py` usage.
@@ -115,9 +117,18 @@ bash workflows/sweb_domain_runner.sh <run_subdir>
 
 In that wrapper sequence, `GEE_PROJECT` must be provided when the SSEBop wrapper runs Step 1. The SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack` by default, so the handoff works without manually copying ERA5-Land stacks. If you still run the standalone ERA5-Land stack workflow, the SWEB wrapper can fall back to `1_era5land_stacks/<run_subdir>`.
 
-For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the canonical modules under `pysweb.visualisation`. The legacy `visualisation/*.py` files are compatibility shims around those package entrypoints:
+For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the Step 6 post-processing wrapper or the canonical modules under `pysweb.visualisation`. The legacy `visualisation/*.py` files are compatibility shims around those package entrypoints:
 
 ```bash
+python workflows/6_plot_results.py time-series \
+  --run-subdir <run_subdir> \
+  --output /g/data/ym05/sweb_model/figures/<run_subdir>_timeseries.png
+
+python workflows/6_plot_results.py heatmap \
+  --run-subdir <run_subdir> \
+  --domain-mean \
+  --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap_domain.png
+
 python -m pysweb.visualisation.plot_time_series \
   --run-subdir <run_subdir> \
   --output /g/data/ym05/sweb_model/figures/<run_subdir>_timeseries.png
@@ -146,7 +157,7 @@ The meteorology path is now ERA5-Land-based and globally usable. SWB soil textur
 - From SWEB preprocess (`3_sweb_preprocess_inputs.py`): `rain_daily_*.nc`, `effective_precip_daily_*.nc`, `et_daily_*.nc`, `t_daily_*.nc`, `soil_*.nc`, and optionally `reference_ssm_daily_*.nc`. When invoked via `sweb_domain_runner.sh`, precipitation is sourced from the unified prepared stack first and only falls back to the legacy stack directory if needed.
 - From calibration (`4_sweb_calib_domain.py`): CSV with calibrated domain parameters.
 - From SWEB run (`5_sweb_run_model.py`): consolidated RZSM NetCDF, optionally split into burn-in and post-burn products by `sweb_domain_runner.sh`.
-- From plotting modules (`pysweb.visualisation.plot_time_series`, `pysweb.visualisation.plot_heatmap`):
+- From the Step 6 plotting workflow (`workflows/6_plot_results.py`) and canonical plotting modules (`pysweb.visualisation.plot_time_series`, `pysweb.visualisation.plot_heatmap`):
   PNG plots and optional extracted CSV tables.
 
 ## Requirements

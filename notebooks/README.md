@@ -71,7 +71,7 @@ At present:
 - `pysweb.swb.calibrate` is wired.
 - `pysweb.swb.run` is wired.
 
-So if you want a pure notebook-driven flow today, you can drive both SSEBop and SWB directly from `pysweb`, while still falling back to the workflow CLIs or shell wrappers when that is more convenient for path-heavy operational runs. For plotting-oriented notebooks and library imports, prefer `pysweb.visualisation`.
+So if you want a pure notebook-driven flow today, you can drive both SSEBop and SWB directly from `pysweb`, while still falling back to the workflow CLIs or shell wrappers when that is more convenient for path-heavy operational runs. For plotting-oriented notebooks and library imports, prefer `pysweb.visualisation`; for command-line post-processing, use `workflows/6_plot_results.py`.
 
 ### `gee_project` note
 The current package/workflow path requires an explicit Earth Engine project when Landsat, ERA5-Land, NASADEM, OpenLandMap, or reference SSM downloads are involved. Pass `gee_project` explicitly when using:
@@ -82,8 +82,8 @@ The current package/workflow path requires an explicit Earth Engine project when
 
 ## Current notebooks
 - `01_run_pysweb.ipynb`: Canonical run example showing package-backed SSEBop plus SWB preprocess/calibrate/run usage from a notebook with `import pysweb`.
-- `02_plot_heatmap.ipynb`: Heatmap plotting walkthrough using the plotting modules exposed through `pysweb.visualisation` (legacy `visualisation/plot_heatmap.py` wrapper still available).
-- `03_plot_time_series.ipynb`: SSEBop + SWEB time-series plotting walkthrough using the plotting modules exposed through `pysweb.visualisation` (legacy `visualisation/plot_time_series.py` wrapper still available).
+- `02_plot_heatmap.ipynb`: Step 6 heatmap plotting walkthrough using the plotting modules exposed through `pysweb.visualisation`.
+- `03_plot_time_series.ipynb`: Step 6 SSEBop + SWEB time-series plotting walkthrough using the plotting modules exposed through `pysweb.visualisation`.
 
 ## Planned notebooks
 - More complete end-to-end and analysis examples built on the package-backed SWB APIs.
