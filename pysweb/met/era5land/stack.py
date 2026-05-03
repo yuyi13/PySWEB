@@ -1,4 +1,15 @@
-"""ERA5-Land daily stack assembly helpers for pysweb."""
+#!/usr/bin/env python3
+"""
+Script: stack.py
+Objective: Stack ERA5-Land daily GeoTIFF downloads into NetCDF meteorology products.
+Author: Yi Yu
+Created: 2026-04-17
+Last updated: 2026-05-01
+Inputs: ERA5-Land daily GeoTIFFs, DEM GeoTIFF, date range, and output directory.
+Outputs: Daily NetCDF files for precipitation, air temperature, radiation, vapor pressure, and short-reference ET.
+Usage: python -m pysweb.met.era5land.stack --help
+Dependencies: argparse, numpy, rasterio, xarray, pysweb
+"""
 from __future__ import annotations
 
 import argparse
@@ -83,7 +94,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def _read_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, rasterio.Affine, str]:
     with rasterio.open(path) as src:
-        array = src.read(1, masked=True).filled(np.nan).astype(float)
+        array = src.read(1, masked=True).astype(float).filled(np.nan)
         transform = src.transform
         crs = src.crs.to_string() if src.crs is not None else "EPSG:4326"
         rows = np.arange(src.height)
@@ -103,7 +114,7 @@ def _read_daily_file(path: Path) -> dict[str, np.ndarray]:
 
         data: dict[str, np.ndarray] = {}
         for band_name in REQUIRED_BANDS:
-            data[band_name] = src.read(band_lookup[band_name], masked=True).filled(np.nan).astype(float)
+            data[band_name] = src.read(band_lookup[band_name], masked=True).astype(float).filled(np.nan)
         return data
 
 

@@ -4,7 +4,7 @@ Script: test_openlandmap.py
 Objective: Verify the OpenLandMap soil backend owns depth mapping, predictor loading, and hydraulic derivation behavior.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-05-02
 Inputs: Soil backend helpers, fake Earth Engine objects, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/soil/test_openlandmap.py -q
@@ -160,6 +160,55 @@ def test_process_soil_properties_from_openlandmap_returns_five_layers_with_expec
         assert da.shape == (5, 2, 2)
         np.testing.assert_allclose(da.coords["layer_depth"].values, openlandmap._build_layer_bottoms_mm())
         assert da.attrs["layer_bottoms_mm"] == openlandmap._build_layer_bottoms_mm().tolist()
+
+
+@pytest.mark.parametrize(
+    ("args", "default_raw_soc"),
+    [
+        (Namespace(dtype="float32"), 1.0),
+        (Namespace(dtype="float32", openlandmap_missing_soc_g_per_kg=15.0), 3.0),
+    ],
+)
+def test_process_soil_properties_fills_missing_soc_with_configured_default(args, default_raw_soc):
+    openlandmap = import_module("pysweb.soil.openlandmap")
+    band_names = np.array([band_name for band_name, _ in openlandmap.OPENLANDMAP_LAYER_SPECS], dtype=object)
+    coords = {
+        "band": band_names,
+        "lat": np.array([-35.05, -35.15], dtype=float),
+        "lon": np.array([148.05, 148.15], dtype=float),
+    }
+    soc_values = np.full((5, 2, 2), 10.0, dtype=np.float32)
+    soc_values[3:, 0, 1] = np.nan
+    soil_predictors = {
+        "clay": xr.DataArray(np.full((5, 2, 2), 30.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
+        "sand": xr.DataArray(np.full((5, 2, 2), 40.0, dtype=np.float32), dims=("band", "lat", "lon"), coords=coords),
+        "soc": xr.DataArray(soc_values, dims=("band", "lat", "lon"), coords=coords),
+    }
+    expected_soc_values = soc_values.copy()
+    expected_soc_values[3:, 0, 1] = default_raw_soc
+    expected_predictors = {
+        **soil_predictors,
+        "soc": xr.DataArray(expected_soc_values, dims=("band", "lat", "lon"), coords=coords),
+    }
+
+    soil_arrays = openlandmap.process_soil_properties_from_openlandmap(
+        args,
+        _grid(),
+        soil_predictors,
+        reproject_to_template=_passthrough_reproject,
+    )
+    expected_arrays = openlandmap.process_soil_properties_from_openlandmap(
+        args,
+        _grid(),
+        expected_predictors,
+        reproject_to_template=_passthrough_reproject,
+    )
+
+    for name, da in soil_arrays.items():
+        np.testing.assert_allclose(
+            da.isel(layer=slice(3, None), lat=0, lon=1).values,
+            expected_arrays[name].isel(layer=slice(3, None), lat=0, lon=1).values,
+        )
 
 
 def test_load_soil_properties_returns_soil_outputs(monkeypatch):

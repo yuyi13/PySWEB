@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-23
+Last updated: 2026-05-01
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: Imported as `pysweb.ssebop.api`
@@ -39,6 +39,7 @@ from pysweb.ssebop.core import (
     compute_dt_daily,
     et_fraction_xr,
     tcold_fano_local_xr,
+    tcold_fano_simple_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
 from pysweb.ssebop import landsat
@@ -512,7 +513,7 @@ def process_landsat_scene(
     dt = reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear")
     if tcold_config is None:
         tcold_config = LocalFanoConfig()
-    tcold = tcold_fano_local_xr(lst, ndvi, dt, config=tcold_config)
+    tcold = tcold_fano_simple_xr(lst, ndvi, dt, config=tcold_config)
     etf = et_fraction_xr(lst, tcold, dt).rename("etf")
     ts = np.datetime64(date_str, "ns")
     etf = etf.assign_coords(time=ts).expand_dims("time")
@@ -526,11 +527,13 @@ def process_landsat_scene(
 
     out_etf = os.path.join(etf_dir, f"etf_{date_str}.tif")
     etf_single = etf.squeeze("time", drop=True)
+    etf_single.attrs["long_name"] = "ET fraction"
     etf_single.rio.write_crs(template_crs, inplace=True)
     etf_single.rio.to_raster(out_etf)
 
     out_ndvi = os.path.join(ndvi_dir, f"ndvi_{date_str}.tif")
     ndvi_single = ndvi_out.squeeze("time", drop=True)
+    ndvi_single.attrs["long_name"] = "NDVI"
     ndvi_single.rio.write_crs(template_crs, inplace=True)
     ndvi_single.rio.to_raster(out_ndvi)
 

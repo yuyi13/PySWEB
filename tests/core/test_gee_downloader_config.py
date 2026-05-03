@@ -4,7 +4,7 @@ Script: test_gee_downloader_config.py
 Objective: Verify GEEDownloader validates daily_strategy and selects daily composites correctly.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-04-16
+Last updated: 2026-05-01
 Inputs: Temporary YAML configs written during pytest execution.
 Outputs: Test assertions.
 Usage: pytest tests/core/test_gee_downloader_config.py
@@ -277,3 +277,15 @@ def test_composite_for_day_first_sorts_and_returns_first(tmp_path, monkeypatch, 
     assert ("sort", "system:time_start") in fake_collection.calls
     assert ("first",) in fake_collection.calls
     assert not any(call[0] == "reduce" for call in fake_collection.calls)
+
+
+def test_unique_dates_queries_end_date_inclusively(tmp_path, monkeypatch, gee_downloader_module):
+    downloader = gee_downloader_module.GEEDownloader(_write_config(tmp_path))
+    fake_collection = _FakeImageCollection([_FakeImage(["band_1"])])
+
+    monkeypatch.setattr(downloader, "_is_globalish_extent", lambda: True)
+    monkeypatch.setattr(gee_downloader_module.ee, "ImageCollection", lambda collection: fake_collection)
+
+    downloader._unique_dates(downloader.cfg["collection"])
+
+    assert ("filterDate", "2020-01-01", "2020-01-03") in fake_collection.calls

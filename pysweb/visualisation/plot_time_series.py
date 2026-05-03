@@ -4,7 +4,7 @@ Script: plot_time_series.py
 Objective: Extract and plot SSEBop and SWEB time series for point-based or domain-mean analysis.
 Author: Yi Yu
 Created: 2026-02-20
-Last updated: 2026-04-19
+Last updated: 2026-05-03
 Inputs: SSEBop/SWEB NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved time-series figure and optional CSV containing extracted values.
 Usage: python -m pysweb.visualisation.plot_time_series --help
@@ -27,8 +27,11 @@ try:
     import matplotlib.pyplot as plt
 except ModuleNotFoundError:
     plt = None
-else:
-    plt.rcParams["font.family"] = "Arial"
+
+try:
+    import matplotlib.font_manager as mpl_font_manager
+except ModuleNotFoundError:
+    mpl_font_manager = None
 
 try:
     import pandas as pd
@@ -45,6 +48,44 @@ DEFAULT_SWEB_ROOT = Path("/g/data/ym05/sweb_model/4_sweb_outputs")
 
 SSEBOP_FILE_PATTERN = "et_daily_ssebop*.nc"
 SWEB_FILE_PATTERN = "SWEB_RZSM*.nc"
+
+
+def _candidate_user_font_paths(font_name: str = "Arial") -> List[Path]:
+    home = Path.home()
+    filenames = [f"{font_name}.ttf", f"{font_name}.otf", f"{font_name.lower()}.ttf", f"{font_name.lower()}.otf"]
+    directories = [
+        home / ".local" / "share" / "fonts",
+        home / ".fonts",
+        home / "fonts",
+    ]
+    return [directory / filename for directory in directories for filename in filenames]
+
+
+def _configure_plot_font(
+    pyplot = None,
+    font_manager = None,
+    font_name: str = "Arial",
+    font_paths: Optional[Sequence[Path]] = None,
+) -> None:
+    pyplot = plt if pyplot is None else pyplot
+    font_manager = mpl_font_manager if font_manager is None else font_manager
+    if pyplot is None:
+        return
+
+    candidates = [Path(path).expanduser() for path in font_paths] if font_paths is not None else _candidate_user_font_paths(font_name)
+    if font_manager is not None:
+        for font_path in candidates:
+            if font_path.exists():
+                try:
+                    font_manager.fontManager.addfont(str(font_path))
+                except Exception:
+                    pass
+                else:
+                    break
+    pyplot.rcParams["font.family"] = font_name
+
+
+_configure_plot_font()
 
 
 def _require_pandas():

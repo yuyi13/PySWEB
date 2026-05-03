@@ -4,7 +4,7 @@ Script: plot_heatmap.py
 Objective: Plot SWEB layer heatmaps with an optional SSEBop forcing panel for a point or domain mean.
 Author: Yi Yu
 Created: 2026-02-20
-Last updated: 2026-04-19
+Last updated: 2026-05-03
 Inputs: SWEB/SSEBop NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved heatmap figure and optional CSV of extracted plotting data.
 Usage: python -m pysweb.visualisation.plot_heatmap --help
@@ -21,8 +21,6 @@ try:
     import matplotlib.pyplot as plt
 except ModuleNotFoundError:
     plt = None
-else:
-    plt.rcParams["font.family"] = "Arial"
 
 try:
     import numpy as np
@@ -50,10 +48,13 @@ from pysweb.visualisation.plot_time_series import (
     SSEBOP_FILE_PATTERN,
     SWEB_FILE_PATTERN,
     _format_var_label,
+    _configure_plot_font,
     _parse_timestamp,
     _resolve_product_path,
     extract_product_series,
 )
+
+_configure_plot_font(pyplot=plt)
 
 
 def _require_numpy():

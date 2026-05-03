@@ -4,7 +4,7 @@ Script: test_1c_stack_era5land_daily.py
 Objective: Verify the ERA5-Land daily stacking workflow writes the required NetCDF products from daily GeoTIFF inputs.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-04-16
+Last updated: 2026-05-01
 Inputs: Synthetic daily GeoTIFFs, DEM rasters, and temporary output directories.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_1c_stack_era5land_daily.py
@@ -74,6 +74,35 @@ def _write_dem(path: Path):
     }
     with rasterio.open(path, "w", **profile) as dst:
         dst.write(np.array([[180.0]], dtype=np.float32), 1)
+
+
+def _write_int16_dem(path: Path):
+    transform = from_origin(147.0, -34.5, 1.0, 1.0)
+    profile = {
+        "driver": "GTiff",
+        "height": 1,
+        "width": 2,
+        "count": 1,
+        "dtype": "int16",
+        "crs": "EPSG:4326",
+        "transform": transform,
+        "nodata": -32768,
+    }
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(np.array([[180, -32768]], dtype=np.int16), 1)
+
+
+def test_stack_reader_handles_int16_dem_nodata_as_nan(tmp_path):
+    from pysweb.met.era5land.stack import _read_grid
+
+    dem_path = tmp_path / "dem_int16.tif"
+    _write_int16_dem(dem_path)
+
+    dem_array, *_ = _read_grid(dem_path)
+
+    assert dem_array.dtype == float
+    assert dem_array[0, 0] == pytest.approx(180.0)
+    assert np.isnan(dem_array[0, 1])
 
 
 def test_workflow_writes_expected_daily_netcdfs(tmp_path):

@@ -435,6 +435,56 @@ def test_process_et_rejects_netcdf_without_time_coordinate(tmp_path: Path):
         process_et(args, grid, pd.date_range("2024-01-01", "2024-01-02", freq="D"))
 
 
+def test_process_et_from_netcdf_avoids_full_time_stack_load(monkeypatch, tmp_path: Path):
+    et_path = tmp_path / "et.nc"
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    values = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+    xr.Dataset(
+        {
+            "E": xr.DataArray(
+                values + 1.0,
+                dims=("time", "lat", "lon"),
+                coords={"time": dates, "lat": np.array([-35.0, -35.1]), "lon": np.array([148.0, 148.1])},
+            ),
+            "T": xr.DataArray(
+                values + 2.0,
+                dims=("time", "lat", "lon"),
+                coords={"time": dates, "lat": np.array([-35.0, -35.1]), "lon": np.array([148.0, 148.1])},
+            ),
+        }
+    ).to_netcdf(et_path)
+
+    args = _build_args(
+        {
+            "et_file": str(et_path),
+            "e_var": "E",
+            "et_var": "ET",
+            "t_var": "T",
+            "ndvi_var": "ndvi_interp",
+            "extent": None,
+            "workers": 1,
+            "dtype": "float32",
+            "lat_dim": "lat",
+            "lon_dim": "lon",
+        }
+    )
+    grid = _build_target_grid(_grid_args(extent=[148.0, -35.1, 148.1, -35.0], sm_res=0.1))
+    original_load = xr.DataArray.load
+
+    def guard_full_stack_load(self, *load_args, **load_kwargs):
+        if "time" in self.dims and self.sizes.get("time", 0) > 1:
+            raise AssertionError("full time-stack load should not be used for ET file components")
+        return original_load(self, *load_args, **load_kwargs)
+
+    monkeypatch.setattr(xr.DataArray, "load", guard_full_stack_load)
+    monkeypatch.setattr(preprocess_module, "_reproject_to_template", lambda da, grid, resampling=None: da)
+
+    result = process_et(args, grid, dates)
+
+    assert set(result) == {"e", "t", "et"}
+    np.testing.assert_allclose(result["et"].values, result["e"].values + result["t"].values)
+
+
 def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
     rain = _forcing_array(
         np.array([[[10.0]], [[11.0]]], dtype=np.float32),
@@ -577,6 +627,7 @@ def test_preprocess_inputs_delegates_soil_loading_to_soil_api(monkeypatch, tmp_p
 
     assert recorded["soil_source"] == "openlandmap"
     assert recorded["args"].soil_source == "openlandmap"
+    assert recorded["args"].openlandmap_missing_soc_g_per_kg == 5.0
     assert recorded["args"].extent == [148.0, -35.1, 148.1, -35.0]
     assert recorded["grid"].lat_dim == "lat"
     assert recorded["grid"].lon_dim == "lon"

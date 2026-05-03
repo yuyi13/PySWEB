@@ -4,7 +4,7 @@ Script: test_docs_and_notebooks.py
 Objective: Verify the run notebook and README files document the canonical package-backed notebook workflow.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-20
+Last updated: 2026-05-02
 Inputs: Repository README files and the notebooks/01_run_pysweb.ipynb notebook.
 Outputs: Pytest assertions.
 Usage: python -m pytest tests/package/test_docs_and_notebooks.py -q
@@ -47,6 +47,11 @@ def test_run_notebook_uses_package_backed_swb_calls():
     assert 'e_var = "E"' in code_text
     assert 'et_var = "ET"' in code_text
     assert 't_var = "T"' in code_text
+    assert "ERA5LAND_PRECIP_SOURCE = MET_STACK_DIR" in code_text
+    assert "SSEBOP_ET_SOURCE = SSEBOP_OUTPUT_DIR" in code_text
+    assert 'rain_var = "precipitation"' in code_text
+    assert "SWB_START_DATE" in code_text
+    assert "openlandmap_missing_soc_g_per_kg = 5.0" in code_text
 
     assert "SWB preprocess and calibration are still driven by" not in markdown_text
     assert "workflow-script-only" not in markdown_text
@@ -102,14 +107,27 @@ def test_readmes_document_explicit_gee_project_and_prepared_dem_contract():
 
 
 def test_plotting_notebooks_use_package_entrypoints():
-    heatmap_notebook_text = _read_text("notebooks/02_plot_heatmap.ipynb")
-    time_series_notebook_text = _read_text("notebooks/03_plot_time_series.ipynb")
+    heatmap_markdown_text, heatmap_code_text = _read_notebook_sections("notebooks/02_plot_heatmap.ipynb")
+    time_series_markdown_text, time_series_code_text = _read_notebook_sections("notebooks/03_plot_time_series.ipynb")
 
-    assert "pysweb.visualisation.plot_heatmap" in heatmap_notebook_text
-    assert "visualisation/plot_heatmap.py" not in heatmap_notebook_text
+    heatmap_text = f"{heatmap_markdown_text}\n{heatmap_code_text}"
+    time_series_text = f"{time_series_markdown_text}\n{time_series_code_text}"
 
-    assert "pysweb.visualisation.plot_time_series" in time_series_notebook_text
-    assert "visualisation/plot_time_series.py" not in time_series_notebook_text
+    assert "pysweb.visualisation.plot_heatmap" in heatmap_text
+    assert "visualisation/plot_heatmap.py" not in heatmap_text
+    assert 'PYSWEB_DIR = Path("/path/to/PySWEB")' in heatmap_code_text
+    assert "--sweb-path" in heatmap_code_text
+    assert "--ssebop-path" in heatmap_code_text
+    assert "/g/data/ym05/sweb_model/PySWEB" not in heatmap_text
+    assert "Boonaldoon" not in heatmap_text
+
+    assert "pysweb.visualisation.plot_time_series" in time_series_text
+    assert "visualisation/plot_time_series.py" not in time_series_text
+    assert 'PYSWEB_DIR = Path("/path/to/PySWEB")' in time_series_code_text
+    assert "--sweb-path" in time_series_code_text
+    assert "--ssebop-path" in time_series_code_text
+    assert "/g/data/ym05/sweb_model/PySWEB" not in time_series_text
+    assert "Boonaldoon" not in time_series_text
 
 
 def test_readme_drops_stale_wrapper_defaults_guidance():

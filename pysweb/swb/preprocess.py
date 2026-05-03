@@ -4,7 +4,7 @@ Script: preprocess.py
 Objective: Preprocess forcing, soil, and GSSM reference SSM inputs into aligned NetCDF files for SWB runs.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-05-02
 Inputs: Command-line arguments or keyword arguments describing date range, extent, forcing inputs, Earth Engine assets, and output location.
 Outputs: NetCDF forcing files, soil-property layers, and optional reference SSM products on a common grid.
 Usage: Imported as `pysweb.swb.preprocess` or run as a module entry point.
@@ -589,6 +589,7 @@ def _prepare_et_file_component(
     dtype: str,
 ) -> xr.DataArray:
     expected_dates = pd.date_range(start = start_date, end = end_date, freq = "D")
+    layers: List[xr.DataArray] = []
     with xr.open_dataset(path) as ds:
         if var_name not in ds:
             raise KeyError(f"Variable '{var_name}' not found in ET dataset: {path}")
@@ -596,22 +597,32 @@ def _prepare_et_file_component(
         if "time" not in da.coords:
             raise ValueError(f"ET variable '{var_name}' must include a time coordinate.")
         da = _require_daily_coverage(da, expected_dates, f"ET variable '{var_name}'")
-        if extent:
-            if da.rio.crs is not None:
-                da = _clip_to_extent(da, grid, extent)
-            else:
-                da = _subset_to_extent(da, lat_dim, lon_dim, extent)
-        da = da.load()
 
-    broadcast = _broadcast_single_pixel(da, grid)
-    if broadcast is not None:
-        da = broadcast
-    else:
-        da = _reproject_to_template(da, grid, resampling = Resampling.bilinear)
-    da = da.astype(dtype)
-    da.name = out_name
-    da.attrs.update({"long_name": long_name, "units": units})
-    return da
+        for time_idx in range(da.sizes["time"]):
+            daily = da.isel(time = time_idx)
+            daily_time = pd.Timestamp(daily.coords["time"].values).normalize()
+            if "time" in daily.coords and "time" not in daily.dims:
+                daily = daily.drop_vars("time")
+            if extent:
+                if daily.rio.crs is not None:
+                    daily = _clip_to_extent(daily, grid, extent)
+                else:
+                    daily = _subset_to_extent(daily, lat_dim, lon_dim, extent)
+            daily = daily.load()
+
+            broadcast = _broadcast_single_pixel(daily, grid)
+            if broadcast is not None:
+                daily = broadcast
+            else:
+                daily = _reproject_to_template(daily, grid, resampling = Resampling.bilinear)
+            daily = daily.astype(dtype)
+            daily = daily.expand_dims(time = [np.datetime64(daily_time)])
+            layers.append(daily)
+
+    result = xr.concat(layers, dim = "time")
+    result.name = out_name
+    result.attrs.update({"long_name": long_name, "units": units})
+    return result
 
 
 def _prepare_et_daily_layer(
@@ -800,49 +811,26 @@ def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Ti
 
         active_tasks = [task for task in tasks if task[1] != "ndvi" or has_ndvi]
         if args.workers > 1 and len(active_tasks) > 1:
-            effective_workers = min(args.workers, len(active_tasks))
             print(
-                f"ET file processing with process workers: requested={args.workers}, "
-                f"effective={effective_workers}, components={len(active_tasks)}",
+                "ET file processing uses sequential component reads to avoid "
+                "duplicating large NetCDF arrays across worker processes.",
                 flush = True,
             )
-            with ProcessPoolExecutor(max_workers = effective_workers, mp_context = _pool_context()) as executor:
-                future_to_name = {
-                    executor.submit(
-                        _prepare_et_file_component,
-                        path,
-                        var_name,
-                        out_name,
-                        long_name,
-                        units,
-                        dates[0],
-                        dates[-1],
-                        grid,
-                        extent,
-                        args.lat_dim,
-                        args.lon_dim,
-                        args.dtype,
-                    ): out_name
-                    for var_name, out_name, long_name, units in active_tasks
-                }
-                for future in as_completed(future_to_name):
-                    components[future_to_name[future]] = future.result()
-        else:
-            for var_name, out_name, long_name, units in active_tasks:
-                components[out_name] = _prepare_et_file_component(
-                    path = path,
-                    var_name = var_name,
-                    out_name = out_name,
-                    long_name = long_name,
-                    units = units,
-                    start_date = dates[0],
-                    end_date = dates[-1],
-                    grid = grid,
-                    extent = extent,
-                    lat_dim = args.lat_dim,
-                    lon_dim = args.lon_dim,
-                    dtype = args.dtype,
-                )
+        for var_name, out_name, long_name, units in active_tasks:
+            components[out_name] = _prepare_et_file_component(
+                path = path,
+                var_name = var_name,
+                out_name = out_name,
+                long_name = long_name,
+                units = units,
+                start_date = dates[0],
+                end_date = dates[-1],
+                grid = grid,
+                extent = extent,
+                lat_dim = args.lat_dim,
+                lon_dim = args.lon_dim,
+                dtype = args.dtype,
+            )
 
         if "e" in components:
             et = (components["e"] + components["t"]).astype(args.dtype)
@@ -1136,6 +1124,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Soil source backend. Supported values: openlandmap, mlcons, slga, custom. "
             "Implemented: openlandmap; placeholders: mlcons, slga, custom."
         ),
+    )
+    parser.add_argument(
+        "--openlandmap-missing-soc-g-per-kg",
+        type = float,
+        default = 5.0,
+        help = "Default SOC value in g/kg for masked OpenLandMap SOC pixels where texture predictors are valid.",
     )
     parser.add_argument("--reference-source", default = "gssm1km", help = "Reference SSM source. Only 'gssm1km' is supported.")
     parser.add_argument(

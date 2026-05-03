@@ -4,7 +4,7 @@ Script: gee_downloader.py
 Objective: Download and post-process Google Earth Engine composites used by SSEBop preprocessing workflows, including tiled fallback for oversized requests.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-20
+Last updated: 2026-05-01
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
 Usage: python core/gee_downloader.py <config.yaml>
@@ -434,7 +434,10 @@ class GEEDownloader:
 
     def _unique_dates(self, collection: str):
         start, end = self._date_range()
-        col = ee.ImageCollection(collection).filterDate(start, end)
+        end_exclusive = (
+            datetime.strptime(end, "%Y-%m-%d") + relativedelta(days=1)
+        ).strftime("%Y-%m-%d")
+        col = ee.ImageCollection(collection).filterDate(start, end_exclusive)
         if not self._is_globalish_extent():
             col = col.filterBounds(self._region())
         else:

@@ -4,17 +4,18 @@ Script: test_api_run.py
 Objective: Verify the SSEBop package run API validates incomplete calls while forwarding supported workflow inputs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-23
+Last updated: 2026-05-01
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_run.py
-Dependencies: numpy, pytest, xarray
+Dependencies: numpy, pytest, rioxarray, xarray
 """
 from pathlib import Path
 import sys
 
 import numpy as np
 import pytest
+import rioxarray  # noqa: F401
 import xarray as xr
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -183,3 +184,54 @@ def test_open_meteorology_da_prefers_field_defaults_for_custom_files(tmp_path: P
 
     assert custom_da.name == "tmax"
     assert silo_da.name == "max_temp"
+
+
+def test_process_landsat_scene_uses_nonprojected_tcold_fallback(monkeypatch, tmp_path: Path):
+    coords = {"y": np.array([1.0, 0.0]), "x": np.array([0.0, 1.0])}
+
+    def raster(name: str, value: float) -> xr.DataArray:
+        data = xr.DataArray(
+            np.full((2, 2), value, dtype=np.float32),
+            dims=("y", "x"),
+            coords=coords,
+            name=name,
+        )
+        data.attrs["long_name"] = ("ST_B10", "SR_B4", "SR_B5")
+        return data.rio.write_crs("EPSG:4326")
+
+    bands = {
+        "ST_B10": raster("ST_B10", 45000.0),
+        "SR_B4": raster("SR_B4", 10000.0),
+        "SR_B5": raster("SR_B5", 12000.0),
+    }
+    dt_clim = raster("dt", 8.0).expand_dims(dayofyear=[4])
+    calls = []
+
+    def fake_simple(lst, ndvi, dt, config=None):
+        calls.append((lst.rio.crs.to_string(), config))
+        return xr.zeros_like(lst).rename("tcold")
+
+    def fail_strict_local(*args, **kwargs):
+        raise AssertionError("strict local FANO should not be called for non-projected rasters")
+
+    monkeypatch.setattr(ssebop_api, "read_geotiff_bands", lambda path: bands)
+    monkeypatch.setattr(ssebop_api, "reproject_match", lambda source, match, resampling=None: source)
+    monkeypatch.setattr(ssebop_api, "tcold_fano_simple_xr", fake_simple, raising=False)
+    monkeypatch.setattr(ssebop_api, "tcold_fano_local_xr", fail_strict_local)
+
+    ssebop_api.process_landsat_scene(
+        tif_path = "Landsat_2019-01-04.tif",
+        lst_band = "ST_B10",
+        ndvi_band = "ndvi",
+        red_band = "SR_B4",
+        nir_band = "SR_B5",
+        apply_water_mask = False,
+        water_mask = None,
+        dt_clim = dt_clim,
+        tcold_config = ssebop_api.LocalFanoConfig(),
+        template_crs = bands["ST_B10"].rio.crs,
+        etf_dir = str(tmp_path),
+        ndvi_dir = str(tmp_path),
+    )
+
+    assert calls

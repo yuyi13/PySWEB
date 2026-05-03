@@ -4,7 +4,7 @@ Script: openlandmap.py
 Objective: Implement the OpenLandMap soil backend behind the package-level soil dispatcher.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-05-02
 Inputs: Soil backend arguments, target grid metadata, and a reprojection callback.
 Outputs: SoilOutputs dataclass instances with OpenLandMap-derived hydraulic property arrays.
 Usage: Imported via `pysweb.soil.openlandmap`
@@ -42,6 +42,7 @@ OPENLANDMAP_DATASETS = {
     "soc": "OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02",
 }
 OPENLANDMAP_SOC_SCALE = 5.0
+OPENLANDMAP_MISSING_SOC_G_PER_KG = 5.0
 
 
 def _build_layer_bottoms_mm() -> np.ndarray:
@@ -137,6 +138,16 @@ def _load_openlandmap_predictors(
     return predictors
 
 
+def _resolve_missing_soc_g_per_kg(args: argparse.Namespace) -> float:
+    value = getattr(args, "openlandmap_missing_soc_g_per_kg", OPENLANDMAP_MISSING_SOC_G_PER_KG)
+    if value is None:
+        value = OPENLANDMAP_MISSING_SOC_G_PER_KG
+    value = float(value)
+    if not np.isfinite(value) or value < 0.0:
+        raise ValueError("openlandmap_missing_soc_g_per_kg must be a finite non-negative value.")
+    return value
+
+
 def process_soil_properties_from_openlandmap(
     args: argparse.Namespace,
     grid,
@@ -152,6 +163,7 @@ def process_soil_properties_from_openlandmap(
     clay_da = reproject_to_template(soil_predictors["clay"], grid, resampling=Resampling.bilinear)
     sand_da = reproject_to_template(soil_predictors["sand"], grid, resampling=Resampling.bilinear)
     soc_da = reproject_to_template(soil_predictors["soc"], grid, resampling=Resampling.bilinear)
+    missing_soc_g_per_kg = _resolve_missing_soc_g_per_kg(args)
 
     porosity_layers = []
     wilting_layers = []
@@ -163,7 +175,14 @@ def process_soil_properties_from_openlandmap(
     for idx, (_, bottom_mm) in enumerate(OPENLANDMAP_LAYER_SPECS):
         clay = np.asarray(clay_da.isel(band=idx).values, dtype=float) * 0.01
         sand = np.asarray(sand_da.isel(band=idx).values, dtype=float) * 0.01
-        soc_g_per_kg = np.asarray(soc_da.isel(band=idx).values, dtype=float) * OPENLANDMAP_SOC_SCALE
+        soc = np.asarray(soc_da.isel(band=idx).values, dtype=float)
+        # Deep OpenLandMap SOC bands are sometimes masked where texture is valid. Avoid
+        # invalidating texture-driven hydraulic estimates; use a low default SOC instead.
+        soc_g_per_kg = np.where(
+            np.isfinite(soc),
+            np.maximum(soc, 0.0) * OPENLANDMAP_SOC_SCALE,
+            missing_soc_g_per_kg,
+        )
         om = 1.72 * soc_g_per_kg / 1000.0
 
         theta_33t = (
@@ -230,6 +249,7 @@ def process_soil_properties_from_openlandmap(
                 **attrs,
                 "layer_bottoms_mm": layer_depth_mm_arr.tolist(),
                 "soil_source": "OpenLandMap via Google Earth Engine",
+                "openlandmap_missing_soc_g_per_kg": missing_soc_g_per_kg,
             },
         )
 

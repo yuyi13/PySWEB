@@ -4,7 +4,7 @@ Script: test_cli_wrappers.py
 Objective: Verify the migrated visualisation modules and legacy CLI wrappers import and expose help cleanly.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-05-03
 Inputs: Module imports, wrapper source text, and subprocess CLI help invocations.
 Outputs: Test assertions.
 Usage: pytest tests/visualisation/test_cli_wrappers.py
@@ -30,6 +30,34 @@ ROOT = Path(__file__).resolve().parents[2]
 )
 def test_package_visualisation_modules_import_cleanly(module_name):
     assert import_module(module_name).__name__ == module_name
+
+
+def test_plot_font_configuration_registers_user_font_path(tmp_path):
+    module = import_module("pysweb.visualisation.plot_time_series")
+    font_path = tmp_path / "Arial.ttf"
+    font_path.write_bytes(b"placeholder")
+
+    class FakeFontRegistry:
+        def __init__(self):
+            self.added = []
+            self.fontManager = self
+
+        def addfont(self, path):
+            self.added.append(path)
+
+    class FakePyplot:
+        rcParams = {}
+
+    registry = FakeFontRegistry()
+
+    module._configure_plot_font(
+        pyplot=FakePyplot,
+        font_manager=registry,
+        font_paths=[font_path],
+    )
+
+    assert registry.added == [str(font_path)]
+    assert FakePyplot.rcParams["font.family"] == "Arial"
 
 
 @pytest.mark.parametrize(
