@@ -4,7 +4,7 @@ Script: 5_sweb_mlcons_run_model.py
 Objective: Run the 1-D SWEB model over gridded forcings and MLConstraints-derived soil properties to generate RZSM outputs.
 Author: Yi Yu
 Created: 2026-02-22
-Last updated: 2026-02-22
+Last updated: 2026-05-03
 Inputs: Preprocessed precipitation/effective-precipitation/ET/transpiration NetCDFs, soil NetCDF layers, optional NDVI and parameter grids, CLI arguments.
 Outputs: Consolidated RZSM NetCDF (layer-wise and profile soil moisture) in the output directory.
 Usage: python 5_sweb_mlcons_run_model.py --help
@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from core.swb_model_1d import soil_water_balance_1d
+from pysweb.swb.solver import soil_water_balance_1d
 
 SOIL_FILE_STEMS = {
     "porosity": "soil_porosity.nc",

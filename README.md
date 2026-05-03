@@ -8,7 +8,7 @@
 
 Python workflows for generating root-zone soil moisture from gridded precipitation, evapotranspiration, and soil hydraulic properties. The current meteorology pathway is ERA5-Land-based and globally usable; SWB soil inputs now default to Earth Engine OpenLandMap, and the reference SSM path now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`. The repository is under active development; interfaces and defaults may change.
 
-The package-first refactor is now the main execution path. The canonical code layout lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around those package modules. Legacy support code remains under `core/`, but the main SSEBop and SWB prepare/preprocess/calibrate/run paths now route through `pysweb/`.
+The package-first refactor is now the main execution path. The canonical code layout lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around those package modules. The top-level `core/` directory is deprecated compatibility shim code; supported runtime imports should come from `pysweb/`.
 
 ## Current repository structure
 ```
@@ -46,16 +46,16 @@ PySWEB/
 │   ├── ssebop_runner_landsat.sh           # Convenience bash wrapper for Steps 1-2
 │   └── sweb_domain_runner.sh              # Convenience bash wrapper for Steps 3-5
 │
-├── core/                                  # Legacy/reused modules still referenced during the refactor
-│   ├── era5land_download_config.py        # Build ERA5-Land GEE download configs
-│   ├── era5land_refet.py                  # Reference ET and meteorology helpers
-│   ├── era5land_stack.py                  # Discover/sort ERA5-Land daily downloads
-│   ├── met_input_paths.py                 # Resolve meteorology inputs for SSEBop
-│   ├── swb_model_1d.py                    # 1-D layered soil water balance core
-│   ├── soil_hydra_funs.py                 # Hydraulic process helpers and Richards-equation pieces
-│   ├── ssebop_au.py                       # AU-focused SSEBop geospatial helper functions
-│   ├── gee_downloader.py                  # Earth Engine data download utilities
-│   └── thomas_solve_tridiagonal_matrix.py # Tridiagonal solver utility
+├── core/                                  # Deprecated compatibility shims over pysweb modules
+│   ├── era5land_download_config.py        # Shim to pysweb.met.era5land.download
+│   ├── era5land_refet.py                  # Shim to pysweb.met.era5land.refet
+│   ├── era5land_stack.py                  # Shim to pysweb.met.era5land.stack
+│   ├── met_input_paths.py                 # Shim to pysweb.met.paths
+│   ├── swb_model_1d.py                    # Shim to pysweb.swb.solver
+│   ├── soil_hydra_funs.py                 # Shim to pysweb.swb.solver
+│   ├── ssebop_au.py                       # Shim to pysweb.ssebop and pysweb.met.silo
+│   ├── gee_downloader.py                  # Shim to pysweb.io.gee_downloader
+│   └── thomas_solve_tridiagonal_matrix.py # Shim to pysweb.swb.solver
 │
 ├── visualisation/                         # Legacy wrapper scripts around pysweb.visualisation during the transition
 │   ├── plot_time_series.py                # Time-series extraction + plots for SSEBop and SWEB outputs
@@ -172,7 +172,7 @@ This repository uses:
 
 - `pysweb/` for the canonical package code.
 - `workflows/` for runnable CLI entry points and convenience wrappers around package or workflow-owned implementations.
-- `core/` for legacy/reused modules that are still being folded into the package layout.
+- `core/` only for deprecated compatibility shims over package modules.
 
 For soil-source logic, `pysweb.soil` is now the canonical package location. Keep new soil backend selection and loading changes there, with workflows and wrappers delegating into that package.
 
@@ -181,41 +181,27 @@ Use this rule of thumb while the package-first refactor is still in progress:
 
 - Prefer `pysweb/` for new reusable logic and for revisions to already-migrated functionality.
 - Keep `workflows/` thin. Update them when CLI arguments, orchestration, or wrapper behavior changes.
-- Keep `core/` for now, but treat it as transitional implementation substrate rather than the long-term public interface.
+- Do not add new functionality to `core/`; add or change reusable logic under `pysweb/` and keep any compatibility wrappers thin.
 
 In practice:
 
 - SSEBop prepare/run changes should usually go into `pysweb.ssebop` first.
 - SWB run changes should usually go into `pysweb.swb` first.
 - SWB preprocess/calibration are now package-backed entry points, so edits should usually go into `pysweb.swb.preprocess` and `pysweb.swb.calibrate` first, with `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` kept as thin wrappers.
-- If `pysweb/` only wraps a `core/` implementation today, either update that `core/` implementation carefully or finish migrating it into `pysweb/` rather than maintaining two divergent implementations.
+- If a compatibility path under `core/` is still needed, keep it as an import shim over `pysweb/` rather than maintaining two divergent implementations.
 
 ### Current `core/` status
-Keep these `core/` modules for now because they still provide real implementation value or compatibility coverage:
+`core/` no longer owns supported runtime implementation. It remains only as a set of deprecated compatibility shims over canonical package modules:
 
-- `core/gee_downloader.py`: still the backend implementation behind `pysweb.io.gee`.
-- `core/swb_model_1d.py`: now legacy/reference solver code; the package-owned runtime path uses `pysweb.swb.solver`.
-- `core/soil_hydra_funs.py`: legacy hydraulic helper module coupled to `core/swb_model_1d.py`.
+- `core/gee_downloader.py` -> `pysweb.io.gee_downloader`
+- `core/era5land_download_config.py` -> `pysweb.met.era5land.download`
+- `core/era5land_refet.py` -> `pysweb.met.era5land.refet`
+- `core/era5land_stack.py` -> `pysweb.met.era5land.stack`
+- `core/met_input_paths.py` -> `pysweb.met.paths`
+- `core/ssebop_au.py` -> `pysweb.ssebop`, `pysweb.ssebop.landcover`, and `pysweb.met.silo`
+- `core/swb_model_1d.py`, `core/soil_hydra_funs.py`, and `core/thomas_solve_tridiagonal_matrix.py` -> `pysweb.swb.solver`
 
-These are mostly transitional, compatibility-oriented, or already superseded by `pysweb/` equivalents:
-
-- `core/ssebop_au.py`: now mainly a compatibility shim over `pysweb.ssebop.*`.
-- `core/era5land_download_config.py`: largely superseded by `pysweb.met.era5land.download`.
-- `core/era5land_refet.py`: largely superseded by `pysweb.met.era5land.refet`.
-- `core/era5land_stack.py`: largely superseded by `pysweb.met.era5land.stack`.
-- `core/met_input_paths.py`: largely superseded by `pysweb.met.paths`.
-
-These are the next retirement candidates once remaining tests, docs, and callers are updated:
-
-- `core/ssebop_au.py`
-- `core/era5land_download_config.py`
-- `core/era5land_refet.py`
-- `core/era5land_stack.py`
-- `core/met_input_paths.py`
-- `core/swb_model_1d.py`
-- `core/soil_hydra_funs.py`
-
-Review `core/thomas_solve_tridiagonal_matrix.py` separately before removing it. It looks legacy, but it should be retired only after confirming there are no remaining external consumers.
+New development must target `pysweb/`. The package test suite includes a guard that fails if a `pysweb` module imports top-level `core`.
 
 ### Workflow naming note
 For the SSEBop first step, keep `workflows/1_ssebop_prepare_inputs.py` as the canonical entrypoint.

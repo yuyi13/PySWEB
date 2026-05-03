@@ -4,7 +4,7 @@ Script: test_pysweb_imports.py
 Objective: Verify the package exposes importable subpackages and callable facade entry points.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-20
+Last updated: 2026-05-03
 Inputs: Package imports and direct facade calls exercised under pytest.
 Outputs: Test assertions.
 Usage: pytest tests/package/test_pysweb_imports.py
@@ -66,6 +66,17 @@ def test_package_facade_attributes_are_available_and_callable():
 def test_visualisation_submodules_import_cleanly():
     assert import_module("pysweb.visualisation.plot_heatmap").__name__ == "pysweb.visualisation.plot_heatmap"
     assert import_module("pysweb.visualisation.plot_time_series").__name__ == "pysweb.visualisation.plot_time_series"
+
+
+def test_pysweb_package_has_no_core_imports():
+    root = Path(__file__).resolve().parents[2] / "pysweb"
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "from core" in text or "import core" in text:
+            offenders.append(path.relative_to(root.parent).as_posix())
+
+    assert offenders == []
 
 
 def test_visualisation_lazy_package_attributes_resolve_real_modules():
