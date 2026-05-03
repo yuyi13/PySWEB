@@ -4,12 +4,13 @@ Script: test_gee_downloader_config.py
 Objective: Verify GEEDownloader validates daily_strategy and selects daily composites correctly.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-05-01
+Last updated: 2026-05-03
 Inputs: Temporary YAML configs written during pytest execution.
 Outputs: Test assertions.
 Usage: pytest tests/core/test_gee_downloader_config.py
 Dependencies: pytest
 """
+import builtins
 from pathlib import Path
 import importlib
 import re
@@ -109,10 +110,10 @@ def _install_dependency_shims(monkeypatch):
 def gee_downloader_module(monkeypatch):
     _install_dependency_shims(monkeypatch)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
-    sys.modules.pop("core.gee_downloader", None)
-    module = importlib.import_module("core.gee_downloader")
+    sys.modules.pop("pysweb.io.gee_downloader", None)
+    module = importlib.import_module("pysweb.io.gee_downloader")
     yield module
-    sys.modules.pop("core.gee_downloader", None)
+    sys.modules.pop("pysweb.io.gee_downloader", None)
 
 
 def _write_config(tmp_path: Path, daily_strategy=None):
@@ -138,6 +139,27 @@ def _write_config(tmp_path: Path, daily_strategy=None):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("\n".join(config_lines) + "\n", encoding="utf-8")
     return config_path
+
+
+def test_pysweb_gee_downloader_does_not_import_core_geedownloader(tmp_path, monkeypatch):
+    _install_dependency_shims(monkeypatch)
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "core.gee_downloader":
+            raise AssertionError("pysweb.io.gee must not import core.gee_downloader")
+        return original_import(name, globals, locals, fromlist, level)
+
+    for module_name in ("pysweb.io.gee", "pysweb.io.gee_downloader", "core.gee_downloader"):
+        sys.modules.pop(module_name, None)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    module = importlib.import_module("pysweb.io.gee")
+    downloader = module.GEEDownloader(_write_config(tmp_path))
+
+    assert downloader.cfg["daily_strategy"] == "median"
 
 
 class _FakeBandNames:
