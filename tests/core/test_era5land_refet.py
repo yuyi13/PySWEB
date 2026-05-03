@@ -4,7 +4,7 @@ Script: test_era5land_refet.py
 Objective: Verify ERA5-Land reference ET math utilities and daily file discovery behave as expected.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-04-16
+Last updated: 2026-05-03
 Inputs: Pytest fixtures and synthetic temporary files.
 Outputs: Test assertions.
 Usage: pytest tests/core/test_era5land_refet.py
@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from core.era5land_refet import (
+from pysweb.met.era5land.refet import (
     actual_vapor_pressure_from_dewpoint_c,
     compute_daily_eto_short,
     j_per_m2_to_mj_per_m2_day,
@@ -23,7 +23,7 @@ from core.era5land_refet import (
     meters_to_mm_day,
     wind_speed_from_uv,
 )
-from core.era5land_stack import discover_daily_files
+from pysweb.met.era5land.stack import discover_daily_files
 
 
 def test_kelvin_to_celsius_converts_expected_values():

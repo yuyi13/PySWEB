@@ -129,6 +129,17 @@ def compute_daily_eto_short(
     lat_deg,
     doy,
 ):
+    """
+    Compute daily short-reference ET using FAO56/RefET-style equations.
+
+    The implementation follows the standardized short crop form with:
+    - Cn = 900
+    - Cd = 0.34
+    - elevation-derived air pressure
+    - wind speed adjusted to 2 m
+    - extraterrestrial radiation and clear-sky radiation
+    - net shortwave and net longwave radiation
+    """
     tmax = _as_float_array(tmax_c)
     tmin = _as_float_array(tmin_c)
     ea = _as_float_array(ea_kpa)
