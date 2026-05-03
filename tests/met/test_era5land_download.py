@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Script: test_1b_download_era5land_daily.py
-Objective: Verify the ERA5-Land daily download config builder produces the expected GEE settings.
+Script: test_era5land_download.py
+Objective: Verify the package ERA5-Land daily download config builder produces the expected GEE settings.
 Author: Yi Yu
 Created: 2026-04-16
 Last updated: 2026-05-03
 Inputs: Temporary paths and pure config-builder inputs supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/workflows/test_1b_download_era5land_daily.py
+Usage: pytest tests/met/test_era5land_download.py
 Dependencies: pytest
 """
-from importlib import import_module, reload, util
+from importlib import reload
 from pathlib import Path
 import sys
 import json
@@ -37,15 +37,6 @@ EXPECTED_BANDS = [
     "surface_solar_radiation_downwards_sum",
     "total_precipitation_sum",
 ]
-
-
-def _load_workflow_module(monkeypatch):
-    workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "1b_download_era5land_daily.py"
-    spec = util.spec_from_file_location("era5land_daily_workflow", workflow_path)
-    module = util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_build_era5land_cfg_sets_expected_contract(tmp_path):
@@ -181,13 +172,6 @@ def test_pysweb_io_gee_exports_package_downloader():
     assert gee_adapter._safe_mkdir is gee_downloader_module._safe_mkdir
 
 
-def test_core_gee_downloader_remains_compatibility_import():
-    package_module = import_module("pysweb.io.gee_downloader")
-    legacy_module = import_module("core.gee_downloader")
-
-    assert legacy_module.GEEDownloader is package_module.GEEDownloader
-
-
 def test_package_downloader_browser_mode_uses_configured_gee_project(monkeypatch, tmp_path):
     fake_yaml = types.SimpleNamespace(
         safe_load=lambda payload: json.loads(payload.read() if hasattr(payload, "read") else payload)
@@ -282,64 +266,3 @@ def test_package_downloader_browser_mode_requires_configured_gee_project(monkeyp
         assert "gee_project" in str(exc)
     else:
         raise AssertionError("Expected browser mode to require an explicit gee_project")
-
-
-def test_workflow_writes_config_and_invokes_downloader(tmp_path, monkeypatch):
-    recorded = {
-        "init_paths": [],
-        "run_calls": 0,
-    }
-
-    class FakeDownloader:
-        def __init__(self, config_path):
-            recorded["init_paths"].append(config_path)
-
-        def run(self):
-            recorded["run_calls"] += 1
-
-    workflow_module = _load_workflow_module(monkeypatch)
-    monkeypatch.setattr(workflow_module, "_resolve_downloader_cls", lambda: FakeDownloader)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "1b_download_era5land_daily.py",
-            "--date-range",
-            "2024-01-01 to 2024-01-03",
-            "--extent",
-            "147.2,-35.1,147.3,-35.0",
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--gee-project",
-            "workflow-project",
-        ],
-    )
-
-    workflow_module.main()
-
-    cfg_path = tmp_path / "out" / "gee_config_era5land_2024-01-01_2024-01-03.yaml"
-    assert cfg_path.exists()
-    payload = json.loads(cfg_path.read_text(encoding="utf-8"))
-    assert payload["gee_project"] == "workflow-project"
-    assert recorded["init_paths"] == [str(cfg_path)]
-    assert recorded["run_calls"] == 1
-
-
-def test_workflow_cli_requires_gee_project(monkeypatch):
-    workflow_module = _load_workflow_module(monkeypatch)
-
-    try:
-        workflow_module.parse_args(
-            [
-                "--date-range",
-                "2024-01-01 to 2024-01-03",
-                "--extent",
-                "147.2,-35.1,147.3,-35.0",
-                "--output-dir",
-                "/tmp/out",
-            ]
-        )
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:
-        raise AssertionError("Expected workflow CLI to require --gee-project")

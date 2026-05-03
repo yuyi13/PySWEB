@@ -4,7 +4,7 @@ Script: test_runners.py
 Objective: Verify the workflow shell wrappers stay thin and point at the package-backed entrypoints.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-20
+Last updated: 2026-05-03
 Inputs: Workflow shell scripts and subprocess invocations supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_runners.py
@@ -104,8 +104,8 @@ def test_wrapper_handoff_prefers_prepared_precip_stack_contract():
 
     assert "1_ssebop_inputs" in sweb_text
     assert "met/era5land/stack" in sweb_text
-    assert "1_era5land_stacks" in sweb_text
-    assert sweb_text.index("1_ssebop_inputs") < sweb_text.index("1_era5land_stacks")
+    assert "1_era5land_stacks" not in sweb_text
+    assert "PRECIP_DIR_MODE" not in sweb_text
 
 
 def test_sweb_runner_uses_reference_ssm_filename_contract():

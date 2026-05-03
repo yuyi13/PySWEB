@@ -760,7 +760,7 @@ def main() -> None:
 
     attrs = {
         "title": "Soil Water Balance Model Output (Consolidated RZSM)",
-        "source": "core/swb_model_1d soil_water_balance_1d",
+        "source": "pysweb.swb.solver soil_water_balance_1d",
         "soil_property_source": str(soil_source_dir),
         "layer_bottoms_mm": np.asarray(soil_grids["layer_depth"], dtype=float).tolist(),
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),

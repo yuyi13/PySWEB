@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Script: 1_ssebop_prepare_inputs.py
-Objective: Parse CLI arguments and delegate the unified first SSEBop preparation step to the package API.
+Objective: Prepare Landsat, ERA5-Land, DEM, and stacked meteorology inputs for the first SSEBop step.
 Author: Yi Yu
 Created: 2026-02-17
-Last updated: 2026-04-20
+Last updated: 2026-05-03
 Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --out-dir).
 Outputs: Package-managed Landsat, NASADEM, and meteorology inputs for the requested SSEBop run.
 Usage: python workflows/1_ssebop_prepare_inputs.py --help
@@ -25,7 +25,12 @@ from pysweb.ssebop.landsat import parse_extent  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Prepare Landsat and meteorology inputs for SSEBop")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Prepare Landsat, NASADEM, ERA5-Land daily downloads, and "
+            "stacked ERA5-Land meteorology inputs for SSEBop."
+        )
+    )
     parser.add_argument("--date-range", required=True, help="Date range string like '2024-01-01 to 2024-01-03'")
     parser.add_argument("--extent", required=True, help="min_lon,min_lat,max_lon,max_lat")
     parser.add_argument("--met-source", default="era5land", choices=["era5land"])

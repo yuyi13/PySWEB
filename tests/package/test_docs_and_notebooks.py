@@ -92,6 +92,8 @@ def test_readmes_point_to_canonical_package_modules():
     assert "pysweb.visualisation" in notebooks_readme_text
     assert "workflows/6_plot_results.py" in readme_text
     assert "workflows/6_plot_results.py" in notebooks_readme_text
+    assert "├── core/" not in readme_text
+    assert "├── visualisation/" not in readme_text
 
 
 def test_readmes_document_explicit_gee_project_and_prepared_dem_contract():
@@ -138,3 +140,5 @@ def test_readme_drops_stale_wrapper_defaults_guidance():
     assert "pysweb.visualisation" in readme_text
     assert "environment-specific default paths" not in readme_text
     assert "near the top of each script" not in readme_text
+    assert "1b_download_era5land_daily.py" not in readme_text
+    assert "1c_stack_era5land_daily.py" not in readme_text

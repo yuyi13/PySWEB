@@ -8,7 +8,7 @@
 
 Python workflows for generating root-zone soil moisture from gridded precipitation, evapotranspiration, and soil hydraulic properties. The current meteorology pathway is ERA5-Land-based and globally usable; SWB soil inputs now default to Earth Engine OpenLandMap, and the reference SSM path now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`. The repository is under active development; interfaces and defaults may change.
 
-The package-first refactor is now the main execution path. The canonical code layout lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around those package modules. The top-level `core/` directory is deprecated compatibility shim code; supported runtime imports should come from `pysweb/`.
+The package-first refactor is now the main execution path. The canonical code layout lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around those package modules. Supported runtime imports should come from `pysweb/`.
 
 ## Current repository structure
 ```
@@ -35,9 +35,7 @@ PySWEB/
 │   └── visualisation/                     # Canonical plotting modules for notebooks and scripts
 │
 ├── workflows/                             # CLI entrypoints and convenience wrappers
-│   ├── 1_ssebop_prepare_inputs.py         # Unified first SSEBop step: Landsat + meteorology preparation
-│   ├── 1b_download_era5land_daily.py      # Standalone ERA5-Land download utility
-│   ├── 1c_stack_era5land_daily.py         # Standalone ERA5-Land stack utility
+│   ├── 1_ssebop_prepare_inputs.py         # Unified first SSEBop step: Landsat + ERA5-Land + DEM + stacks
 │   ├── 2_ssebop_run_model.py              # Thin CLI wrapper over the package-backed SSEBop run workflow
 │   ├── 3_sweb_preprocess_inputs.py        # Thin CLI wrapper over the package-backed SWB preprocess workflow
 │   ├── 4_sweb_calib_domain.py             # Thin CLI wrapper over the package-backed SWB calibration workflow
@@ -45,21 +43,6 @@ PySWEB/
 │   ├── 6_plot_results.py                  # Optional post-run plotting wrapper over pysweb.visualisation
 │   ├── ssebop_runner_landsat.sh           # Convenience bash wrapper for Steps 1-2
 │   └── sweb_domain_runner.sh              # Convenience bash wrapper for Steps 3-5
-│
-├── core/                                  # Deprecated compatibility shims over pysweb modules
-│   ├── era5land_download_config.py        # Shim to pysweb.met.era5land.download
-│   ├── era5land_refet.py                  # Shim to pysweb.met.era5land.refet
-│   ├── era5land_stack.py                  # Shim to pysweb.met.era5land.stack
-│   ├── met_input_paths.py                 # Shim to pysweb.met.paths
-│   ├── swb_model_1d.py                    # Shim to pysweb.swb.solver
-│   ├── soil_hydra_funs.py                 # Shim to pysweb.swb.solver
-│   ├── ssebop_au.py                       # Shim to pysweb.ssebop and pysweb.met.silo
-│   ├── gee_downloader.py                  # Shim to pysweb.io.gee_downloader
-│   └── thomas_solve_tridiagonal_matrix.py # Shim to pysweb.swb.solver
-│
-├── visualisation/                         # Legacy wrapper scripts around pysweb.visualisation during the transition
-│   ├── plot_time_series.py                # Time-series extraction + plots for SSEBop and SWEB outputs
-│   └── plot_heatmap.py                    # Heatmap plotting for SWEB layers (optionally with SSEBop forcing panel)
 │
 ├── notebooks/                             # Example Jupyter notebooks
 │   ├── README.md                          # Notebook index and scope
@@ -71,18 +54,17 @@ PySWEB/
 └── SWEB_logo.png
 ```
 
-Runtime outputs are written under the unified prepared-input layout rooted at `1_ssebop_inputs/` plus `2_ssebop_outputs/`, `3_sweb_inputs/`, and `4_sweb_outputs/`. The legacy `1_era5land_raw/` and `1_era5land_stacks/` folders are still used when the standalone ERA5-Land utilities are run directly.
+Runtime outputs are written under the unified prepared-input layout rooted at `1_ssebop_inputs/` plus `2_ssebop_outputs/`, `3_sweb_inputs/`, and `4_sweb_outputs/`.
 
 ## Workflow overview
-1. `workflows/1_ssebop_prepare_inputs.py`: unified first SSEBop step. It prepares Landsat inputs and meteorology products together, writing Landsat to `out_dir/landsat` and ERA5-Land outputs to `out_dir/met/era5land/{raw,stack}`.
+1. `workflows/1_ssebop_prepare_inputs.py`: unified first SSEBop step. It prepares Landsat inputs, downloads ERA5-Land daily GeoTIFFs, prepares NASADEM, and stacks ERA5-Land meteorology products, writing Landsat to `out_dir/landsat`, DEM to `out_dir/dem/nasadem.tif`, and ERA5-Land outputs to `out_dir/met/era5land/{raw,stack}`.
 2. `workflows/2_ssebop_run_model.py`: thin CLI wrapper over the package-backed SSEBop run workflow. It consumes the prepared Landsat directory plus a meteorology stack directory (for example `out_dir/met/era5land/stack`).
 3. `workflows/3_sweb_preprocess_inputs.py`: thin wrapper over `pysweb.swb.preprocess`; it aligns ERA5-Land precipitation, SSEBop `E/T/ET`, OpenLandMap soil properties, and optional `gssm1km` reference SSM to one grid.
 4. `workflows/4_sweb_calib_domain.py`: thin wrapper over `pysweb.swb.calibrate`; it calibrates domain-wide SWEB parameters (`diff_factor`, `sm_max_factor`, `sm_min_factor`, `root_beta`).
 5. `workflows/5_sweb_run_model.py`: thin CLI wrapper over the package-backed SWB run workflow.
 6. `workflows/6_plot_results.py`: optional post-processing wrapper over `pysweb.visualisation` for heatmaps and time-series plots.
 
-The standalone `1b_download_era5land_daily.py` and `1c_stack_era5land_daily.py` utilities are still available, but they are no longer the primary first step for the package-backed SSEBop path.
-The wrapper handoff follows the same contract: `ssebop_runner_landsat.sh` prepares meteorology under `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, and `sweb_domain_runner.sh` consumes that location by default. `sweb_domain_runner.sh` falls back to `1_era5land_stacks/<run_subdir>` only for legacy standalone `1c_stack_era5land_daily.py` usage.
+The wrapper handoff follows the same contract: `ssebop_runner_landsat.sh` prepares meteorology under `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, and `sweb_domain_runner.sh` consumes that location by default.
 
 ## Quick start
 The primary entrypoints are the workflow CLIs in `workflows/`, which delegate into `pysweb/` where that package wiring exists:
@@ -115,9 +97,9 @@ GEE_PROJECT=your-gee-project bash workflows/ssebop_runner_landsat.sh <run_subdir
 bash workflows/sweb_domain_runner.sh <run_subdir>
 ```
 
-In that wrapper sequence, `GEE_PROJECT` must be provided when the SSEBop wrapper runs Step 1. The SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack` by default, so the handoff works without manually copying ERA5-Land stacks. If you still run the standalone ERA5-Land stack workflow, the SWEB wrapper can fall back to `1_era5land_stacks/<run_subdir>`.
+In that wrapper sequence, `GEE_PROJECT` must be provided when the SSEBop wrapper runs Step 1. The SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, so the handoff works without manually copying ERA5-Land stacks.
 
-For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the Step 6 post-processing wrapper or the canonical modules under `pysweb.visualisation`. The legacy `visualisation/*.py` files are compatibility shims around those package entrypoints:
+For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the Step 6 post-processing wrapper or the canonical modules under `pysweb.visualisation`:
 
 ```bash
 python workflows/6_plot_results.py time-series \
@@ -147,14 +129,14 @@ cd notebooks
 jupyter notebook
 ```
 
-The canonical plotting modules are `pysweb.visualisation.plot_time_series` and `pysweb.visualisation.plot_heatmap`. Keep new automation and documentation pointed at those package entrypoints; use the wrapper scripts only when you need temporary compatibility with older workflows.
+The canonical plotting modules are `pysweb.visualisation.plot_time_series` and `pysweb.visualisation.plot_heatmap`; `workflows/6_plot_results.py` is the workflow-level plotting entrypoint.
 
 The meteorology path is now ERA5-Land-based and globally usable. SWB soil texture/SOC inputs now default to Earth Engine OpenLandMap, and the reference SSM input now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`.
 
 ## Key outputs
 - From the unified first SSEBop step (`1_ssebop_prepare_inputs.py`): a prepared run directory containing `landsat/`, `dem/nasadem.tif`, `met/era5land/raw/`, and `met/era5land/stack/`. The stack directory holds `precipitation_daily_<start>_<end>.nc`, `tmax_daily_<start>_<end>.nc`, `tmin_daily_<start>_<end>.nc`, `rs_daily_<start>_<end>.nc`, `ea_daily_<start>_<end>.nc`, and `et_short_crop_daily_<start>_<end>.nc`.
 - From SSEBop run (`2_ssebop_run_model.py`): `et_daily_ssebop_<start>_<end>.nc` plus intermediate `etf`/`ndvi` products, driven by the prepared meteorology stack directory.
-- From SWEB preprocess (`3_sweb_preprocess_inputs.py`): `rain_daily_*.nc`, `effective_precip_daily_*.nc`, `et_daily_*.nc`, `t_daily_*.nc`, `soil_*.nc`, and optionally `reference_ssm_daily_*.nc`. When invoked via `sweb_domain_runner.sh`, precipitation is sourced from the unified prepared stack first and only falls back to the legacy stack directory if needed.
+- From SWEB preprocess (`3_sweb_preprocess_inputs.py`): `rain_daily_*.nc`, `effective_precip_daily_*.nc`, `et_daily_*.nc`, `t_daily_*.nc`, `soil_*.nc`, and optionally `reference_ssm_daily_*.nc`. When invoked via `sweb_domain_runner.sh`, precipitation is sourced from the unified prepared stack.
 - From calibration (`4_sweb_calib_domain.py`): CSV with calibrated domain parameters.
 - From SWEB run (`5_sweb_run_model.py`): consolidated RZSM NetCDF, optionally split into burn-in and post-burn products by `sweb_domain_runner.sh`.
 - From the Step 6 plotting workflow (`workflows/6_plot_results.py`) and canonical plotting modules (`pysweb.visualisation.plot_time_series`, `pysweb.visualisation.plot_heatmap`):
@@ -172,7 +154,6 @@ This repository uses:
 
 - `pysweb/` for the canonical package code.
 - `workflows/` for runnable CLI entry points and convenience wrappers around package or workflow-owned implementations.
-- `core/` only for deprecated compatibility shims over package modules.
 
 For soil-source logic, `pysweb.soil` is now the canonical package location. Keep new soil backend selection and loading changes there, with workflows and wrappers delegating into that package.
 
@@ -181,33 +162,19 @@ Use this rule of thumb while the package-first refactor is still in progress:
 
 - Prefer `pysweb/` for new reusable logic and for revisions to already-migrated functionality.
 - Keep `workflows/` thin. Update them when CLI arguments, orchestration, or wrapper behavior changes.
-- Do not add new functionality to `core/`; add or change reusable logic under `pysweb/` and keep any compatibility wrappers thin.
 
 In practice:
 
 - SSEBop prepare/run changes should usually go into `pysweb.ssebop` first.
 - SWB run changes should usually go into `pysweb.swb` first.
 - SWB preprocess/calibration are now package-backed entry points, so edits should usually go into `pysweb.swb.preprocess` and `pysweb.swb.calibrate` first, with `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` kept as thin wrappers.
-- If a compatibility path under `core/` is still needed, keep it as an import shim over `pysweb/` rather than maintaining two divergent implementations.
 
-### Current `core/` status
-`core/` no longer owns supported runtime implementation. It remains only as a set of deprecated compatibility shims over canonical package modules:
-
-- `core/gee_downloader.py` -> `pysweb.io.gee_downloader`
-- `core/era5land_download_config.py` -> `pysweb.met.era5land.download`
-- `core/era5land_refet.py` -> `pysweb.met.era5land.refet`
-- `core/era5land_stack.py` -> `pysweb.met.era5land.stack`
-- `core/met_input_paths.py` -> `pysweb.met.paths`
-- `core/ssebop_au.py` -> `pysweb.ssebop`, `pysweb.ssebop.landcover`, and `pysweb.met.silo`
-- `core/swb_model_1d.py`, `core/soil_hydra_funs.py`, and `core/thomas_solve_tridiagonal_matrix.py` -> `pysweb.swb.solver`
-
-New development must target `pysweb/`. The package test suite includes a guard that fails if a `pysweb` module imports top-level `core`.
+The package test suite includes a guard that fails if a `pysweb` module imports a top-level `core` package.
 
 ### Workflow naming note
 For the SSEBop first step, keep `workflows/1_ssebop_prepare_inputs.py` as the canonical entrypoint.
 
 - `prepare_inputs` is the current package/API naming.
-- `workflows/1_ssebop_preprocess_inputs.py` is a legacy duplicate name and should not be the preferred script for future development.
 
 ## Development status
 This repository is actively evolving. Verify file paths, date ranges, and spatial settings before running large jobs.

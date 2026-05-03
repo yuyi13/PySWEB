@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """
-Script: test_1c_stack_era5land_daily.py
-Objective: Verify the ERA5-Land daily stacking workflow writes the required NetCDF products from daily GeoTIFF inputs.
+Script: test_era5land_stack.py
+Objective: Verify the package ERA5-Land daily stacker writes the required NetCDF products from daily GeoTIFF inputs.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-05-01
+Last updated: 2026-05-03
 Inputs: Synthetic daily GeoTIFFs, DEM rasters, and temporary output directories.
 Outputs: Test assertions.
-Usage: pytest tests/workflows/test_1c_stack_era5land_daily.py
-Dependencies: importlib, numpy, pytest, rasterio, xarray
+Usage: pytest tests/met/test_era5land_stack.py
+Dependencies: numpy, pytest, rasterio, xarray
 """
-from importlib import util
 from pathlib import Path
-import subprocess
-import sys
 
 import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
 import xarray as xr
+
+from pysweb.met.era5land.stack import stack_era5land_daily_inputs
 
 
 BAND_VALUES = {
@@ -31,15 +30,6 @@ BAND_VALUES = {
     "surface_solar_radiation_downwards_sum": 24000000.0,
     "total_precipitation_sum": 0.012,
 }
-
-
-def _load_workflow_module():
-    workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "1c_stack_era5land_daily.py"
-    spec = util.spec_from_file_location("stack_era5land_daily_workflow", workflow_path)
-    module = util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
 
 
 def _write_daily_geotiff(path: Path):
@@ -105,8 +95,7 @@ def test_stack_reader_handles_int16_dem_nodata_as_nan(tmp_path):
     assert np.isnan(dem_array[0, 1])
 
 
-def test_workflow_writes_expected_daily_netcdfs(tmp_path):
-    workflow_module = _load_workflow_module()
+def test_stacker_writes_expected_daily_netcdfs(tmp_path):
     raw_dir = tmp_path / "raw"
     out_dir = tmp_path / "out"
     raw_dir.mkdir()
@@ -118,18 +107,12 @@ def test_workflow_writes_expected_daily_netcdfs(tmp_path):
     dem_path = tmp_path / "dem.tif"
     _write_dem(dem_path)
 
-    workflow_module.main(
-        [
-            "--raw-dir",
-            str(raw_dir),
-            "--dem",
-            str(dem_path),
-            "--date-range",
-            "2024-01-02",
-            "2024-01-03",
-            "--output-dir",
-            str(out_dir),
-        ]
+    stack_era5land_daily_inputs(
+        raw_dir=raw_dir,
+        dem=dem_path,
+        start_date="2024-01-02",
+        end_date="2024-01-03",
+        output_dir=out_dir,
     )
 
     expected_files = {
@@ -172,8 +155,7 @@ def test_workflow_writes_expected_daily_netcdfs(tmp_path):
         assert eto_values[1] == pytest.approx(6.0, abs=0.5)
 
 
-def test_workflow_requires_complete_requested_date_range(tmp_path):
-    workflow_module = _load_workflow_module()
+def test_stacker_requires_complete_requested_date_range(tmp_path):
     raw_dir = tmp_path / "raw"
     out_dir = tmp_path / "out"
     raw_dir.mkdir()
@@ -186,30 +168,10 @@ def test_workflow_requires_complete_requested_date_range(tmp_path):
     _write_dem(dem_path)
 
     with pytest.raises(ValueError, match="do not cover every date in the range"):
-        workflow_module.main(
-            [
-                "--raw-dir",
-                str(raw_dir),
-                "--dem",
-                str(dem_path),
-                "--date-range",
-                "2024-01-01",
-                "2024-01-03",
-                "--output-dir",
-                str(out_dir),
-            ]
+        stack_era5land_daily_inputs(
+            raw_dir=raw_dir,
+            dem=dem_path,
+            start_date="2024-01-01",
+            end_date="2024-01-03",
+            output_dir=out_dir,
         )
-
-
-def test_workflow_script_help_runs_with_project_root_bootstrap():
-    workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "1c_stack_era5land_daily.py"
-    result = subprocess.run(
-        [sys.executable, str(workflow_path), "--help"],
-        cwd=workflow_path.parents[1],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0
-    assert "--raw-dir" in result.stdout

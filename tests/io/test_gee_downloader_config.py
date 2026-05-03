@@ -7,7 +7,7 @@ Created: 2026-04-16
 Last updated: 2026-05-03
 Inputs: Temporary YAML configs written during pytest execution.
 Outputs: Test assertions.
-Usage: pytest tests/core/test_gee_downloader_config.py
+Usage: pytest tests/io/test_gee_downloader_config.py
 Dependencies: pytest
 """
 import builtins

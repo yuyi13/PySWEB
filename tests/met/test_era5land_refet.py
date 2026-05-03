@@ -7,7 +7,7 @@ Created: 2026-04-16
 Last updated: 2026-05-03
 Inputs: Pytest fixtures and synthetic temporary files.
 Outputs: Test assertions.
-Usage: pytest tests/core/test_era5land_refet.py
+Usage: pytest tests/met/test_era5land_refet.py
 Dependencies: numpy, pytest
 """
 from pathlib import Path
