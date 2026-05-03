@@ -4,7 +4,7 @@ Script: core.py
 Objective: Provide package-native SSEBop physics helpers for dT, ET fraction, Tcold estimation, climatology, and daily ET calculations.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-23
+Last updated: 2026-05-03
 Inputs: xarray temperature and geospatial arrays plus pandas ET series.
 Outputs: SSEBop helper DataArray and Series results.
 Usage: Imported by pysweb.ssebop consumers.
@@ -21,7 +21,9 @@ import rioxarray  # noqa: F401
 import xarray as xr
 
 __all__ = [
+    "AU_SSEBOP_SOURCE_CANDIDATES",
     "LocalFanoConfig",
+    "SsebopAuConfig",
     "build_doy_climatology",
     "compute_dt_daily",
     "daily_et_from_etf",
@@ -30,6 +32,35 @@ __all__ = [
     "tcold_fano_local_xr",
     "tcold_fano_simple_xr",
 ]
+
+
+AU_SSEBOP_SOURCE_CANDIDATES: dict[str, dict[str, str]] = {
+    # Landsat Collection 2 L2 is global and still the primary LST/NDVI source.
+    "landsat_c2_l2": {
+        "gee": "LANDSAT/LC08/C02/T1_L2, LANDSAT/LC09/C02/T1_L2, LANDSAT/LE07/C02/T1_L2, LANDSAT/LT05/C02/T1_L2",
+        "notes": "Global coverage; use C2 L2 SR/ST for LST, NDVI, NDWI, QA_PIXEL.",
+    },
+    # Reference ET sources: use SILO FAO56 ETo (et_short_crop).
+    "et_reference": {
+        "local": "BoM SILO FAO56 ETo (et_short_crop) NetCDF",
+        "silo_index": "https://s3-ap-southeast-2.amazonaws.com/silo-open-data/Official/annual/index.html",
+        "notes": "ETf from Landsat; ETa = ETf * ETo (short crop).",
+    },
+    # dT climatology: computed from daily SILO met (tmax/tmin/rs/ea) + DEM.
+    "dt_climatology": {
+        "local": "BoM SILO daily met + DEM to build DOY dT climatology",
+        "notes": "Compute dT via SSEBop FAO56-based formula; store as DOY climatology for speed.",
+    },
+    # Land cover masks for FANO: use ESA WorldCover local GeoTIFF.
+    "landcover": {
+        "local": "/g/data/yx97/EO_collections/ESA/WorldCover/ESA_WorldCover_100m_v200.tif",
+        "notes": "Map to ag/grass/wetland and anomalous (barren/shrub/urban) masks.",
+    },
+    # Water mask: optional; extract from WorldCover if needed.
+    "water_mask": {
+        "notes": "Optional; use WorldCover class 80 (permanent water) if needed.",
+    },
+}
 
 
 class TcoldConfig(Protocol):
@@ -53,6 +84,57 @@ class LocalFanoConfig:
     fine_scale_m: float = 240.0
     coarse_scale_m: float = 4800.0
     smooth_scale_m: float = 240.0
+
+
+@dataclass(init=False)
+class SsebopAuConfig:
+    """Configuration hints for legacy AU SSEBop processing."""
+
+    et_reference_type: str = "alfalfa"
+    et_reference_unit: str = "mm/day"
+    dt_coeff: float = 0.125
+    high_ndvi_threshold: float = 0.9
+    anchor_ndvi_threshold: float = 0.4
+    fine_scale_m: float = 240.0
+    coarse_scale_m: float = 4800.0
+    smooth_scale_m: float = 240.0
+    etf_clamp_max: float = 1.0
+    etf_mask_max: float = 2.0
+    worldcover_path: str = AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"]
+
+    def __init__(
+        self,
+        et_reference_type: str = "alfalfa",
+        et_reference_unit: str = "mm/day",
+        dt_coeff: float = 0.125,
+        high_ndvi_threshold: float = 0.9,
+        anchor_ndvi_threshold: float = 0.4,
+        veg_ndvi_threshold: float | None = None,
+        fine_scale_m: float = 240.0,
+        coarse_scale_m: float = 4800.0,
+        smooth_scale_m: float = 240.0,
+        etf_clamp_max: float = 1.0,
+        etf_mask_max: float = 2.0,
+        worldcover_path: str = AU_SSEBOP_SOURCE_CANDIDATES["landcover"]["local"],
+    ) -> None:
+        if veg_ndvi_threshold is not None:
+            anchor_ndvi_threshold = float(veg_ndvi_threshold)
+
+        self.et_reference_type = et_reference_type
+        self.et_reference_unit = et_reference_unit
+        self.dt_coeff = dt_coeff
+        self.high_ndvi_threshold = high_ndvi_threshold
+        self.anchor_ndvi_threshold = anchor_ndvi_threshold
+        self.fine_scale_m = fine_scale_m
+        self.coarse_scale_m = coarse_scale_m
+        self.smooth_scale_m = smooth_scale_m
+        self.etf_clamp_max = etf_clamp_max
+        self.etf_mask_max = etf_mask_max
+        self.worldcover_path = worldcover_path
+
+    @property
+    def veg_ndvi_threshold(self) -> float:
+        return self.anchor_ndvi_threshold
 
 
 def _config_value(config: TcoldConfig | None, name: str, default: float) -> float:

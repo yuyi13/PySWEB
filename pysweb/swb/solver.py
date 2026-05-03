@@ -3,7 +3,7 @@ Script: solver.py
 Objective: Provide the package-owned 1-D SWB solver and hydraulic helpers used by the SWB run workflow.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-05-03
 Inputs: Daily forcing arrays, per-cell soil-property dictionaries, boundary fluxes, and solver configuration values.
 Outputs: Layer soil-moisture states, hydraulic matrix coefficients, and per-time-step SWB results.
 Usage: Imported as `pysweb.swb.solver`
@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+# Code lineage: the layered hydraulic matrix follows the Noah-MP ROSR12-style
+# tridiagonal formulation used in earlier SWEB scripts, with Python package
+# revisions for explicit RHS diffusion limiting and configurable bounds.
 
 _DEFAULT_NDVI_ROOT_QUANTILES = (0.2, 0.4, 0.6, 0.8, 1.0)
 _DEFAULT_NDVI_ROOT_DEPTHS_CM = (5.0, 15.0, 30.0, 60.0, 100.0)
@@ -24,6 +28,14 @@ def calculate_hydraulic_properties(
     layer,
     diff_factor,
 ):
+    """
+    Calculate hydraulic conductivity and diffusivity for one soil layer.
+
+    Parameters are expected in volumetric soil moisture units for state values
+    and mm/day for saturated conductivity. Conductivity follows the
+    Brooks-Corey-style exponent K(theta) with `2b + 3`; diffusivity uses
+    `D(theta) = diff_factor * K(theta) * (theta_s / theta) ** (b + 1)`.
+    """
     porosity = soil_properties["porosity"][layer]
     b_coefficient = soil_properties["b_coefficient"][layer]
     conductivity_sat = soil_properties["conductivity_sat"][layer]
@@ -66,6 +78,12 @@ def _limit_rhs_diffusive_interface_flux(
     time_step,
     abs_cap_mm_day=None,
 ):
+    """
+    Limit explicit RHS diffusive flux at a layer interface to available storage.
+
+    Positive flux means downward transfer from the upper layer to the lower
+    layer. Negative flux means upward transfer.
+    """
     if not np.isfinite(raw_flux):
         return 0.0
 
@@ -229,6 +247,13 @@ def setup_richards_matrix(
 
 
 def matrix_solver_tri_diagonal(A, B, C, D, ind_top_layer=0, num_layers=5):
+    """
+    Solve the Noah-MP-style tridiagonal matrix system used by the SWB layers.
+
+    `A`, `B`, and `C` are the lower, main, and upper diagonals, and `D` is the
+    right-hand side. The function returns the solution vector over
+    `num_layers`, starting at `ind_top_layer`.
+    """
     P = np.zeros_like(B)
     delta = np.zeros_like(B)
 
@@ -248,6 +273,33 @@ def matrix_solver_tri_diagonal(A, B, C, D, ind_top_layer=0, num_layers=5):
         P[kk] = P[kk] * P[kk + 1] + delta[kk]
 
     return P
+
+
+def thomas_solve_tridiagonal_matrix(a, b, c, d):
+    """
+    Solve a general tridiagonal linear system using the Thomas algorithm.
+
+    This standalone helper preserves the clearer legacy utility interface:
+    `a`, `b`, and `c` are lower, main, and upper diagonal arrays, and `d` is
+    the right-hand-side vector. Inputs are copied before elimination.
+    """
+    n = len(d)
+    a_c = np.asarray(a, dtype=float).copy()
+    b_c = np.asarray(b, dtype=float).copy()
+    c_c = np.asarray(c, dtype=float).copy()
+    d_c = np.asarray(d, dtype=float).copy()
+    x = np.zeros(n, dtype=float)
+
+    for i in range(1, n):
+        factor = a_c[i] / b_c[i - 1]
+        b_c[i] = b_c[i] - factor * c_c[i - 1]
+        d_c[i] = d_c[i] - factor * d_c[i - 1]
+
+    x[n - 1] = d_c[n - 1] / b_c[n - 1]
+    for i in range(n - 2, -1, -1):
+        x[i] = (d_c[i] - c_c[i] * x[i + 1]) / b_c[i]
+
+    return x
 
 
 def solve_soil_moisture(soil_moisture, matrix_coeffs, time_step, soil_properties):
@@ -369,6 +421,13 @@ def _compute_root_distribution_beta(
     max_root_depth_mm=None,
     use_ndvi_root_depth=False,
 ):
+    """
+    Compute per-layer root fraction using the Jackson et al. (1996) beta profile.
+
+    F(z) = 1 - beta^z for depth z in cm. The fraction in a layer
+    [z_top, z_bot] is F(z_bot) - F(z_top), which simplifies to
+    beta**z_top - beta**z_bot. Typical beta values are around 0.95-0.98.
+    """
     layer_depth_mm = np.asarray(soil_properties["layer_depth"], dtype=float)
     num_layers = len(layer_depth_mm)
 

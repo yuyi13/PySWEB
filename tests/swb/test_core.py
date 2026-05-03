@@ -4,7 +4,7 @@ Script: test_core.py
 Objective: Verify reusable SWB core helpers load forcing and soil inputs consistently for package-owned workflows.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-05-03
 Inputs: Temporary NetCDF fixtures and in-memory xarray DataArrays created by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/swb/test_core.py
@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pysweb.swb.core as swb_core
+from pysweb.swb.solver import thomas_solve_tridiagonal_matrix
 
 
 def _write_single_var_dataset(
@@ -134,6 +135,25 @@ def test_load_single_variable_and_load_forcing_slice(tmp_path: Path):
     assert forcing.name == "effective_precipitation"
     assert forcing.sizes["time"] == 2
     np.testing.assert_allclose(forcing.values[:, 0, 0], np.array([2.0, 3.0], dtype=np.float32))
+
+
+def test_thomas_solve_tridiagonal_matrix_matches_dense_solution():
+    lower = np.array([0.0, -1.0, -1.0], dtype=float)
+    main = np.array([2.0, 2.0, 2.0], dtype=float)
+    upper = np.array([-1.0, -1.0, 0.0], dtype=float)
+    rhs = np.array([1.0, 0.0, 1.0], dtype=float)
+    dense = np.array(
+        [
+            [2.0, -1.0, 0.0],
+            [-1.0, 2.0, -1.0],
+            [0.0, -1.0, 2.0],
+        ],
+        dtype=float,
+    )
+
+    result = thomas_solve_tridiagonal_matrix(lower, main, upper, rhs)
+
+    np.testing.assert_allclose(result, np.linalg.solve(dense, rhs))
 
 
 def test_resolve_soil_paths_and_load_soil_arrays_support_overrides(tmp_path: Path):

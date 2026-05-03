@@ -4,15 +4,12 @@ Script: test_core.py
 Objective: Verify extracted SSEBop package helpers preserve expected ET fraction, climatology, landcover, grid, and compatibility-shim behavior.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-04-23
+Last updated: 2026-05-03
 Inputs: In-memory xarray arrays, pandas timestamps, and temporary NetCDF files.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_core.py -q
 Dependencies: numpy, pandas, pytest, rioxarray, xarray
 """
-from pathlib import Path
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -20,13 +17,14 @@ import xarray as xr
 from affine import Affine
 import rioxarray  # noqa: F401
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CORE_DIR = PROJECT_ROOT / "core"
-if str(CORE_DIR) not in sys.path:
-    sys.path.insert(0, str(CORE_DIR))
-
-from core.ssebop_au import SsebopAuConfig, open_silo_et_short_crop, open_silo_variable
-from pysweb.ssebop.core import build_doy_climatology, compute_dt_daily, daily_et_from_etf, et_fraction_xr
+from pysweb.met.silo.readers import open_silo_et_short_crop, open_silo_variable
+from pysweb.ssebop.core import (
+    SsebopAuConfig,
+    build_doy_climatology,
+    compute_dt_daily,
+    daily_et_from_etf,
+    et_fraction_xr,
+)
 from pysweb.ssebop.grid import reproject_match
 from pysweb.ssebop.landcover import worldcover_masks
 
