@@ -25,13 +25,13 @@ PySWEB/
 │   │   ├── landsat.py
 │   │   └── inputs/                        # Legacy shim path during the transition
 │   ├── swb/                               # Package-backed SWB preprocess/calibrate/run logic
-│       ├── __init__.py
-│       ├── api.py
-│       ├── calibrate.py
-│       ├── core.py
-│       ├── preprocess.py
-│       ├── run.py
-│       └── solver.py
+│   │   ├── __init__.py
+│   │   ├── api.py
+│   │   ├── calibrate.py
+│   │   ├── core.py
+│   │   ├── preprocess.py
+│   │   ├── run.py
+│   │   └── solver.py
 │   └── visualisation/                     # Canonical plotting modules for notebooks and scripts
 │
 ├── workflows/                             # CLI entrypoints and convenience wrappers
@@ -98,6 +98,54 @@ bash workflows/sweb_domain_runner.sh <run_subdir>
 ```
 
 In that wrapper sequence, `GEE_PROJECT` must be provided when the SSEBop wrapper runs Step 1. The SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, so the handoff works without manually copying ERA5-Land stacks.
+
+## NCI PBS operation notes
+PySWEB has two different execution modes on NCI Gadi:
+
+- GEE/data-staging steps need external HTTPS access and should run on `copyq`.
+- Offline model-compute steps can run on standard compute queues once all inputs have been written to `/g/data`.
+
+NCI standard compute nodes do not have external internet access. Any PySWEB stage that calls Google Earth Engine or downloads from Earth Engine URLs should therefore be submitted separately to `copyq`. In the current package-backed workflow, these internet-dependent stages are:
+
+- `pysweb.ssebop.prepare_inputs(...)`, which downloads Landsat, ERA5-Land daily GeoTIFFs, and NASADEM before stacking ERA5-Land meteorology.
+- `pysweb.swb.preprocess(...)` when using `soil_source="openlandmap"` or the default reference SSM source, because OpenLandMap soil properties and `gssm1km` reference SSM are read through Earth Engine.
+
+The SSEBop model run, SWB calibration, and SWB model run are offline after their prepared inputs exist locally. A robust NCI workflow is therefore:
+
+1. Authenticate Earth Engine once in an interactive environment such as ARE or an interactive notebook session.
+2. Submit a small `copyq` PBS job for GEE/data staging.
+3. Submit a standard compute PBS job for SSEBop/SWB model computation against the prepared `/g/data` inputs.
+
+For Earth Engine setup, an initialization notebook such as `ee_init.ipynb` can be used before submitting PBS jobs:
+
+```python
+import ee
+
+ee.Reset()
+ee.Authenticate(force=True)
+ee.Initialize(project="your-gee-project")
+```
+
+Run that interactively only. It writes user credentials under `~/.config/earthengine/credentials`; subsequent batch jobs for the same NCI user should call `ee.Initialize(project="your-gee-project")` without prompting if the credentials and project permissions are valid. Do not put `ee.Authenticate(force=True)` inside an unattended PBS job.
+
+For a quick non-interactive authentication check before `qsub`, run:
+
+```bash
+python - <<'PY'
+import ee
+ee.Initialize(project="your-gee-project")
+print(ee.Image("NASA/NASADEM_HGT/001").bandNames().getInfo())
+PY
+```
+
+For PBS jobs, request all project storage that the script reads or writes, for example:
+
+```bash
+#PBS -q copyq
+#PBS -l storage=gdata/ym05+gdata/yx97
+```
+
+Also activate the intended Python environment explicitly, or call its Python executable by absolute path, so that PBS does not accidentally run a different `python` than the interactive notebook environment.
 
 For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the Step 6 post-processing wrapper or the canonical modules under `pysweb.visualisation`:
 

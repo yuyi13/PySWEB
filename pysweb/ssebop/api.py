@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-05-01
+Last updated: 2026-05-11
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: Imported as `pysweb.ssebop.api`
@@ -49,6 +49,18 @@ from pysweb.ssebop.landcover import (
 )
 
 _SCENE_WORKER_CONTEXT: Optional[Dict[str, object]] = None
+
+
+def _pool_context():
+    try:
+        return mp.get_context("fork")
+    except ValueError:
+        return None
+
+
+def _init_scene_worker_context(scene_context: Dict[str, object]) -> None:
+    global _SCENE_WORKER_CONTEXT
+    _SCENE_WORKER_CONTEXT = scene_context
 
 
 def _validate_extent(extent: list[float]) -> list[float]:
@@ -433,8 +445,7 @@ def gapfill_etf_savgol(
         n_workers = min(workers, target.shape[1])
         chunk_size = int(np.ceil(target.shape[1] / n_workers))
         chunks = [target[:, i : i + chunk_size] for i in range(0, target.shape[1], chunk_size)]
-        mp_ctx = mp.get_context("fork")
-        with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as executor:
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=_pool_context()) as executor:
             filled_chunks = list(
                 executor.map(
                     _gapfill_flat_chunk,
@@ -791,12 +802,15 @@ def run_ssebop_workflow(
         }
 
         global _SCENE_WORKER_CONTEXT
-        _SCENE_WORKER_CONTEXT = scene_context
         try:
-            mp_ctx = mp.get_context("fork")
             scene_workers = min(workers, len(landsat_files))
             scene_chunksize = max(1, len(landsat_files) // (scene_workers * 4))
-            with ProcessPoolExecutor(max_workers=scene_workers, mp_context=mp_ctx) as executor:
+            with ProcessPoolExecutor(
+                max_workers=scene_workers,
+                mp_context=_pool_context(),
+                initializer=_init_scene_worker_context,
+                initargs=(scene_context,),
+            ) as executor:
                 for output in executor.map(
                     _process_landsat_scene_worker,
                     landsat_files,

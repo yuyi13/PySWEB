@@ -4,7 +4,7 @@ Script: test_api_run.py
 Objective: Verify the SSEBop package run API validates incomplete calls while forwarding supported workflow inputs.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-05-01
+Last updated: 2026-05-11
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_run.py
@@ -235,3 +235,157 @@ def test_process_landsat_scene_uses_nonprojected_tcold_fallback(monkeypatch, tmp
     )
 
     assert calls
+
+
+def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monkeypatch, tmp_path: Path):
+    times = np.array(["2024-01-01", "2024-01-02"], dtype="datetime64[ns]")
+    coords = {
+        "time": times,
+        "y": np.array([1.0, 0.0]),
+        "x": np.array([0.0, 1.0]),
+    }
+    spatial = xr.DataArray(
+        np.ones((2, 2), dtype=np.float32),
+        dims=("y", "x"),
+        coords={key: value for key, value in coords.items() if key != "time"},
+    ).rio.write_crs("EPSG:4326")
+    met = xr.DataArray(
+        np.ones((2, 2, 2), dtype=np.float32),
+        dims=("time", "y", "x"),
+        coords=coords,
+    ).rio.write_crs("EPSG:4326")
+    dt_clim = xr.DataArray(
+        np.ones((366, 2, 2), dtype=np.float32),
+        dims=("dayofyear", "y", "x"),
+        coords={
+            "dayofyear": np.arange(1, 367),
+            "y": coords["y"],
+            "x": coords["x"],
+        },
+    ).rio.write_crs("EPSG:4326")
+    stack = xr.DataArray(
+        np.ones((2, 2, 2), dtype=np.float32),
+        dims=("time", "y", "x"),
+        coords=coords,
+    ).rio.write_crs("EPSG:4326")
+    scenes = ["Landsat_2024-01-01.tif", "Landsat_2024-01-02.tif"]
+    executor_calls = {}
+    scene_calls = []
+
+    def fail_get_context(method):
+        assert method == "fork"
+        raise ValueError("cannot find context for 'fork'")
+
+    class RecordingExecutor:
+        def __init__(self, max_workers=None, mp_context=None, initializer=None, initargs=()):
+            executor_calls["max_workers"] = max_workers
+            executor_calls["mp_context"] = mp_context
+            executor_calls["initializer"] = initializer
+            executor_calls["initargs"] = initargs
+            if initializer is not None:
+                initializer(*initargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def map(self, fn, items, chunksize=1):
+            executor_calls["chunksize"] = chunksize
+            return [fn(item) for item in items]
+
+    def fake_process_landsat_scene(**kwargs):
+        scene_calls.append(kwargs)
+        date = Path(kwargs["tif_path"]).stem.replace("Landsat_", "")
+        return (
+            np.datetime64(date, "ns"),
+            str(tmp_path / f"etf_{date}.tif"),
+            str(tmp_path / f"ndvi_{date}.tif"),
+        )
+
+    monkeypatch.setattr(ssebop_api.mp, "get_context", fail_get_context)
+    monkeypatch.setattr(ssebop_api, "ProcessPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(ssebop_api, "list_landsat_files", lambda *args, **kwargs: scenes)
+    monkeypatch.setattr(ssebop_api, "filter_landsat_files_by_date", lambda files, date_range: files)
+    monkeypatch.setattr(ssebop_api, "read_geotiff_bands", lambda path: {"lst": spatial})
+    monkeypatch.setattr(ssebop_api.rioxarray, "open_rasterio", lambda *args, **kwargs: spatial.expand_dims(band=[1]))
+    monkeypatch.setattr(ssebop_api, "reproject_match_crop_first", lambda source, *args, **kwargs: source)
+    monkeypatch.setattr(ssebop_api, "resolve_met_input_paths", lambda *args, **kwargs: "met.nc")
+    monkeypatch.setattr(ssebop_api, "open_meteorology_da", lambda *args, **kwargs: met)
+    monkeypatch.setattr(ssebop_api, "build_lat_lon", lambda template: (spatial, spatial))
+    monkeypatch.setattr(ssebop_api, "compute_dt_daily", lambda *args, **kwargs: met)
+    monkeypatch.setattr(ssebop_api, "build_doy_climatology", lambda daily: dt_clim)
+    monkeypatch.setattr(ssebop_api, "process_landsat_scene", fake_process_landsat_scene)
+    monkeypatch.setattr(ssebop_api, "load_output_stack", lambda *args, **kwargs: stack)
+
+    ssebop_api.run_ssebop_workflow(
+        date_range="2024-01-01 to 2024-01-02",
+        landsat_dir=str(tmp_path),
+        dem=str(tmp_path / "dem.tif"),
+        output_dir=str(tmp_path / "out"),
+        et_short_crop=str(tmp_path / "eto.nc"),
+        tmax=str(tmp_path / "tmax.nc"),
+        tmin=str(tmp_path / "tmin.nc"),
+        rs=str(tmp_path / "rs.nc"),
+        ea=str(tmp_path / "ea.nc"),
+        met_temp_units="kelvin",
+        workers=2,
+    )
+
+    assert executor_calls["mp_context"] is None
+    assert executor_calls["initializer"] is ssebop_api._init_scene_worker_context
+    assert scene_calls
+    assert scene_calls[0]["dt_clim"] is dt_clim
+
+
+def test_gapfill_etf_savgol_falls_back_when_fork_unavailable(monkeypatch):
+    times = np.array(
+        ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"],
+        dtype="datetime64[ns]",
+    )
+    data = np.ones((5, 2, 2), dtype=np.float32)
+    data[2, 0, 0] = np.nan
+    data[3, 1, 1] = np.nan
+    etf_stack = xr.DataArray(
+        data,
+        dims=("time", "y", "x"),
+        coords={
+            "time": times,
+            "y": np.array([1.0, 0.0]),
+            "x": np.array([0.0, 1.0]),
+        },
+    )
+    executor_calls = {}
+
+    def fail_get_context(method):
+        assert method == "fork"
+        raise ValueError("cannot find context for 'fork'")
+
+    class RecordingExecutor:
+        def __init__(self, max_workers=None, mp_context=None):
+            executor_calls["max_workers"] = max_workers
+            executor_calls["mp_context"] = mp_context
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def map(self, fn, chunks, *args, chunksize=1):
+            executor_calls["chunksize"] = chunksize
+            return list(chunks)
+
+    monkeypatch.setattr(ssebop_api.mp, "get_context", fail_get_context)
+    monkeypatch.setattr(ssebop_api, "ProcessPoolExecutor", RecordingExecutor)
+
+    filled = ssebop_api.gapfill_etf_savgol(
+        etf_stack,
+        window_days=3,
+        min_samples=3,
+        workers=2,
+    )
+
+    assert executor_calls["mp_context"] is None
+    assert filled.shape == etf_stack.shape
