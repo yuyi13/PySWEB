@@ -4,7 +4,7 @@ Script: test_era5land_stack.py
 Objective: Verify the package ERA5-Land daily stacker writes the required NetCDF products from daily GeoTIFF inputs.
 Author: Yi Yu
 Created: 2026-04-16
-Last updated: 2026-05-03
+Last updated: 2026-05-11
 Inputs: Synthetic daily GeoTIFFs, DEM rasters, and temporary output directories.
 Outputs: Test assertions.
 Usage: pytest tests/met/test_era5land_stack.py
@@ -18,6 +18,7 @@ import rasterio
 from rasterio.transform import from_origin
 import xarray as xr
 
+from pysweb.met.era5land import stack as era5land_stack
 from pysweb.met.era5land.stack import stack_era5land_daily_inputs
 
 
@@ -175,3 +176,54 @@ def test_stacker_requires_complete_requested_date_range(tmp_path):
             end_date="2024-01-03",
             output_dir=out_dir,
         )
+
+
+def test_write_netcdf_uses_scipy_netcdf3_backend(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_to_netcdf(self, path, **kwargs):
+        calls["path"] = Path(path)
+        calls["kwargs"] = kwargs
+        calls["path"].write_bytes(b"CDF\001")
+
+    monkeypatch.setattr(xr.Dataset, "to_netcdf", fake_to_netcdf)
+    monkeypatch.setattr(era5land_stack, "_validate_netcdf", lambda path, var_name: None, raising=False)
+
+    era5land_stack._write_netcdf(
+        tmp_path / "tmax.nc",
+        "tmax",
+        np.ones((1, 1, 1), dtype=np.float32),
+        np.array(["2024-01-01"], dtype="datetime64[D]"),
+        np.array([-35.0]),
+        np.array([149.0]),
+        "degree_Celsius",
+        "Daily maximum air temperature",
+    )
+
+    assert calls["path"].name.startswith(".tmax.nc.")
+    assert calls["kwargs"] == {"engine": "scipy", "format": "NETCDF3_64BIT"}
+
+
+def test_write_netcdf_does_not_leave_zero_byte_output_after_failed_write(monkeypatch, tmp_path):
+    output_path = tmp_path / "tmax.nc"
+
+    def fail_to_netcdf(self, path, **kwargs):
+        Path(path).write_bytes(b"")
+        raise RuntimeError("simulated backend failure")
+
+    monkeypatch.setattr(xr.Dataset, "to_netcdf", fail_to_netcdf)
+
+    with pytest.raises(RuntimeError, match="simulated backend failure"):
+        era5land_stack._write_netcdf(
+            output_path,
+            "tmax",
+            np.ones((1, 1, 1), dtype=np.float32),
+            np.array(["2024-01-01"], dtype="datetime64[D]"),
+            np.array([-35.0]),
+            np.array([149.0]),
+            "degree_Celsius",
+            "Daily maximum air temperature",
+        )
+
+    assert not output_path.exists()
+    assert not list(tmp_path.glob(".tmax.nc.*.tmp"))

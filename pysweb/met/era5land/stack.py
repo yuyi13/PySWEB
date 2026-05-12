@@ -4,7 +4,7 @@ Script: stack.py
 Objective: Stack ERA5-Land daily GeoTIFF downloads into NetCDF meteorology products.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-05-01
+Last updated: 2026-05-11
 Inputs: ERA5-Land daily GeoTIFFs, DEM GeoTIFF, date range, and output directory.
 Outputs: Daily NetCDF files for precipitation, air temperature, radiation, vapor pressure, and short-reference ET.
 Usage: python -m pysweb.met.era5land.stack --help
@@ -13,7 +13,9 @@ Dependencies: argparse, numpy, rasterio, xarray, pysweb
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Sequence
@@ -43,6 +45,8 @@ REQUIRED_BANDS = (
     "surface_solar_radiation_downwards_sum",
     "total_precipitation_sum",
 )
+NETCDF_ENGINE = "scipy"
+NETCDF_FORMAT = "NETCDF3_64BIT"
 
 
 def extract_date_from_path(path: Path) -> date:
@@ -140,6 +144,11 @@ def _write_netcdf(
     units: str,
     long_name: str,
 ) -> None:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(
+        f".{output_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    )
     data_array = xr.DataArray(
         values.astype(np.float32, copy=False),
         dims=("time", "lat", "lon"),
@@ -147,7 +156,38 @@ def _write_netcdf(
         name=var_name,
         attrs={"long_name": long_name, "units": units},
     )
-    data_array.to_dataset(name=var_name).to_netcdf(output_path)
+    try:
+        data_array.to_dataset(name=var_name).to_netcdf(
+            tmp_path,
+            engine=NETCDF_ENGINE,
+            format=NETCDF_FORMAT,
+        )
+        _validate_netcdf(tmp_path, var_name)
+        try:
+            tmp_path.replace(output_path)
+        except PermissionError as exc:
+            raise PermissionError(
+                f"Could not replace {output_path}. Close any program that may have "
+                "the NetCDF file open, then rerun the stack step."
+            ) from exc
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _validate_netcdf(path: Path, var_name: str) -> None:
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"NetCDF write produced an empty file: {path}")
+
+    try:
+        with xr.open_dataset(path, engine=NETCDF_ENGINE) as ds:
+            if var_name not in ds.data_vars:
+                raise RuntimeError(f"NetCDF file {path} does not contain variable '{var_name}'.")
+            if ds[var_name].size == 0:
+                raise RuntimeError(f"NetCDF variable '{var_name}' is empty in {path}.")
+    except Exception as exc:
+        raise RuntimeError(f"NetCDF validation failed for {path}: {exc}") from exc
 
 
 def stack_era5land_daily_inputs(
