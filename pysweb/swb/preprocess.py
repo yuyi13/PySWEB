@@ -4,7 +4,7 @@ Script: preprocess.py
 Objective: Preprocess forcing, soil, and GSSM reference SSM inputs into aligned NetCDF files for SWB runs.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-05-02
+Last updated: 2026-05-13
 Inputs: Command-line arguments or keyword arguments describing date range, extent, forcing inputs, Earth Engine assets, and output location.
 Outputs: NetCDF forcing files, soil-property layers, and optional reference SSM products on a common grid.
 Usage: Imported as `pysweb.swb.preprocess` or run as a module entry point.
@@ -179,6 +179,8 @@ def _subset_to_extent(
     lat_slice = slice(max_lat, min_lat) if lat_values[0] > lat_values[-1] else slice(min_lat, max_lat)
     subset = da.sel({lat_dim: lat_slice, lon_dim: slice(min_lon, max_lon)})
     if subset.sizes[lat_dim] == 0 or subset.sizes[lon_dim] == 0:
+        if da.sizes.get(lat_dim, 0) == 1 and da.sizes.get(lon_dim, 0) == 1:
+            return da
         raise ValueError("Extent selection removed all grid cells; adjust --extent bounds.")
     return subset
 

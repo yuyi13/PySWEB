@@ -4,7 +4,7 @@ Script: test_preprocess.py
 Objective: Verify SWB preprocess helpers and package-owned preprocessing orchestration for forcing, soil dispatch, and reference SSM outputs.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-05-13
 Inputs: Pytest fixtures, temporary directories, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_preprocess.py -q
@@ -396,6 +396,45 @@ def test_process_precipitation_accepts_noon_stamped_daily_netcdf(tmp_path: Path)
     result = process_precipitation(args, grid, pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02"))
 
     np.testing.assert_array_equal(result.coords["time"].values, pd.to_datetime(["2024-01-01", "2024-01-02"]).values)
+
+
+def test_process_precipitation_broadcasts_single_pixel_netcdf_for_tiny_extent(tmp_path: Path):
+    rain_path = tmp_path / "rain_single_pixel.nc"
+    xr.Dataset(
+        {
+            "precipitation": xr.DataArray(
+                np.array([[[10.0]], [[11.0]]], dtype=np.float32),
+                dims=("time", "lat", "lon"),
+                coords={
+                    "time": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                    "lat": np.array([-35.05], dtype=float),
+                    "lon": np.array([146.15], dtype=float),
+                },
+                name="precipitation",
+            )
+        }
+    ).to_netcdf(rain_path)
+
+    extent = [146.159, -35.08, 146.179, -35.06]
+    args = _build_args(
+        {
+            "rain_file": str(rain_path),
+            "rain_var": "precipitation",
+            "extent": extent,
+            "workers": 1,
+            "dtype": "float32",
+            "lat_dim": "lat",
+            "lon_dim": "lon",
+        }
+    )
+    grid = _build_target_grid(_grid_args(extent=extent, sm_res=0.01))
+
+    result = process_precipitation(args, grid, pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02"))
+
+    assert result.sizes["lat"] == 2
+    assert result.sizes["lon"] == 2
+    np.testing.assert_allclose(result.values[:, 0, 0], np.array([10.0, 11.0], dtype=np.float32))
+    np.testing.assert_allclose(result.values[:, 1, 1], np.array([10.0, 11.0], dtype=np.float32))
 
 
 def test_process_et_rejects_netcdf_without_time_coordinate(tmp_path: Path):
