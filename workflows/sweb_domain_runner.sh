@@ -3,7 +3,7 @@
 # Objective: Orchestrate SWEB preprocessing, domain calibration, and model execution for a selected run subdirectory using ERA5-Land precipitation and SSEBop ET.
 # Author: Yi Yu
 # Created: 2026-02-17
-# Last updated: 2026-05-03
+# Last updated: 2026-05-15
 # Inputs: run_subdir plus optional flags (--burn-in-end, --workers, --uncalibrated, step toggles) and forcing paths.
 # Outputs: Preprocessed SWEB inputs, domain calibration CSV, and SWEB RZSM outputs.
 # Usage: bash workflows/sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers N] [--uncalibrated] [--mute-preprocess] [--mute-calib] [--mute-run]
@@ -140,7 +140,7 @@ Usage: sweb_domain_runner.sh <run_subdir> [--burn-in-end YYYY-MM-DD] [--workers 
   run_subdir        Run label used to locate prepared ERA5-Land stacks, SSEBop outputs, and SWEB outputs.
                     Precipitation is read from 1_ssebop_inputs/<run_subdir>/met/era5land/stack.
   MODEL_RUN_PERIOD/CALIB_PERIOD are configured near the top of this script.
-                    If CALIB_PERIOD is outside MODEL_RUN_PERIOD, Step 1 preprocesses both periods.
+                    If calibration is enabled and CALIB_PERIOD is outside MODEL_RUN_PERIOD, Step 1 preprocesses both periods.
   --burn-in-end     Burn-in end date (YYYY-MM-DD). Burn-in start is fixed to MODEL_RUN_PERIOD start.
                     Default: 1 year from model start (clamped to model end - 1 day).
   --workers N       Number of parallel workers for preprocessing, calibration, and SWEB run steps.
@@ -280,6 +280,17 @@ if [[ "${RUN_CALIB}" == "false" && "${UNCALIBRATED_MODE}" == "false" && ! -f "${
   UNCALIBRATED_MODE="true"
   AUTO_UNCALIBRATED_REASON="--mute-calib was used and calibration CSV was not found at ${CALIB_OUTPUT}"
 fi
+CALIBRATION_REQUIRED="false"
+MODEL_NEEDS_REFERENCE_SSM="false"
+CALIB_NEEDS_PREPROCESS="false"
+if [[ "${RUN_CALIB}" == "true" && "${UNCALIBRATED_MODE}" == "false" ]]; then
+  CALIBRATION_REQUIRED="true"
+  if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
+    MODEL_NEEDS_REFERENCE_SSM="true"
+  else
+    CALIB_NEEDS_PREPROCESS="true"
+  fi
+fi
 mkdir -p "${PREPROCESS_OUT_DIR}" "${MODEL_OUT_DIR}"
 
 print_badge
@@ -290,8 +301,10 @@ print_config "Burn-in period" "${BURN_IN_START} to ${BURN_IN_END}"
 print_config "Post-burn range" "${POST_BURN_START} to ${MODEL_END_DATE}"
 if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
   print_config "Preprocess plan" "single run (CALIB_PERIOD within MODEL_RUN_PERIOD)"
-else
+elif [[ "${CALIB_NEEDS_PREPROCESS}" == "true" ]]; then
   print_config "Preprocess plan" "dual runs (CALIB_PERIOD outside MODEL_RUN_PERIOD)"
+else
+  print_config "Preprocess plan" "single model run (calibration reference SSM not required)"
 fi
 print_config "Precip source dir" "${PRECIP_DIR}"
 print_config "ET source dir" "${ET_DIR}"
@@ -376,8 +389,10 @@ run_preprocess_for_window() {
   local window_end="$3"
   local window_start_ts="$4"
   local window_end_ts="$5"
+  local include_reference_ssm="$6"
   local rain_source_file=""
   local et_source_file=""
+  local reference_args=()
 
   if ! rain_source_file="$(find_precip_source_file "${window_start}" "${window_end}" "${window_start_ts}" "${window_end_ts}")"; then
     return 1
@@ -389,6 +404,10 @@ run_preprocess_for_window() {
   print_status "STEP 1/3" "Preprocessing ${window_label}: ${window_start} to ${window_end}"
   print_status "STEP 1/3" "Using rain file: ${rain_source_file}"
   print_status "STEP 1/3" "Using ET file: ${et_source_file}"
+  if [[ "${include_reference_ssm}" != "true" ]]; then
+    reference_args=(--skip-reference-ssm)
+    print_status "STEP 1/3" "Skipping reference SSM for ${window_label}; it is only needed for calibration."
+  fi
   python "${PREPROCESS_SCRIPT}" \
       --date-range "${window_start}" "${window_end}" \
       --extent "${EXTENT_ARGS[@]}" \
@@ -400,25 +419,31 @@ run_preprocess_for_window() {
       --e-var "${E_VAR}" \
       --et-var "${ET_VAR}" \
       --t-var "${T_VAR}" \
-      --output-dir "${PREPROCESS_OUT_DIR}"
+      --output-dir "${PREPROCESS_OUT_DIR}" \
+      "${reference_args[@]}"
 }
 
 # Step 1: preprocess forcing + soil + reference SSM to common grid.
 if [[ "${RUN_PREPROCESS}" == "true" ]]; then
   if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
     print_status "STEP 1/3" "Running one preprocessing pass for MODEL_RUN_PERIOD."
-    run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}"
-    print_status "STEP 1/3" "CALIB_PERIOD is within MODEL_RUN_PERIOD; calibration will reuse model-period preprocessing outputs."
-  else
+    run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}" "${MODEL_NEEDS_REFERENCE_SSM}"
+    if [[ "${CALIBRATION_REQUIRED}" == "true" ]]; then
+      print_status "STEP 1/3" "CALIB_PERIOD is within MODEL_RUN_PERIOD; calibration will reuse model-period preprocessing outputs."
+    fi
+  elif [[ "${CALIB_NEEDS_PREPROCESS}" == "true" ]]; then
     print_status "STEP 1/3" "Running separate preprocessing for MODEL_RUN_PERIOD and CALIB_PERIOD."
-    run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}"
-    run_preprocess_for_window "CALIB_PERIOD" "${CALIB_START_DATE}" "${CALIB_END_DATE}" "${CALIB_START_TS}" "${CALIB_END_TS}"
+    run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}" "${MODEL_NEEDS_REFERENCE_SSM}"
+    run_preprocess_for_window "CALIB_PERIOD" "${CALIB_START_DATE}" "${CALIB_END_DATE}" "${CALIB_START_TS}" "${CALIB_END_TS}" "true"
+  else
+    print_status "STEP 1/3" "Running one preprocessing pass for MODEL_RUN_PERIOD."
+    run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}" "${MODEL_NEEDS_REFERENCE_SSM}"
   fi
 else
-  if [[ "${CALIB_WITHIN_MODEL}" == "true" ]]; then
-    print_skip "STEP 1/3" "Skipping preprocessing; expecting model-period preprocessed files to exist."
-  else
+  if [[ "${CALIB_NEEDS_PREPROCESS}" == "true" ]]; then
     print_skip "STEP 1/3" "Skipping preprocessing; expecting model-period and calibration-period preprocessed files to exist."
+  else
+    print_skip "STEP 1/3" "Skipping preprocessing; expecting model-period preprocessed files to exist."
   fi
 fi
 

@@ -4,7 +4,7 @@ Script: test_runners.py
 Objective: Verify the workflow shell wrappers stay thin and point at the package-backed entrypoints.
 Author: Yi Yu
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-05-15
 Inputs: Workflow shell scripts and subprocess invocations supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_runners.py
@@ -115,6 +115,16 @@ def test_sweb_runner_uses_reference_ssm_filename_contract():
     assert "smap_ssm_daily_" not in sweb_text
     assert '--reference-ssm "${CALIB_REFERENCE_SSM_FILE}"' in sweb_text
     assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' not in sweb_text
+
+
+def test_sweb_runner_skips_reference_ssm_when_preprocess_window_is_not_for_calibration():
+    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
+
+    assert "--skip-reference-ssm" in sweb_text
+    assert 'MODEL_NEEDS_REFERENCE_SSM="false"' in sweb_text
+    assert 'CALIB_NEEDS_PREPROCESS="false"' in sweb_text
+    assert 'run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}" "${MODEL_NEEDS_REFERENCE_SSM}"' in sweb_text
+    assert 'run_preprocess_for_window "CALIB_PERIOD" "${CALIB_START_DATE}" "${CALIB_END_DATE}" "${CALIB_START_TS}" "${CALIB_END_TS}" "true"' in sweb_text
 
 
 def test_sweb_runner_does_not_pass_legacy_soil_cli_flags():

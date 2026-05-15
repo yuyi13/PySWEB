@@ -4,14 +4,15 @@ Script: test_docs_and_notebooks.py
 Objective: Verify the run notebook and README files document the canonical package-backed notebook workflow.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-05-03
+Last updated: 2026-05-15
 Inputs: Repository README files and the notebooks/01_run_pysweb.ipynb notebook.
 Outputs: Pytest assertions.
 Usage: python -m pytest tests/package/test_docs_and_notebooks.py -q
-Dependencies: json, pathlib, pytest
+Dependencies: json, pathlib, re, pytest
 """
 import json
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +53,8 @@ def test_run_notebook_uses_package_backed_swb_calls():
     assert 'rain_var = "precipitation"' in code_text
     assert "SWB_START_DATE" in code_text
     assert "openlandmap_missing_soc_g_per_kg = 5.0" in code_text
+    assert "skip_reference_ssm = not include_reference_ssm" in code_text
+    assert "include_reference_ssm = RUN_SWB_CALIBRATE and CALIB_SAME_AS_RUN" in code_text
 
     assert "SWB preprocess and calibration are still driven by" not in markdown_text
     assert "workflow-script-only" not in markdown_text
@@ -64,6 +67,38 @@ def test_run_notebook_uses_package_backed_swb_calls():
     assert "dem_dir = str(DEM_DIR)" in code_text
     assert "dem = str(PREPARED_DEM)" in code_text
     assert "`SM_RES` is the SWB preprocess target grid resolution." in markdown_text
+
+
+def test_run_notebook_separates_run_and_calibration_date_ranges():
+    _, code_text = _read_notebook_sections("notebooks/01_run_pysweb.ipynb")
+
+    assert re.search(r"(^|\n)DATE_RANGE\s*=", code_text) is None
+    assert "RUN_DATE_RANGE =" in code_text
+    assert "CALIB_DATE_RANGE =" in code_text
+    assert "RUN_START_DATE, RUN_END_DATE = _parse_date_range(RUN_DATE_RANGE)" in code_text
+    assert "date_range = RUN_DATE_RANGE" in code_text
+    assert "date_range = CALIB_DATE_RANGE" in code_text
+    assert "CALIB_START_DATE, CALIB_END_DATE = _parse_date_range(CALIB_DATE_RANGE)" in code_text
+    assert code_text.index("if RUN_SWB_CALIBRATE:\n    CALIB_START_DATE") < code_text.index("pysweb.swb.calibrate(")
+    assert "date_range = [CALIB_SWB_START_DATE, CALIB_SWB_END_DATE]" in code_text
+    assert '"start_date": RUN_SWB_START_DATE' in code_text
+    assert '"end_date": RUN_SWB_END_DATE' in code_text
+
+
+def test_run_notebook_puts_execution_toggles_before_paths():
+    _, code_text = _read_notebook_sections("notebooks/01_run_pysweb.ipynb")
+
+    expected_order = [
+        "RUN_PREPARE_INPUTS =",
+        "RUN_SSEBOP =",
+        "RUN_SWB_PREPROCESS =",
+        "RUN_SWB_CALIBRATE =",
+        "RUN_SWB =",
+        "PROJECT_DIR =",
+    ]
+    positions = [code_text.index(text) for text in expected_order]
+
+    assert positions == sorted(positions)
 
 
 def test_readmes_list_actual_notebook_files():
