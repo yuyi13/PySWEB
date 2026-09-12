@@ -7,8 +7,8 @@ Created: 2026-04-17
 Last updated: 2026-09-12
 Inputs: Workflow module imports and CLI arguments supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/workflows/test_1_ssebop_prepare_inputs.py
-Dependencies: importlib, pytest
+Usage: python -m pytest tests/workflows/test_1_ssebop_prepare_inputs.py
+Dependencies: pytest; pysweb
 """
 from importlib import util
 from pathlib import Path

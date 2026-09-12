@@ -2,13 +2,13 @@
 """
 Script: test_pysweb_imports.py
 Objective: Verify the package exposes importable subpackages and callable facade entry points.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-05-03
 Inputs: Package imports and direct facade calls exercised under pytest.
 Outputs: Test assertions.
-Usage: pytest tests/package/test_pysweb_imports.py
-Dependencies: pytest, subprocess
+Usage: python -m pytest tests/package/test_pysweb_imports.py
+Dependencies: pytest; pysweb
 """
 from importlib import import_module
 import inspect

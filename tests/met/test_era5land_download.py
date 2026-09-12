@@ -2,13 +2,13 @@
 """
 Script: test_era5land_download.py
 Objective: Verify the package ERA5-Land daily download config builder produces the expected GEE settings.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
 Last updated: 2026-05-03
 Inputs: Temporary paths and pure config-builder inputs supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/met/test_era5land_download.py
-Dependencies: pytest
+Usage: python -m pytest tests/met/test_era5land_download.py
+Dependencies: pytest; pysweb
 """
 from importlib import reload
 from pathlib import Path

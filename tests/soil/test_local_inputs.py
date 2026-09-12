@@ -4,10 +4,10 @@ Objective: Exercise local soil adapters using real NetCDF and GeoTIFF files.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: Synthetic fixtures and package interfaces supplied by pytest.
+Inputs: Synthetic hydraulic NetCDFs, MLConstraints GeoTIFFs and target-grid fixtures.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/soil/test_local_inputs.py
-Dependencies: pytest, numpy, pandas, xarray, pysweb
+Dependencies: numpy, pytest, rasterio, xarray; pysweb
 """
 
 from pathlib import Path

@@ -1,13 +1,13 @@
 """
 Script: cli.py
-Objective: Expose installed command-line entry points for the canonical package.
+Objective: Dispatch installed PySWEB commands to their package entry points.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: In-memory arrays and explicit workflow configuration.
-Outputs: Validated data and numerical diagnostics.
-Usage: Imported by pysweb workflows.
-Dependencies: argparse, importlib, pysweb
+Inputs: Command name and arguments for the selected workflow, demo or plot.
+Outputs: Command help or products from the selected package entry point.
+Usage: pysweb --help
+Dependencies: Python standard library
 """
 
 from __future__ import annotations

@@ -7,8 +7,8 @@ Created: 2026-04-17
 Last updated: 2026-09-12
 Inputs: Temporary paths and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/ssebop/test_api_prepare_inputs.py
-Dependencies: pytest
+Usage: python -m pytest tests/ssebop/test_api_prepare_inputs.py
+Dependencies: pytest, PyYAML; pysweb
 """
 from pathlib import Path
 import json

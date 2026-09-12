@@ -2,13 +2,13 @@
 """
 Script: test_api.py
 Objective: Verify SWB package facade functions dispatch to the package-owned preprocess and calibration callables.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-04-19
 Inputs: Package facade calls and monkeypatched dispatch targets exercised under pytest.
 Outputs: Test assertions.
-Usage: pytest tests/swb/test_api.py
-Dependencies: pytest
+Usage: python -m pytest tests/swb/test_api.py
+Dependencies: pytest; pysweb
 """
 from importlib import import_module
 from pathlib import Path

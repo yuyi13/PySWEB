@@ -2,13 +2,13 @@
 """
 Script: __init__.py
 Objective: Expose lazy visualisation submodules for plotting helpers.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-04-19
 Inputs: Package attribute access and submodule imports.
 Outputs: Lazy access to plotting submodules.
-Usage: Imported as `pysweb.visualisation`
-Dependencies: importlib
+Usage: import pysweb.visualisation
+Dependencies: Python standard library
 """
 
 from importlib import import_module

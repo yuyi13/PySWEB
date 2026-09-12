@@ -2,13 +2,13 @@
 """
 Script: test_era5land_stack.py
 Objective: Verify the package ERA5-Land daily stacker writes the required NetCDF products from daily GeoTIFF inputs.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
 Last updated: 2026-05-11
 Inputs: Synthetic daily GeoTIFFs, DEM rasters, and temporary output directories.
 Outputs: Test assertions.
-Usage: pytest tests/met/test_era5land_stack.py
-Dependencies: numpy, pytest, rasterio, xarray
+Usage: python -m pytest tests/met/test_era5land_stack.py
+Dependencies: numpy, pytest, rasterio, xarray; pysweb
 """
 from pathlib import Path
 

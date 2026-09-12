@@ -2,12 +2,12 @@
 """
 Script: core.py
 Objective: Provide package-native SSEBop physics helpers for dT, ET fraction, Tcold estimation, climatology, and daily ET calculations.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-05-03
 Inputs: xarray temperature and geospatial arrays plus pandas ET series.
 Outputs: SSEBop helper DataArray and Series results.
-Usage: Imported by pysweb.ssebop consumers.
+Usage: import pysweb.ssebop.core
 Dependencies: numpy, pandas, rioxarray, xarray
 """
 from __future__ import annotations

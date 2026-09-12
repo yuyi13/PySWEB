@@ -2,13 +2,13 @@
 """
 Script: test_era5land_refet.py
 Objective: Verify ERA5-Land reference ET math utilities and daily file discovery behave as expected.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
 Last updated: 2026-05-03
 Inputs: Pytest fixtures and synthetic temporary files.
 Outputs: Test assertions.
-Usage: pytest tests/met/test_era5land_refet.py
-Dependencies: numpy, pytest
+Usage: python -m pytest tests/met/test_era5land_refet.py
+Dependencies: numpy, pytest; pysweb
 """
 from pathlib import Path
 

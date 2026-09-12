@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Script: __init__.py
-Objective: Mark the DEM test package and document its scope.
-Author: Yi Yu
+Objective: Define the package namespace for dem tests.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
-Inputs: Pytest collection for DEM tests.
-Outputs: Test package namespace.
-Usage: Imported by pytest.
-Dependencies: None
+Inputs: Test-package imports during pytest collection.
+Outputs: A test namespace for module discovery.
+Usage: python -m pytest tests/dem
+Dependencies: Python standard library
 """

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: slga.py
-Objective: Provide the SLGA soil backend placeholder surface.
-Author: Yi Yu
+Objective: Expose the reserved SLGA soil-backend interface with an explicit unsupported-operation error.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-04-19
-Inputs: Backend arguments, grid object, and keyword options.
-Outputs: Soil backend results once the implementation is moved here.
-Usage: Imported via `pysweb.soil.slga`
-Dependencies: none
+Inputs: Backend arguments, target grid and keyword options.
+Outputs: NotImplementedError; this backend currently produces no soil data.
+Usage: import pysweb.soil.slga
+Dependencies: Python standard library
 """
 
 

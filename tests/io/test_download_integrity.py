@@ -4,10 +4,10 @@ Objective: Verify failed downloads propagate and only validated raster identitie
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: Synthetic fixtures and package interfaces supplied by pytest.
+Inputs: Temporary GeoTIFFs, cache manifests and stubbed Earth Engine download requests.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/io/test_download_integrity.py
-Dependencies: pytest, numpy, pandas, xarray, pysweb
+Dependencies: numpy, pytest, rasterio; pysweb
 """
 
 from importlib import import_module

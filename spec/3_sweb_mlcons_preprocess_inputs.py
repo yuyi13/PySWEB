@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: 3_sweb_mlcons_preprocess_inputs.py
-Objective: Delegate the supported workflow to the canonical pysweb package.
+Objective: Run canonical SWB preprocessing with MLConstraints selected as the default soil source.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-22
 Last updated: 2026-09-12
-Inputs: In-memory arrays and explicit workflow configuration.
-Outputs: Validated data and numerical diagnostics.
-Usage: Imported by pysweb workflows.
-Dependencies: pysweb
+Inputs: Forcing files, local soil maps, dates, extent and preprocessing options.
+Outputs: Aligned forcing, soil-property and optional reference SSM NetCDFs with provenance manifests.
+Usage: python spec/3_sweb_mlcons_preprocess_inputs.py --help
+Dependencies: Python standard library; pysweb
 """
 from pathlib import Path
 import sys

@@ -7,8 +7,8 @@ Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: Soil API imports and backend dispatch behavior.
 Outputs: Test assertions.
-Usage: pytest tests/soil/test_api.py
-Dependencies: pytest, xarray
+Usage: python -m pytest tests/soil/test_api.py
+Dependencies: numpy, pytest, xarray; pysweb
 """
 
 from importlib import import_module

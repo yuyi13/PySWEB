@@ -1,12 +1,12 @@
 """
 Script: contracts.py
-Objective: Validate daily calendars, spatial support and layer geometry.
+Objective: Validate daily calendars, geographic averaging weights and soil-layer geometry.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: In-memory arrays and explicit workflow configuration.
-Outputs: Validated data and numerical diagnostics.
-Usage: Imported by pysweb workflows.
+Inputs: Dated DataArrays, geographic coordinates, date ranges and layer-bottom depths.
+Outputs: Validated daily arrays, month boundaries, layer depths and latitude weights.
+Usage: from pysweb.contracts import daily_data, month_bounds, layer_bottoms, geographic_weights
 Dependencies: numpy, pandas, xarray
 """
 

@@ -7,8 +7,8 @@ Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: Pytest execution against the workflow wrapper module.
 Outputs: Regression coverage for help text and forwarded preprocess arguments.
-Usage: python -m pytest tests/workflows/test_3_sweb_preprocess_inputs.py -q
-Dependencies: pytest
+Usage: python -m pytest tests/workflows/test_3_sweb_preprocess_inputs.py
+Dependencies: pytest; pysweb
 """
 from importlib import util
 from pathlib import Path

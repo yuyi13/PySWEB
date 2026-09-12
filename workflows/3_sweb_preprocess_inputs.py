@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: 3_sweb_preprocess_inputs.py
-Objective: Provide a thin CLI wrapper around the package-owned SWB preprocess workflow.
-Author: Yi Yu
+Objective: Align forcing, selected soil data and optional reference SSM on the SWB model grid.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
 Last updated: 2026-04-19
-Inputs: CLI options for forcing preparation, Earth Engine soil inputs, and reference SSM preparation.
-Outputs: Delegated package-owned SWB preprocess outputs in the requested output directory.
+Inputs: Dates, extent, forcing files, soil-source settings, optional reference SSM and output paths.
+Outputs: Aligned forcing, soil-property and optional reference SSM NetCDFs with provenance manifests.
 Usage: python workflows/3_sweb_preprocess_inputs.py --help
-Dependencies: pysweb
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 

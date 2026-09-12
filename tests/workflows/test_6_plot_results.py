@@ -2,13 +2,13 @@
 """
 Script: test_6_plot_results.py
 Objective: Verify the Step 6 plotting workflow dispatches to package visualisation entrypoints.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-05-03
 Last updated: 2026-05-03
 Inputs: Workflow script imports and subprocess CLI help invocations.
 Outputs: Test assertions.
-Usage: pytest tests/workflows/test_6_plot_results.py
-Dependencies: pytest, subprocess
+Usage: python -m pytest tests/workflows/test_6_plot_results.py
+Dependencies: pytest; pysweb
 """
 from __future__ import annotations
 

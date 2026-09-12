@@ -2,13 +2,13 @@
 """
 Script: test_cli_wrappers.py
 Objective: Verify the package visualisation modules import and expose help cleanly.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-05-03
 Inputs: Module imports and subprocess CLI help invocations.
 Outputs: Test assertions.
-Usage: pytest tests/visualisation/test_cli_wrappers.py
-Dependencies: pytest, subprocess
+Usage: python -m pytest tests/visualisation/test_cli_wrappers.py
+Dependencies: pytest; pysweb
 """
 from importlib import import_module
 import subprocess

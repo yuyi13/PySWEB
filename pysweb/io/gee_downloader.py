@@ -7,8 +7,8 @@ Created: 2026-02-17
 Last updated: 2026-09-12
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
-Usage: python -m pysweb.io.gee_downloader <config.yaml>
-Dependencies: earthengine-api, requests, rasterio, numpy, pyyaml, python-dateutil
+Usage: python -m pysweb.io.gee_downloader config.yaml
+Dependencies: earthengine-api, numpy, PyYAML, python-dateutil, rasterio, requests; pysweb; Earth Engine credentials
 """
 import math
 import os

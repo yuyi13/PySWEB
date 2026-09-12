@@ -7,8 +7,8 @@ Created: 2026-02-20
 Last updated: 2026-09-12
 Inputs: SSEBop/SWEB NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved time-series figure and optional CSV containing extracted values.
-Usage: python -m pysweb.visualisation.plot_time_series --help
-Dependencies: argparse, matplotlib, pandas, xarray
+Usage: pysweb time-series --help
+Dependencies: matplotlib, pandas, xarray; pysweb
 """
 from __future__ import annotations
 

@@ -4,10 +4,10 @@ Objective: Verify one shared configuration controls calibration and simulation p
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: Synthetic fixtures and package interfaces supplied by pytest.
+Inputs: Example workflow TOML, temporary configurations and monkeypatched package APIs.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/workflows/test_shared_config.py
-Dependencies: pytest, numpy, pandas, xarray, pysweb
+Dependencies: pytest; pysweb
 """
 
 from pathlib import Path

@@ -6,8 +6,8 @@ Created: 2026-04-17
 Last updated: 2026-09-12
 Inputs: NetCDF forcing paths, soil-property NetCDF paths, and layer metadata or user-supplied layer depths.
 Outputs: Loaded xarray DataArrays, resolved soil-path mappings, numpy soil-property grids, and validation errors.
-Usage: Imported as `pysweb.swb.core`
-Dependencies: numpy, xarray
+Usage: import pysweb.swb.core
+Dependencies: numpy, xarray; pysweb
 """
 from __future__ import annotations
 

@@ -2,13 +2,13 @@
 """
 Script: __init__.py
 Objective: Expose lazy DEM package entry points and the package-level DEM preparer.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
 Inputs: Package attribute access and submodule imports.
 Outputs: Lazy access to DEM backends and the DEM preparer facade.
-Usage: Imported as `pysweb.dem`
-Dependencies: importlib
+Usage: import pysweb.dem
+Dependencies: Python standard library
 """
 
 from importlib import import_module

@@ -1,4 +1,14 @@
-"""ERA5-Land unit conversion and short-reference ET helpers for pysweb."""
+"""
+Script: refet.py
+Objective: Convert ERA5-Land meteorology and calculate daily short-reference evapotranspiration.
+Author: Yi Yu (with assistance from Codex)
+Created: 2026-04-16
+Last updated: 2026-04-16
+Inputs: Numeric daily meteorology, elevation, latitude and day-of-year values.
+Outputs: Converted meteorological quantities and short-reference ET in mm/day.
+Usage: import pysweb.met.era5land.refet
+Dependencies: numpy
+"""
 from __future__ import annotations
 
 import numpy as np

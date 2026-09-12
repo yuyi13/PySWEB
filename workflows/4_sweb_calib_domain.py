@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: 4_sweb_calib_domain.py
-Objective: Provide a thin CLI wrapper around the package-owned SWB calibration workflow.
-Author: Yi Yu
+Objective: Calibrate domain SWB parameters against reference surface soil moisture.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
 Last updated: 2026-04-19
-Inputs: CLI options for prepared forcing, soil-property, and reference SSM calibration inputs.
-Outputs: Delegated package-owned SWB calibration CSV output.
+Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
+Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
 Usage: python workflows/4_sweb_calib_domain.py --help
-Dependencies: pysweb
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 

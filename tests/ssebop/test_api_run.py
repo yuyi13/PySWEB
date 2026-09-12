@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: test_api_run.py
-Objective: Verify the SSEBop package run API validates incomplete calls while forwarding supported workflow inputs.
+Objective: Verify SSEBop dispatch, process fallbacks and preservation of observations during interpolation.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-09-12
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/ssebop/test_api_run.py
-Dependencies: numpy, pandas, pytest, rioxarray, xarray
+Usage: python -m pytest tests/ssebop/test_api_run.py
+Dependencies: numpy, pandas, pytest, rioxarray, xarray; pysweb
 """
 from pathlib import Path
 import sys

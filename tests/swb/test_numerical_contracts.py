@@ -1,13 +1,13 @@
 """
 Script: test_numerical_contracts.py
-Objective: Regression tests for conservation, forcing calendars, calibration support and output identity.
+Objective: Verify conservation, restart states, forcing calendars, calibration support and output identity.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: Synthetic fixtures and package interfaces supplied by pytest.
+Inputs: Synthetic soil profiles, daily forcing arrays, demo files and provenance manifests.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/swb/test_numerical_contracts.py
-Dependencies: pytest, numpy, pandas, xarray, pysweb
+Dependencies: numpy, pandas, pytest, xarray; pysweb
 """
 
 from importlib import import_module

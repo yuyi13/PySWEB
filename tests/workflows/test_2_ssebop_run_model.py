@@ -7,8 +7,8 @@ Created: 2026-04-16
 Last updated: 2026-09-12
 Inputs: Temporary paths, helper-module imports, and workflow CLI invocations.
 Outputs: Test assertions.
-Usage: pytest tests/workflows/test_2_ssebop_run_model.py
-Dependencies: pathlib, subprocess, sys, pytest
+Usage: python -m pytest tests/workflows/test_2_ssebop_run_model.py
+Dependencies: pytest; pysweb
 """
 from importlib import util
 from pathlib import Path

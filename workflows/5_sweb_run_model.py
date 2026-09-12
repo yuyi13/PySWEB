@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: 5_sweb_run_model.py
-Objective: Provide a thin CLI wrapper around the package-owned SWB run workflow.
-Author: Yi Yu
+Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
 Last updated: 2026-04-17
-Inputs: CLI options for forcing NetCDFs, soil-property NetCDFs, and optional NDVI or parameter grids.
-Outputs: Delegated package-owned SWB run outputs in the requested output directory.
+Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
+Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
 Usage: python workflows/5_sweb_run_model.py --help
-Dependencies: argparse, pysweb
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 

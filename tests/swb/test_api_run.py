@@ -2,13 +2,13 @@
 """
 Script: test_api_run.py
 Objective: Verify the SWB package run facade rejects empty calls and forwards meaningful inputs to the package workflow.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-04-17
 Inputs: Facade API calls and monkeypatched workflow functions supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/swb/test_api_run.py
-Dependencies: pytest
+Usage: python -m pytest tests/swb/test_api_run.py
+Dependencies: pytest; pysweb
 """
 from pathlib import Path
 import sys

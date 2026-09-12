@@ -2,13 +2,13 @@
 """
 Script: test_landsat.py
 Objective: Verify the canonical SSEBop Landsat helper module and its compatibility shim preserve config semantics.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
 Inputs: Temporary config templates and package imports supplied by pytest.
 Outputs: Test assertions.
-Usage: pytest tests/ssebop/test_landsat.py
-Dependencies: pytest, pyyaml
+Usage: python -m pytest tests/ssebop/test_landsat.py
+Dependencies: pytest, PyYAML; pysweb
 """
 from pathlib import Path
 import json

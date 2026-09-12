@@ -1,13 +1,13 @@
 """
 Script: __init__.py
 Objective: Expose SWB package entry points while preserving callable facade attributes across import order.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-04-19
 Inputs: Package attribute access and submodule imports.
 Outputs: Callable package facade entry points.
-Usage: Imported as `pysweb.swb`
-Dependencies: importlib
+Usage: import pysweb.swb
+Dependencies: Python standard library
 """
 
 from importlib import import_module

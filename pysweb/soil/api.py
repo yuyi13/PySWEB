@@ -7,8 +7,8 @@ Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: Soil source selection, args namespace, grid object, and backend-specific kwargs.
 Outputs: SoilOutputs dataclass instances from implemented backends and validation errors for unsupported placeholders.
-Usage: Imported and called by package consumers.
-Dependencies: dataclasses, numpy, xarray
+Usage: import pysweb.soil.api
+Dependencies: numpy, xarray
 """
 
 from dataclasses import dataclass

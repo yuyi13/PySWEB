@@ -2,12 +2,12 @@
 """
 Script: landcover.py
 Objective: Provide package-native SSEBop landcover loaders and masks for ESA WorldCover inputs.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-04-17
 Inputs: WorldCover raster paths and xarray landcover grids.
 Outputs: Landcover DataArray values and class masks.
-Usage: Imported by pysweb.ssebop consumers.
+Usage: import pysweb.ssebop.landcover
 Dependencies: rioxarray, xarray
 """
 from __future__ import annotations

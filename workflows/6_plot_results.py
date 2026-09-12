@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: 6_plot_results.py
-Objective: Dispatch optional post-run plotting commands to canonical PySWEB visualisation modules.
-Author: Yi Yu
+Objective: Dispatch heatmap and time-series plotting commands to PySWEB visualisation modules.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-05-03
 Last updated: 2026-05-03
-Inputs: CLI subcommand and plotting arguments forwarded to package visualisation modules.
-Outputs: Delegated plotting side effects from the selected visualisation entrypoint.
-Usage: python workflows/6_plot_results.py {heatmap,time-series} --help
-Dependencies: argparse, pysweb.visualisation
+Inputs: Plot subcommand, model NetCDF paths, extraction settings and output paths.
+Outputs: Saved figures and optional CSV files of extracted plotting data.
+Usage: python workflows/6_plot_results.py --help
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 

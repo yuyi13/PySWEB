@@ -6,8 +6,8 @@ Created: 2026-09-12
 Last updated: 2026-09-12
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
-Usage: pysweb workflow --config study.toml --dry-run
-Dependencies: argparse, pathlib, tomllib, pandas, pysweb
+Usage: pysweb workflow --config examples/workflow.toml --dry-run
+Dependencies: pandas; pysweb
 """
 
 from __future__ import annotations

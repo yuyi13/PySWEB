@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: 2_ssebop_run_model.py
-Objective: Delegate the supported workflow to the canonical pysweb package.
+Objective: Run SSEBop through the canonical package CLI.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
 Last updated: 2026-09-12
-Inputs: In-memory arrays and explicit workflow configuration.
-Outputs: Validated data and numerical diagnostics.
-Usage: Imported by pysweb workflows.
-Dependencies: pysweb
+Inputs: Landsat rasters, meteorology NetCDFs, DEM, optional landcover and CLI or YAML settings.
+Outputs: SSEBop ET products, optional interpolation diagnostics and provenance manifests.
+Usage: python workflows/2_ssebop_run_model.py --help
+Dependencies: Python standard library; pysweb
 """
 from pathlib import Path
 import sys

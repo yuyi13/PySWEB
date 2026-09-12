@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: preprocess.py
-Objective: Preprocess forcing, soil, and GSSM reference SSM inputs into aligned NetCDF files for SWB runs.
+Objective: Align forcing, selected soil data and optional reference SSM on the SWB model grid.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-09-12
-Inputs: Command-line arguments or keyword arguments describing date range, extent, forcing inputs, Earth Engine assets, and output location.
-Outputs: NetCDF forcing files, soil-property layers, and optional reference SSM products on a common grid.
-Usage: Imported as `pysweb.swb.preprocess` or run as a module entry point.
-Dependencies: argparse, concurrent.futures, earthengine-api, multiprocessing, numpy, pandas, pyproj, requests, rioxarray, rasterio, xarray
+Inputs: Dates, extent, forcing files, soil-source settings, optional reference SSM and output paths.
+Outputs: Aligned forcing, soil-property and optional reference SSM NetCDFs with provenance manifests.
+Usage: pysweb swb-preprocess --help
+Dependencies: earthengine-api, numpy, pandas, pyproj, rasterio, requests, rioxarray, xarray; pysweb
 """
 from __future__ import annotations
 

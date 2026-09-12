@@ -2,13 +2,13 @@
 """
 Script: api.py
 Objective: Validate and dispatch DEM preparation requests to supported backends.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
 Inputs: DEM source selection, Earth Engine project name, and backend-specific kwargs.
 Outputs: Backend dispatch results or explicit validation and placeholder errors.
-Usage: Imported as `pysweb.dem.api`
-Dependencies: importlib
+Usage: import pysweb.dem.api
+Dependencies: Python standard library
 """
 
 from importlib import import_module

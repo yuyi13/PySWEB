@@ -8,7 +8,7 @@ Last updated: 2026-09-12
 Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --out-dir).
 Outputs: Package-managed Landsat, NASADEM, and meteorology inputs for the requested SSEBop run.
 Usage: pysweb ssebop-prepare --help
-Dependencies: argparse, os, sys, pysweb.ssebop, pysweb.ssebop.landsat
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 

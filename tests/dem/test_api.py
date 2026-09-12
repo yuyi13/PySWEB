@@ -2,13 +2,13 @@
 """
 Script: test_api.py
 Objective: Verify the DEM API validates its public contract and dispatches current NASADEM requests correctly.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
 Inputs: DEM API imports and dispatch behavior.
 Outputs: Test assertions.
-Usage: pytest tests/dem/test_api.py
-Dependencies: pytest
+Usage: python -m pytest tests/dem/test_api.py
+Dependencies: pytest; pysweb
 """
 
 from importlib import import_module

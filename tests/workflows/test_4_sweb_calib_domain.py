@@ -7,8 +7,8 @@ Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: Workflow module loading and monkeypatched calibration dispatch under pytest.
 Outputs: Test assertions.
-Usage: pytest tests/workflows/test_4_sweb_calib_domain.py
-Dependencies: pytest
+Usage: python -m pytest tests/workflows/test_4_sweb_calib_domain.py
+Dependencies: pytest; pysweb
 """
 from importlib import util
 from pathlib import Path

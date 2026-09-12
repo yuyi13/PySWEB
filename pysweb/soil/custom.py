@@ -6,8 +6,8 @@ Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: User hydraulic NetCDF files, CRS, units, layer depths and target grid.
 Outputs: Aligned and validated SoilOutputs for the shared SWB solver.
-Usage: Imported by pysweb workflows.
-Dependencies: numpy, xarray, rioxarray, rasterio
+Usage: pysweb swb-preprocess --soil-source custom --help
+Dependencies: numpy, rasterio, rioxarray, xarray; pysweb
 """
 
 from __future__ import annotations

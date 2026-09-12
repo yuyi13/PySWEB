@@ -6,8 +6,8 @@ Created: 2026-09-12
 Last updated: 2026-09-12
 Inputs: Output directory and worker count; all scientific inputs are synthetic.
 Outputs: Synthetic input NetCDFs, aligned forcing, soil states and budget diagnostics.
-Usage: pysweb demo
-Dependencies: numpy, pandas, xarray, rioxarray, pysweb
+Usage: pysweb demo --help
+Dependencies: numpy, pandas, rioxarray, xarray; pysweb
 """
 
 from __future__ import annotations

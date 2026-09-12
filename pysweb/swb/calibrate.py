@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: calibrate.py
-Objective: Provide the package-owned SWB domain calibration workflow and CLI parser.
+Objective: Calibrate domain SWB parameters against reference surface soil moisture.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-09-12
-Inputs: Prepared forcing NetCDFs, soil-property NetCDFs, reference surface soil moisture, and calibration options.
-Outputs: Calibration CSV containing optimized SWB parameters and fit metrics for the target domain.
-Usage: Imported as `pysweb.swb.calibrate` or run as a module entry point.
-Dependencies: argparse, csv, numpy, pandas, xarray, scipy
+Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
+Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
+Usage: pysweb swb-calibrate --help
+Dependencies: numpy, pandas, scipy, xarray; pysweb
 """
 from __future__ import annotations
 

@@ -1,4 +1,14 @@
-"""Meteorology path resolution helpers for pysweb."""
+"""
+Script: paths.py
+Objective: Resolve meteorology input paths and variable names for ERA5-Land and SILO files.
+Author: Yi Yu (with assistance from Codex)
+Created: 2026-04-16
+Last updated: 2026-04-16
+Inputs: Explicit file paths, source directories, field names and date ranges.
+Outputs: Validated file paths, year lists and inferred NetCDF variable names.
+Usage: import pysweb.met.paths
+Dependencies: Python standard library
+"""
 from __future__ import annotations
 
 import re

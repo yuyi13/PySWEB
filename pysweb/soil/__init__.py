@@ -2,13 +2,13 @@
 """
 Script: __init__.py
 Objective: Expose lazy soil package entry points and the package-level soil loader.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-04-19
 Inputs: Package attribute access and submodule imports.
 Outputs: Lazy access to soil backends and the soil loader facade.
-Usage: Imported as `pysweb.soil`
-Dependencies: importlib
+Usage: import pysweb.soil
+Dependencies: Python standard library
 """
 
 from importlib import import_module

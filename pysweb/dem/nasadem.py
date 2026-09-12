@@ -2,13 +2,13 @@
 """
 Script: nasadem.py
 Objective: Prepare NASADEM elevation rasters for SSEBop inputs via Earth Engine download requests.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
 Inputs: Earth Engine project name, geographic extent, and a local GeoTIFF output path.
 Outputs: A non-empty NASADEM GeoTIFF on disk at the requested output path.
-Usage: Imported via `pysweb.dem.nasadem`
-Dependencies: pathlib, earthengine-api, requests, rasterio
+Usage: import pysweb.dem.nasadem
+Dependencies: earthengine-api, rasterio, requests; pysweb; authenticated Earth Engine project
 """
 from __future__ import annotations
 

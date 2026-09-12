@@ -7,8 +7,8 @@ Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: Pytest fixtures, temporary directories, and in-memory xarray DataArrays.
 Outputs: Test assertions.
-Usage: python -m pytest tests/swb/test_preprocess.py -q
-Dependencies: numpy, pandas, pytest, xarray
+Usage: python -m pytest tests/swb/test_preprocess.py
+Dependencies: numpy, pandas, pytest, xarray; pysweb
 """
 from pathlib import Path
 import sys

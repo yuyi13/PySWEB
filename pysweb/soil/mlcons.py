@@ -1,13 +1,13 @@
 """
 Script: mlcons.py
-Objective: Prepare MLConstraints user soil maps for canonical SWB preprocessing.
+Objective: Derive SWB hydraulic properties from user-supplied MLConstraints soil maps.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-09-12
-Inputs: In-memory arrays and explicit workflow configuration.
-Outputs: Validated data and numerical diagnostics.
-Usage: Imported by pysweb workflows.
-Dependencies: numpy, xarray, rasterio, rioxarray; optional Rscript with raster/terra for RDS
+Inputs: Clay, sand and organic-carbon GeoTIFFs or an RDS archive; layer depths and target grid.
+Outputs: Aligned SoilOutputs and, when requested, GeoTIFFs extracted into the output directory.
+Usage: pysweb swb-preprocess --soil-source mlcons --help
+Dependencies: numpy, rasterio, rioxarray, xarray; pysweb; Rscript with raster and terra for RDS extraction
 """
 
 from __future__ import annotations

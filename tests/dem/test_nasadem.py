@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: test_nasadem.py
-Objective: Verify NASADEM DEM preparation dispatches through the package API and downloads a non-empty GeoTIFF via Earth Engine.
-Author: Yi Yu
+Objective: Verify NASADEM dispatch, request construction and raster validation with stubbed remote services.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
 Last updated: 2026-04-20
 Inputs: Pytest monkeypatch fixtures, temporary output paths, and backend stubs.
 Outputs: Test assertions.
-Usage: python -m pytest tests/dem/test_nasadem.py -q
-Dependencies: pathlib, sys, pytest
+Usage: python -m pytest tests/dem/test_nasadem.py
+Dependencies: pytest, rasterio; pysweb
 """
 from pathlib import Path
 import sys

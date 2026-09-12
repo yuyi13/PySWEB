@@ -1,3 +1,15 @@
+"""
+Script: __init__.py
+Objective: Expose the ERA5-Land and SILO meteorology namespaces through lazy imports.
+Author: Yi Yu (with assistance from Codex)
+Created: 2026-04-17
+Last updated: Unknown
+Inputs: Package attribute access and submodule imports.
+Outputs: Lazy access to meteorology adapters.
+Usage: import pysweb.met
+Dependencies: Python standard library
+"""
+
 from importlib import import_module
 
 __all__ = ["era5land", "silo"]

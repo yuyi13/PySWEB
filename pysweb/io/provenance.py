@@ -1,13 +1,13 @@
 """
 Script: provenance.py
-Objective: Record reproducible input identities and atomically validate model outputs.
+Objective: Record input and software identities and validate atomic output writes and cache reuse.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
 Last updated: 2026-09-12
-Inputs: Input files, workflow configuration, package source and model datasets.
-Outputs: SHA-256 provenance manifests and atomically validated NetCDF products.
-Usage: Imported by pysweb workflows.
-Dependencies: numpy, xarray
+Inputs: Input files, workflow settings, package source files and output datasets.
+Outputs: SHA-256 manifests, atomic JSON/NetCDF files and cache-validation results.
+Usage: from pysweb.io.provenance import input_manifest, atomic_netcdf, validate_existing_output
+Dependencies: numpy, xarray; a compatible NetCDF backend; optional git for revision metadata
 """
 
 from __future__ import annotations

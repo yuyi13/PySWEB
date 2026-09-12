@@ -8,7 +8,7 @@ Last updated: 2026-09-12
 Inputs: YAML config/CLI options, Landsat GeoTIFFs, meteorology NetCDF files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: pysweb ssebop-run --help
-Dependencies: argparse, pysweb
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 

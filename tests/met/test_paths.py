@@ -2,13 +2,13 @@
 """
 Script: test_paths.py
 Objective: Verify package-level meteorology path helpers resolve ERA5-Land and explicit inputs correctly.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-04-17
 Inputs: Temporary test paths and direct helper calls.
 Outputs: Test assertions.
-Usage: pytest tests/met/test_paths.py
-Dependencies: pathlib, pytest
+Usage: python -m pytest tests/met/test_paths.py
+Dependencies: pytest; pysweb
 """
 from pathlib import Path
 import sys

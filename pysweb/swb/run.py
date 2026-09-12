@@ -1,13 +1,13 @@
 """
 Script: run.py
-Objective: Provide the package-owned SWB run workflow and CLI parser shared by workflow wrappers and the facade API.
+Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-09-12
-Inputs: CLI-style SWB run options, forcing NetCDFs, soil-property NetCDFs, and optional NDVI or parameter grids.
-Outputs: Consolidated RZSM NetCDF outputs and run-progress messages for the requested simulation period.
-Usage: Imported as `pysweb.swb.run`
-Dependencies: argparse, numpy, pandas, xarray
+Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
+Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
+Usage: pysweb swb-run --help
+Dependencies: numpy, pandas, xarray; pysweb
 """
 from __future__ import annotations
 

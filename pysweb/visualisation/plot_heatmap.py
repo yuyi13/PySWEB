@@ -2,13 +2,13 @@
 """
 Script: plot_heatmap.py
 Objective: Plot SWEB layer heatmaps with an optional SSEBop forcing panel for a point or domain mean.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-20
 Last updated: 2026-05-03
 Inputs: SWEB/SSEBop NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved heatmap figure and optional CSV of extracted plotting data.
-Usage: python -m pysweb.visualisation.plot_heatmap --help
-Dependencies: argparse, matplotlib, numpy, pandas, xarray
+Usage: pysweb heatmap --help
+Dependencies: matplotlib, numpy, pandas, xarray; pysweb
 """
 from __future__ import annotations
 

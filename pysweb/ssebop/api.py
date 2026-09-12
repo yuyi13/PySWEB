@@ -7,8 +7,8 @@ Created: 2026-04-17
 Last updated: 2026-09-12
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
-Usage: Imported as `pysweb.ssebop.api`
-Dependencies: numpy, pandas, xarray, rasterio, rioxarray, pyproj, scipy, pyyaml
+Usage: import pysweb.ssebop.api
+Dependencies: numpy, pandas, pyproj, PyYAML, rasterio, rioxarray, scipy, xarray; pysweb
 """
 from __future__ import annotations
 

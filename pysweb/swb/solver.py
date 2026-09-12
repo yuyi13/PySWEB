@@ -1,13 +1,13 @@
 """
 Script: solver.py
-Objective: Provide the package-owned 1-D SWB solver and hydraulic helpers used by the SWB run workflow.
+Objective: Solve daily soil-water balances and vertical redistribution for a layered soil column.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-09-12
-Inputs: Daily forcing arrays, per-cell soil-property dictionaries, boundary fluxes, and solver configuration values.
-Outputs: Layer soil-moisture states, hydraulic matrix coefficients, and per-time-step SWB results.
-Usage: Imported as `pysweb.swb.solver`
-Dependencies: numpy, pandas
+Inputs: Daily forcing, per-layer hydraulic properties, initial states and solver settings.
+Outputs: Layer moisture and final states, hydraulic coefficients, water-budget terms and quality flags.
+Usage: import pysweb.swb.solver
+Dependencies: numpy, pandas; pysweb
 """
 from __future__ import annotations
 

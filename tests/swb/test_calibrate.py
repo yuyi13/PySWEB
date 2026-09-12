@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Script: test_calibrate.py
-Objective: Verify the package-owned SWB calibration parser exposes the neutral reference SSM interface.
+Objective: Verify calibration argument validation, daily time alignment and rejection of invalid fit metrics.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-09-12
 Inputs: Package calibration parser construction and CLI argument parsing under pytest.
 Outputs: Test assertions.
-Usage: pytest tests/swb/test_calibrate.py
-Dependencies: numpy, pandas, pytest, xarray
+Usage: python -m pytest tests/swb/test_calibrate.py
+Dependencies: numpy, pandas, pytest, xarray; pysweb
 """
 import builtins
 from pathlib import Path

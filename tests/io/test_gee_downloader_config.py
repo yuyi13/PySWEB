@@ -2,13 +2,13 @@
 """
 Script: test_gee_downloader_config.py
 Objective: Verify GEEDownloader validates daily_strategy and selects daily composites correctly.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
 Last updated: 2026-05-03
 Inputs: Temporary YAML configs written during pytest execution.
 Outputs: Test assertions.
-Usage: pytest tests/io/test_gee_downloader_config.py
-Dependencies: pytest
+Usage: python -m pytest tests/io/test_gee_downloader_config.py
+Dependencies: pytest; pysweb
 """
 import builtins
 from pathlib import Path

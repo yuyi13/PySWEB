@@ -2,13 +2,13 @@
 """
 Script: test_openlandmap.py
 Objective: Verify the OpenLandMap soil backend owns depth mapping, predictor loading, and hydraulic derivation behavior.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-05-02
 Inputs: Soil backend helpers, fake Earth Engine objects, and in-memory xarray DataArrays.
 Outputs: Test assertions.
-Usage: python -m pytest tests/soil/test_openlandmap.py -q
-Dependencies: numpy, pytest, xarray
+Usage: python -m pytest tests/soil/test_openlandmap.py
+Dependencies: numpy, pytest, xarray; pysweb
 """
 
 from argparse import Namespace

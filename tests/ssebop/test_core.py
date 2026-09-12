@@ -2,13 +2,13 @@
 """
 Script: test_core.py
 Objective: Verify extracted SSEBop package helpers preserve expected ET fraction, climatology, landcover, grid, and compatibility-shim behavior.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-05-03
 Inputs: In-memory xarray arrays, pandas timestamps, and temporary NetCDF files.
 Outputs: Test assertions.
-Usage: python -m pytest tests/ssebop/test_core.py -q
-Dependencies: numpy, pandas, pytest, rioxarray, xarray
+Usage: python -m pytest tests/ssebop/test_core.py
+Dependencies: affine, numpy, pandas, pytest, rioxarray, xarray; pysweb
 """
 import numpy as np
 import pandas as pd

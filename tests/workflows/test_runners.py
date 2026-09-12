@@ -1,13 +1,13 @@
 """
 Script: test_runners.py
-Objective: Test portable shell entrypoints against the shared configuration workflow.
+Objective: Verify shell runners resolve the shared configuration when invoked outside the checkout.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-09-12
-Inputs: Synthetic fixtures and package interfaces supplied by pytest.
-Outputs: Regression assertions.
+Inputs: Shell runner paths, the example TOML configuration and temporary working directories.
+Outputs: Assertions on dry-run plans and the absence of generated workflow outputs.
 Usage: python -m pytest tests/workflows/test_runners.py
-Dependencies: pytest, numpy, pandas, xarray, pysweb
+Dependencies: pytest; pysweb; bash
 """
 
 import json

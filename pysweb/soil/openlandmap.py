@@ -2,13 +2,13 @@
 """
 Script: openlandmap.py
 Objective: Implement the OpenLandMap soil backend behind the package-level soil dispatcher.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
 Last updated: 2026-05-02
 Inputs: Soil backend arguments, target grid metadata, and a reprojection callback.
 Outputs: SoilOutputs dataclass instances with OpenLandMap-derived hydraulic property arrays.
-Usage: Imported via `pysweb.soil.openlandmap`
-Dependencies: earthengine-api, numpy, requests, rioxarray, rasterio, xarray
+Usage: import pysweb.soil.openlandmap
+Dependencies: earthengine-api, numpy, rasterio, requests, rioxarray, xarray; pysweb; authenticated Earth Engine project
 """
 
 from __future__ import annotations

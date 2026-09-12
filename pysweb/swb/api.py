@@ -1,13 +1,13 @@
 """
 Script: api.py
-Objective: Provide the package facade for SWB preprocess, calibration, and run workflows.
-Author: Yi Yu
+Objective: Dispatch public SWB preprocessing, calibration and simulation calls to package workflows.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
 Last updated: 2026-04-19
-Inputs: Facade API keyword arguments for SWB preprocess, calibration, or run operations.
-Outputs: Forwarded workflow execution or explicit placeholder and validation errors.
-Usage: Imported as `pysweb.swb.api`
-Dependencies: importlib, pysweb
+Inputs: Keyword arguments describing workflow inputs, outputs and model settings.
+Outputs: Preprocessing results, calibration parameters or the simulation output path.
+Usage: import pysweb.swb.api
+Dependencies: Python standard library; pysweb
 """
 from __future__ import annotations
 
