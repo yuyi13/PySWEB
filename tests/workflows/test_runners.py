@@ -1,134 +1,50 @@
-#!/usr/bin/env python3
 """
 Script: test_runners.py
-Objective: Verify the workflow shell wrappers stay thin and point at the package-backed entrypoints.
-Author: Yi Yu
+Objective: Test portable shell entrypoints against the shared configuration workflow.
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-15
-Inputs: Workflow shell scripts and subprocess invocations supplied by pytest.
-Outputs: Test assertions.
-Usage: pytest tests/workflows/test_runners.py
-Dependencies: pathlib, re, subprocess
+Last updated: 2026-09-12
+Inputs: Synthetic fixtures and package interfaces supplied by pytest.
+Outputs: Regression assertions.
+Usage: python -m pytest tests/workflows/test_runners.py
+Dependencies: pytest, numpy, pandas, xarray, pysweb
 """
+
+import json
+import os
 from pathlib import Path
-import re
 import subprocess
+import sys
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS_DIR = ROOT / "workflows"
 
 
-def _run_help(script_name: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", str(WORKFLOWS_DIR / script_name), "--help"],
-        cwd = ROOT,
-        capture_output = True,
-        text = True,
-        check = False,
+@pytest.mark.parametrize(
+    "script,stages",
+    [
+        ("workflows/ssebop_runner_landsat.sh", ["prepare", "ssebop"]),
+        ("workflows/sweb_domain_runner.sh", ["preprocess", "calibrate", "run"]),
+        ("spec/sweb_mlcons_runner.sh", ["preprocess", "calibrate", "run"]),
+    ],
+)
+def test_runner_works_outside_checkout(script, stages, tmp_path):
+    env = {**os.environ, "PYTHON": sys.executable}
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / script),
+            "--config",
+            str(ROOT / "examples/workflow.toml"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
     )
-
-
-def _extract_assignment(script_text: str, variable_name: str) -> str:
-    match = re.search(rf'^{variable_name}="([^"]+)"', script_text, flags = re.MULTILINE)
-    assert match is not None, f"Missing assignment for {variable_name}"
-    return match.group(1)
-
-
-def test_ssebop_runner_help_returns_zero():
-    result = _run_help("ssebop_runner_landsat.sh")
-
     assert result.returncode == 0, result.stderr
-    assert "GEE_PROJECT" in result.stdout
-    assert "Required when Step 1 download is enabled" in result.stdout
-
-
-def test_sweb_runner_help_returns_zero():
-    result = _run_help("sweb_domain_runner.sh")
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_ssebop_runner_uses_package_backed_workflow_scripts():
-    script_text = (WORKFLOWS_DIR / "ssebop_runner_landsat.sh").read_text(encoding = "utf-8")
-
-    assert '${SCRIPT_DIR}/1_ssebop_prepare_inputs.py' in script_text
-    assert '${SCRIPT_DIR}/2_ssebop_run_model.py' in script_text
-    assert "1b_download_era5land_daily.py" not in script_text
-    assert "1c_stack_era5land_daily.py" not in script_text
-    assert '${RUN_PREPARED_DIR}/landsat' in script_text
-    assert '${RUN_PREPARED_DIR}/met/era5land/stack' in script_text
-    assert '--gee-project "${GEE_PROJECT}"' in script_text
-    assert "--gee-config" not in script_text
-    assert 'RUN_DEM_PATH="${RUN_PREPARED_DIR}/dem/nasadem.tif"' in script_text
-    assert '--dem "${RUN_DEM_PATH}"' in script_text
-    assert 'GEE_PROJECT="${GEE_PROJECT:-yiyu-research}"' not in script_text
-
-
-def test_ssebop_runner_step1_matches_current_prepare_cli_contract():
-    script_text = (WORKFLOWS_DIR / "ssebop_runner_landsat.sh").read_text(encoding = "utf-8")
-
-    assert '--met-source era5land' in script_text
-    assert '--gee-project "${GEE_PROJECT}"' in script_text
-    assert '--out-dir "${RUN_PREPARED_DIR}"' in script_text
-    assert "mktemp" not in script_text
-    assert "GEE_CONFIG" not in script_text
-
-
-def test_ssebop_runner_requires_gee_project_only_when_step1_runs():
-    script_text = (WORKFLOWS_DIR / "ssebop_runner_landsat.sh").read_text(encoding = "utf-8")
-
-    assert 'GEE_PROJECT="${GEE_PROJECT:-}"' in script_text
-    assert 'if [[ "${RUN_DOWNLOAD}" == "true" ]] && [[ -z "${GEE_PROJECT//[[:space:]]/}" ]]; then' in script_text
-    assert 'GEE_PROJECT is required when Step 1 download is enabled.' in script_text
-    assert "Required when Step 1 download is enabled. Not required for Step 2-only runs." in script_text
-
-
-def test_sweb_runner_uses_script_dir_relative_workflow_entrypoints():
-    script_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
-
-    assert '${SCRIPT_DIR}/3_sweb_preprocess_inputs.py' in script_text
-    assert '${SCRIPT_DIR}/4_sweb_calib_domain.py' in script_text
-    assert '${SCRIPT_DIR}/5_sweb_run_model.py' in script_text
-    assert "CODE_DIR=" not in script_text
-    assert "/code/workflows/" not in script_text
-
-
-def test_wrapper_handoff_prefers_prepared_precip_stack_contract():
-    ssebop_text = (WORKFLOWS_DIR / "ssebop_runner_landsat.sh").read_text(encoding = "utf-8")
-    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
-
-    prepared_dir_base = _extract_assignment(ssebop_text, "PREPARED_DIR_BASE")
-    assert prepared_dir_base == "${PROJECT_DIR}/1_ssebop_inputs"
-    assert 'RUN_MET_STACK_DIR="${RUN_PREPARED_DIR}/met/era5land/stack"' in ssebop_text
-    assert 'RUN_DEM_PATH="${RUN_PREPARED_DIR}/dem/nasadem.tif"' in ssebop_text
-
-    assert "1_ssebop_inputs" in sweb_text
-    assert "met/era5land/stack" in sweb_text
-    assert "1_era5land_stacks" not in sweb_text
-    assert "PRECIP_DIR_MODE" not in sweb_text
-
-
-def test_sweb_runner_uses_reference_ssm_filename_contract():
-    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
-
-    assert "reference_ssm_daily_" in sweb_text
-    assert "smap_ssm_daily_" not in sweb_text
-    assert '--reference-ssm "${CALIB_REFERENCE_SSM_FILE}"' in sweb_text
-    assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' not in sweb_text
-
-
-def test_sweb_runner_skips_reference_ssm_when_preprocess_window_is_not_for_calibration():
-    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
-
-    assert "--skip-reference-ssm" in sweb_text
-    assert 'MODEL_NEEDS_REFERENCE_SSM="false"' in sweb_text
-    assert 'CALIB_NEEDS_PREPROCESS="false"' in sweb_text
-    assert 'run_preprocess_for_window "MODEL_RUN_PERIOD" "${MODEL_START_DATE}" "${MODEL_END_DATE}" "${MODEL_START_TS}" "${MODEL_END_TS}" "${MODEL_NEEDS_REFERENCE_SSM}"' in sweb_text
-    assert 'run_preprocess_for_window "CALIB_PERIOD" "${CALIB_START_DATE}" "${CALIB_END_DATE}" "${CALIB_START_TS}" "${CALIB_END_TS}" "true"' in sweb_text
-
-
-def test_sweb_runner_does_not_pass_legacy_soil_cli_flags():
-    sweb_text = (WORKFLOWS_DIR / "sweb_domain_runner.sh").read_text(encoding = "utf-8")
-
-    assert "--soil-texture-dir" not in sweb_text
-    assert "--soil-soc-dir" not in sweb_text
+    plan = json.loads(result.stdout)
+    assert plan["stages"] == stages
+    assert plan["config"]["run"]["root"] == str(ROOT / "examples/outputs")
+    assert not list(tmp_path.iterdir())

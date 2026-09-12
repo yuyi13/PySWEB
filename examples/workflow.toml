@@ -1,0 +1,32 @@
+# Paths resolve relative to this file. Edit for your study before online execution.
+[run]
+name = "north_wagga"
+root = "outputs"
+start = "2024-01-01"
+end = "2024-01-31"
+extent = [147.20, -35.10, 147.30, -35.00]
+resolution = 0.00025
+workers = 1
+gee_project = "your-gee-project"
+state_timing = "start"
+
+[soil]
+source = "openlandmap"
+
+[calibration]
+enabled = false
+seed = 0
+max_iter = 100
+spinup_days = 7
+
+[model]
+diff_factor = 1000.0
+sm_max_factor = 1.0
+sm_min_factor = 1.0
+root_beta = 0.96
+
+[ssebop]
+lst_band = "ST_B10"
+red_band = "SR_B4"
+nir_band = "SR_B5"
+ndvi_band = "ndvi"

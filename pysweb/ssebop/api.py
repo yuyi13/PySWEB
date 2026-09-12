@@ -2,9 +2,9 @@
 """
 Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-11
+Last updated: 2026-09-12
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: Imported as `pysweb.ssebop.api`
@@ -29,6 +29,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from pyproj import CRS, Transformer
 
+from pysweb.contracts import month_bounds
 from pysweb.dem import api as dem_api
 from pysweb.met.era5land import download as era5land_download
 from pysweb.met.era5land import stack as era5land_stack
@@ -76,7 +77,9 @@ def _validate_extent(extent: list[float]) -> list[float]:
             "extent must contain numeric min/max longitude and latitude values."
         ) from exc
 
-    if min_lon >= max_lon or min_lat >= max_lat:
+    if (not np.all(np.isfinite([min_lon, min_lat, max_lon, max_lat]))
+            or not (-180 <= min_lon < max_lon <= 180)
+            or not (-90 <= min_lat < max_lat <= 90)):
         raise ValueError(
             "extent must satisfy min_lon < max_lon and min_lat < max_lat."
         )
@@ -118,9 +121,10 @@ def prepare_inputs(
         gee_config_template = gee_config_template,
     )
 
+    month_start, month_end = month_bounds(start_date, end_date)
     era5land_download.download_era5land_daily(
-        start_date = start_date,
-        end_date = end_date,
+        start_date = month_start.strftime("%Y-%m-%d"),
+        end_date = month_end.strftime("%Y-%m-%d"),
         extent = extent,
         output_dir = met_raw_dir,
         gee_project = gee_project,
@@ -140,6 +144,12 @@ def prepare_inputs(
         end_date = end_date,
         output_dir = met_stack_dir,
     )
+    if (start_date, end_date) != (month_start.strftime("%Y-%m-%d"), month_end.strftime("%Y-%m-%d")):
+        era5land_stack.stack_era5land_daily_inputs(
+            raw_dir=met_raw_dir, dem=prepared_dem_path,
+            start_date=month_start.strftime("%Y-%m-%d"), end_date=month_end.strftime("%Y-%m-%d"),
+            output_dir=met_stack_dir,
+        )
 
 
 def list_landsat_files(landsat_dir: str, pattern: str) -> List[str]:
@@ -848,8 +858,17 @@ def run_ssebop_workflow(
         start_date, end_date = parse_date_range(date_range)
         suffix = f"_{start_date}_{end_date}"
 
-    etf_stack.to_netcdf(os.path.join(output_dir, f"etf_stack{suffix}.nc"))
-    ndvi_stack.to_netcdf(os.path.join(output_dir, f"ndvi_stack{suffix}.nc"))
+    from pysweb.io.provenance import atomic_netcdf, input_manifest, save_output_manifest
+    source_paths = list(landsat_files) + [dem_path]
+    if landcover_path:
+        source_paths.append(landcover_path)
+    for values in met_paths.values():
+        source_paths.extend([values] if isinstance(values, (str, Path)) else values)
+    manifest = input_manifest({"config": cfg, "arguments": args}, source_paths)
+    for stack, stem in ((etf_stack, "etf_stack"), (ndvi_stack, "ndvi_stack")):
+        stack_path = os.path.join(output_dir, f"{stem}{suffix}.nc")
+        atomic_netcdf(stack, stack_path)
+        save_output_manifest(stack_path, manifest)
     del etf_stack
     del ndvi_stack
 
@@ -875,7 +894,7 @@ def run_ssebop_workflow(
     etf_daily.attrs.update({"long_name": "Interpolated SSEBop ET fraction", "units": "1"})
     ndvi_daily.attrs.update({"long_name": "Interpolated NDVI", "units": "1"})
 
-    xr.Dataset(
+    result = xr.Dataset(
         {
             "ET": et_daily,
             "E": e_daily,
@@ -884,7 +903,12 @@ def run_ssebop_workflow(
             "ndvi_interp": ndvi_daily,
             "Tc": tc_daily,
         }
-    ).to_netcdf(os.path.join(output_dir, f"et_daily_ssebop{suffix}.nc"))
+    )
+    result.attrs.update({"input_fingerprint": manifest["fingerprint"],
+                         "software_code_sha256": manifest["software"]["code_sha256"]})
+    result_path = os.path.join(output_dir, f"et_daily_ssebop{suffix}.nc")
+    atomic_netcdf(result, result_path)
+    save_output_manifest(result_path, manifest)
 
 
 def run(

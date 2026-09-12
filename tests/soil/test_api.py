@@ -2,9 +2,9 @@
 """
 Script: test_api.py
 Objective: Verify the soil API contract and public backend dispatch behavior.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-09-12
 Inputs: Soil API imports and backend dispatch behavior.
 Outputs: Test assertions.
 Usage: pytest tests/soil/test_api.py
@@ -45,7 +45,7 @@ def test_validate_soil_source_rejects_unknown_value():
         api.validate_soil_source("bogus")
 
 
-@pytest.mark.parametrize("soil_source", ["mlcons", "slga", "custom"])
+@pytest.mark.parametrize("soil_source", ["slga"])
 def test_validate_soil_source_rejects_placeholder_backends(soil_source):
     api = import_module("pysweb.soil.api")
 
@@ -95,7 +95,7 @@ def test_openlandmap_dispatches_via_public_api(monkeypatch):
     }
 
 
-@pytest.mark.parametrize("soil_source", ["mlcons", "slga", "custom"])
+@pytest.mark.parametrize("soil_source", ["slga"])
 def test_placeholder_backends_fail_via_public_api(soil_source):
     api = import_module("pysweb.soil.api")
 

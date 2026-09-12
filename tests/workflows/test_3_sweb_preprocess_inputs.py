@@ -2,9 +2,9 @@
 """
 Script: test_3_sweb_preprocess_inputs.py
 Objective: Verify Workflow 3 delegates to the package-owned SWB preprocess CLI surface.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-09-12
 Inputs: Pytest execution against the workflow wrapper module.
 Outputs: Regression coverage for help text and forwarded preprocess arguments.
 Usage: python -m pytest tests/workflows/test_3_sweb_preprocess_inputs.py -q
@@ -41,8 +41,9 @@ def test_workflow_help_documents_soil_source_backend_contract(monkeypatch, capsy
     captured = capsys.readouterr()
     normalized_help = " ".join(captured.out.split())
     assert "--soil-source" in captured.out
-    assert "Supported values: openlandmap, mlcons, slga, custom." in normalized_help
-    assert "Implemented: openlandmap; placeholders: mlcons, slga, custom." in normalized_help
+    assert "--soil-file" in captured.out
+    assert "--soil-mlcons-dir" in captured.out
+    assert "custom" in normalized_help
     assert "--reference-source" in captured.out
     assert "--reference-ssm-asset" in captured.out
     assert "--skip-reference-ssm" in captured.out
@@ -73,7 +74,7 @@ def test_workflow_main_forwards_to_package_preprocess(monkeypatch):
 
     assert recorded["output_dir"] == "/tmp/prepped"
     assert recorded["reference_source"] == "gssm1km"
-    assert recorded["gee_project"] == "yiyu-research"
+    assert recorded["gee_project"] is None
 
 
 def test_workflow_main_accepts_runner_preprocess_contract(monkeypatch):

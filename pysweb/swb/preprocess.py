@@ -2,9 +2,9 @@
 """
 Script: preprocess.py
 Objective: Preprocess forcing, soil, and GSSM reference SSM inputs into aligned NetCDF files for SWB runs.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-05-13
+Last updated: 2026-09-12
 Inputs: Command-line arguments or keyword arguments describing date range, extent, forcing inputs, Earth Engine assets, and output location.
 Outputs: NetCDF forcing files, soil-property layers, and optional reference SSM products on a common grid.
 Usage: Imported as `pysweb.swb.preprocess` or run as a module entry point.
@@ -35,6 +35,8 @@ import pysweb.soil.api as soil_api
 from pyproj import Transformer
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
+from pysweb.contracts import daily_data, month_bounds
+from pysweb.io.provenance import atomic_netcdf, input_manifest, atomic_json, sha256
 GSSM_SCALE_FACTOR = 1000.0
 GSSM_EXPORT_SCALE_M = 1000.0
 _RAIN_WORKER_STATE: Dict[str, object] = {}
@@ -113,7 +115,7 @@ def _compute_monthly_effective_rainfall_smith(monthly_precip_mm: np.ndarray) -> 
     return monthly_eff
 
 
-def compute_effective_precipitation_smith(rain: xr.DataArray, dtype: str) -> xr.DataArray:
+def compute_effective_precipitation_smith(rain: xr.DataArray, dtype: str, *, require_full_months: bool = True) -> xr.DataArray:
     if "time" not in rain.dims:
         raise ValueError("Precipitation data must include a 'time' dimension.")
     if rain.ndim != 3:
@@ -122,6 +124,9 @@ def compute_effective_precipitation_smith(rain: xr.DataArray, dtype: str) -> xr.
     if len(spatial_dims) != 2:
         raise ValueError("Precipitation data must include exactly two spatial dimensions.")
 
+    if require_full_months:
+        start, end = month_bounds(rain.time.values[0], rain.time.values[-1])
+        rain = daily_data(rain, start, end, "Full-month precipitation for effective rainfall")
     rain = rain.transpose("time", spatial_dims[0], spatial_dims[1])
     rain_values = np.asarray(rain.values, dtype = float)
     time_index = pd.to_datetime(rain.coords["time"].values)
@@ -143,12 +148,13 @@ def compute_effective_precipitation_smith(rain: xr.DataArray, dtype: str) -> xr.
         month_valid = daily_valid[month_mask, :, :]
         monthly_total = month_daily.sum(axis = 0, dtype = float)
         monthly_valid_count = month_valid.sum(axis = 0)
-        monthly_total[monthly_valid_count == 0] = np.nan
+        monthly_total[monthly_valid_count != int(month_mask.sum())] = np.nan
 
         monthly_eff = _compute_monthly_effective_rainfall_smith(monthly_total)
         monthly_ratio = np.zeros_like(monthly_total, dtype = float)
         valid_month = np.isfinite(monthly_total) & np.isfinite(monthly_eff) & (monthly_total > 0.0)
         monthly_ratio[valid_month] = monthly_eff[valid_month] / monthly_total[valid_month]
+        monthly_ratio[~np.isfinite(monthly_total)] = np.nan
 
         month_daily_eff = month_daily * monthly_ratio[None, :, :]
         month_daily_eff[~month_valid] = np.nan
@@ -163,6 +169,8 @@ def compute_effective_precipitation_smith(rain: xr.DataArray, dtype: str) -> xr.
             "long_name": "Daily effective precipitation",
             "units": "mm day-1",
             "method": "Smith (1992) CROPWAT monthly effective rainfall scaled by daily precipitation share",
+            "monthly_context": "complete calendar months" if require_full_months else "explicit partial-month compatibility mode",
+            "missing_data_policy": "any missing daily rainfall invalidates that cell-month",
         },
     )
     return effective
@@ -698,6 +706,10 @@ def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.
         path = Path(args.rain_file).expanduser().resolve()
         if not path.exists():
             raise FileNotFoundError(f"Precipitation file not found: {path}")
+        if path.name.startswith("precipitation_daily_"):
+            companion = path.with_name(f"precipitation_daily_{start:%Y-%m-%d}_{end:%Y-%m-%d}.nc")
+            if companion.exists():
+                path = companion
         with xr.open_dataset(path) as ds:
             if args.rain_var not in ds:
                 raise KeyError(f"Variable '{args.rain_var}' not found in precipitation dataset: {path}")
@@ -1043,7 +1055,9 @@ def write_dataarray(da: xr.DataArray, output_path: Path):
     da.attrs.pop("_FillValue", None)
     output_path.parent.mkdir(parents = True, exist_ok = True)
     encoding = {da.name: _standard_encoding(str(da.dtype))}
-    da.to_dataset(name = da.name).to_netcdf(output_path, encoding = encoding)
+    if "grid_mapping" in da.encoding:
+        encoding[da.name]["grid_mapping"] = da.encoding["grid_mapping"]
+    atomic_netcdf(da.to_dataset(name=da.name), output_path, encoding=encoding)
 
 
 def _write_preprocess_outputs(
@@ -1087,7 +1101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rain-file", help = "Single NetCDF file containing daily precipitation.")
     parser.add_argument(
         "--rain-root",
-        default = "/g/data/gh70/ANUClimate/v2-0/stable/day/rain",
+        default = None,
         help = "Base directory for precipitation NetCDFs.",
     )
     parser.add_argument("--rain-var", default = "rain", help = "Variable name in precipitation files.")
@@ -1096,7 +1110,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--et-file", help = "Single NetCDF file containing daily ET and transpiration inputs.")
     parser.add_argument(
         "--et-root",
-        default = "/g/data/yx97/GEE_collections/NASA/GLDAS/daily",
+        default = None,
         help = "Directory containing daily ET GeoTIFFs.",
     )
     parser.add_argument("--e-var", help = "Variable name for daily soil evaporation in --et-file NetCDF.")
@@ -1116,15 +1130,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--output-dir",
-        default = "/g/data/yx97/users_unikey/yiyu0116/sweb_model/2_spatial_preprocess",
+        default = "outputs/swb_inputs",
         help = "Directory for processed outputs.",
     )
     parser.add_argument(
         "--soil-source",
         default = "openlandmap",
         help = (
-            "Soil source backend. Supported values: openlandmap, mlcons, slga, custom. "
-            "Implemented: openlandmap; placeholders: mlcons, slga, custom."
+            "Implemented soil backends: openlandmap, mlcons, custom. SLGA is reserved."
         ),
     )
     parser.add_argument(
@@ -1133,13 +1146,19 @@ def build_parser() -> argparse.ArgumentParser:
         default = 5.0,
         help = "Default SOC value in g/kg for masked OpenLandMap SOC pixels where texture predictors are valid.",
     )
+    parser.add_argument("--soil-file", help="Custom hydraulic properties in one NetCDF.")
+    parser.add_argument("--soil-input-dir", help="Custom hydraulic NetCDF directory (soil_<property>.nc).")
+    parser.add_argument("--soil-mlcons-dir", help="MLConstraints texture/SOC rasters or RDS directory.")
+    parser.add_argument("--soil-layer-bottoms-mm", nargs="+", type=float, help="Actual lower layer boundaries in mm.")
+    parser.add_argument("--reference-file", help="Local reference SSM NetCDF; avoids GEE reference download.")
+    parser.add_argument("--reference-var", default="reference_ssm", help="Local reference variable (m3 m-3).")
     parser.add_argument("--reference-source", default = "gssm1km", help = "Reference SSM source. Only 'gssm1km' is supported.")
     parser.add_argument(
         "--reference-ssm-asset",
         default = "users/qianrswaterr/GlobalSSM1km0509",
         help = "Earth Engine ImageCollection asset for the reference SSM source.",
     )
-    parser.add_argument("--gee-project", default = "yiyu-research", help = "Google Earth Engine project for preprocessing.")
+    parser.add_argument("--gee-project", default = None, help = "Google Earth Engine project for preprocessing.")
     parser.add_argument("--skip-reference-ssm", action = "store_true", help = "Skip reference SSM preprocessing.")
     return parser
 
@@ -1169,14 +1188,24 @@ def preprocess_inputs(**kwargs):
 
     soil_api.validate_soil_source(args.soil_source)
     _validate_reference_source(args.reference_source)
+    if not args.rain_file and not args.rain_root:
+        raise ValueError("Provide rain_file or rain_root with complete calendar-month precipitation.")
+    if not args.et_file and not args.et_root:
+        raise ValueError("Provide et_file or et_root.")
+    online = args.soil_source == "openlandmap" or (not args.skip_reference_ssm and not args.reference_file)
+    if online and (not isinstance(args.gee_project, str) or not args.gee_project.strip()):
+        raise ValueError("gee_project is required for the selected online preprocessing stages.")
     start, end = _ensure_date_inputs(args)
     dates = pd.date_range(start = start, end = end, freq = "D")
     grid = _build_target_grid(args)
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents = True, exist_ok = True)
 
-    rain = process_precipitation(args, grid, start, end)
-    effective_precip = compute_effective_precipitation_smith(rain, args.dtype)
+    month_start, month_end = month_bounds(start, end)
+    rain_context = process_precipitation(args, grid, month_start, month_end)
+    effective_context = compute_effective_precipitation_smith(rain_context, args.dtype)
+    rain = rain_context.sel(time=slice(start, end))
+    effective_precip = effective_context.sel(time=slice(start, end))
     et_components = process_et(args, grid, dates)
 
     soil_outputs = soil_api.load_soil_properties(
@@ -1185,7 +1214,8 @@ def preprocess_inputs(**kwargs):
         grid = grid,
         reproject_to_template = _reproject_to_template,
     )
-    soil_arrays = soil_outputs.arrays
+    soil_arrays = {name:da.rio.write_crs(grid.crs).rio.set_spatial_dims(x_dim=grid.lon_dim,y_dim=grid.lat_dim)
+                   for name,da in soil_outputs.arrays.items()}
 
     outputs: Dict[str, xr.DataArray] = {
         f"rain_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc": rain,
@@ -1198,7 +1228,14 @@ def preprocess_inputs(**kwargs):
         outputs[f"e_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["e"]
     if "ndvi" in et_components:
         outputs[f"ndvi_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["ndvi"]
-    if not args.skip_reference_ssm:
+    if not args.skip_reference_ssm and args.reference_file:
+        with xr.open_dataset(args.reference_file, decode_coords="all") as ds:
+            reference_ssm = daily_data(ds[args.reference_var], start, end, "Reference SSM").load()
+        if str(reference_ssm.attrs.get("units", "")).strip() not in {"m3 m-3", "m^3/m^3", "m3/m3"}:
+            raise ValueError("Local reference SSM requires volumetric units m3 m-3.")
+        reference_ssm = _reproject_to_template(reference_ssm, grid, resampling=Resampling.bilinear)
+        outputs[f"reference_ssm_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = _rename_reference_ssm(reference_ssm)
+    elif not args.skip_reference_ssm:
         reference_ssm = _load_reference_ssm(
             extent = tuple(args.extent),
             dates = dates,
@@ -1208,7 +1245,31 @@ def preprocess_inputs(**kwargs):
         reference_ssm = _reproject_to_template(reference_ssm, grid, resampling = Resampling.bilinear)
         outputs[f"reference_ssm_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = reference_ssm
 
-    return _write_preprocess_outputs(output_dir, outputs, soil_arrays)
+    written = _write_preprocess_outputs(output_dir, outputs, soil_arrays)
+    paths = [Path(p) for p in (args.rain_file,args.et_file,args.soil_file,args.reference_file) if p]
+    if args.rain_file:
+        companion = Path(args.rain_file).with_name(f"precipitation_daily_{month_start:%Y-%m-%d}_{month_end:%Y-%m-%d}.nc")
+        if companion.exists():
+            paths.append(companion)
+    for directory, pattern in [(args.soil_input_dir,"*.nc"),(args.soil_mlcons_dir,"*")]:
+        if directory:
+            paths.extend(p for p in Path(directory).glob(pattern) if p.is_file())
+    if args.rain_root and not args.rain_file:
+        pattern = args.rain_filename_pattern or "ANUClimate_v2-0_rain_daily_{year}{month:02d}.nc"
+        generator = _generate_month_paths if "{month" in pattern else _generate_year_paths
+        paths.extend(generator(Path(args.rain_root),pattern,month_start,month_end))
+    if args.et_root and not args.et_file:
+        pattern = args.et_filename_pattern or "GLDAS_2.2_ET_SM_{year:04d}-{month:02d}-{day:02d}.tif"
+        paths.extend(p for p in _generate_daily_paths(Path(args.et_root),pattern,dates) if p.exists())
+    manifest = input_manifest(vars(args), paths)
+    manifest["monthly_context"] = [str(month_start.date()),str(month_end.date())]
+    manifest["remote_sources"] = {"soil_source":args.soil_source,"reference_asset":args.reference_ssm_asset if not args.skip_reference_ssm and not args.reference_file else None}
+    from pysweb.soil.openlandmap import OPENLANDMAP_DATASETS
+    if args.soil_source == "openlandmap":
+        manifest["remote_sources"]["openlandmap_assets"] = OPENLANDMAP_DATASETS
+    manifest["outputs"] = {name:{"path":str(path), "sha256":sha256(path)} for name,path in written.items()}
+    atomic_json(output_dir/f"preprocess_{start:%Y%m%d}_{end:%Y%m%d}.manifest.json",manifest)
+    return written
 
 
 def main(argv: Sequence[str] | None = None):

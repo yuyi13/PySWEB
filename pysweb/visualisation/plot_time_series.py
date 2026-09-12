@@ -2,9 +2,9 @@
 """
 Script: plot_time_series.py
 Objective: Extract and plot SSEBop and SWEB time series for point-based or domain-mean analysis.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-20
-Last updated: 2026-05-03
+Last updated: 2026-09-12
 Inputs: SSEBop/SWEB NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved time-series figure and optional CSV containing extracted values.
 Usage: python -m pysweb.visualisation.plot_time_series --help
@@ -43,8 +43,8 @@ try:
 except ModuleNotFoundError:
     xr = None
 
-DEFAULT_SSEBOP_ROOT = Path("/g/data/ym05/sweb_model/2_ssebop_outputs")
-DEFAULT_SWEB_ROOT = Path("/g/data/ym05/sweb_model/4_sweb_outputs")
+DEFAULT_SSEBOP_ROOT = Path("outputs/ssebop")
+DEFAULT_SWEB_ROOT = Path("outputs/swb")
 
 SSEBOP_FILE_PATTERN = "et_daily_ssebop*.nc"
 SWEB_FILE_PATTERN = "SWEB_RZSM*.nc"
@@ -256,7 +256,13 @@ def _extract_1d_series(
 
     reduce_dims = [dim for dim in da.dims if dim != time_dim]
     if reduce_dims:
-        da = da.mean(dim=reduce_dims, skipna=True)
+        lon_dim, lat_dim = _detect_spatial_dims(da)
+        if lat_dim in reduce_dims and lon_dim in reduce_dims:
+            from pysweb.contracts import geographic_weights
+            weights = geographic_weights(da,lat_dim,lon_dim)
+            da = da.weighted(weights).mean(dim=reduce_dims,skipna=True)
+        else:
+            da = da.mean(dim=reduce_dims,skipna=True)
 
     da = da.squeeze(drop=True)
     if tuple(da.dims) != (time_dim,):
@@ -337,7 +343,7 @@ def _plot_sweb(ax: plt.Axes, data: pd.DataFrame):
 
     lines, labels = ax.get_legend_handles_labels()
     ax.set_title("SWEB time series")
-    ax.set_ylabel("RZSM / soil moisture")
+    ax.set_ylabel(r"Soil moisture (m$^3$ m$^{-3}$)")
     ax.grid(alpha=0.3)
 
     if profile_cols:

@@ -1,9 +1,9 @@
 """
 Script: solver.py
 Objective: Provide the package-owned 1-D SWB solver and hydraulic helpers used by the SWB run workflow.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-09-12
 Inputs: Daily forcing arrays, per-cell soil-property dictionaries, boundary fluxes, and solver configuration values.
 Outputs: Layer soil-moisture states, hydraulic matrix coefficients, and per-time-step SWB results.
 Usage: Imported as `pysweb.swb.solver`
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from pysweb.contracts import layer_bottoms
 
 # Code lineage: the layered hydraulic matrix follows the Noah-MP ROSR12-style
 # tridiagonal formulation used in earlier SWEB scripts, with Python package
@@ -185,7 +187,11 @@ def setup_richards_matrix(
 
             interface_flux_downward[i] = conductivity[i] + rhs_diffusive_flux_interface[i]
 
-    drainage_soil_bot = 0.0
+    drainage_soil_bot = float(np.clip(
+        soil_properties["drainage_slope"] * conductivity[-1],
+        soil_properties["drainage_lower_limit"],
+        soil_properties["drainage_upper_limit"],
+    ))
 
     for i in range(num_layers):
         if i == 0:
@@ -197,7 +203,7 @@ def setup_richards_matrix(
             else:
                 mat_left3[i] = 0.0
                 mat_left2[i] = 0.0
-                flux_to_below = conductivity[i]
+                flux_to_below = drainage_soil_bot
 
             mat_right[i] = (
                 boundary_fluxes["infiltration"]
@@ -338,7 +344,9 @@ def solve_soil_moisture(soil_moisture, matrix_coeffs, time_step, soil_properties
             incr_next = excess * (thickness[i] / thickness[i + 1])
             new_soil_moisture[i + 1] += incr_next
 
+    overflow_mm = max(0.0, new_soil_moisture[-1] - sm_max_bound[-1]) * thickness[-1]
     new_soil_moisture[-1] = min(new_soil_moisture[-1], sm_max_bound[-1])
+    storage_before_floor = float(np.sum(new_soil_moisture * thickness))
 
     sm_min_relax_tau_days = float(soil_properties.get("sm_min_relax_tau_days", 3.0))
     sm_min_relax_trigger_factor = float(soil_properties.get("sm_min_relax_trigger_factor", 1.25))
@@ -367,6 +375,8 @@ def solve_soil_moisture(soil_moisture, matrix_coeffs, time_step, soil_properties
     return {
         "soil_moisture": new_soil_moisture,
         "drainage_soil_bot": matrix_coeffs["drainage_soil_bot"] * time_step,
+        "overflow_mm": overflow_mm,
+        "storage_adjustment_mm": float(np.sum(new_soil_moisture * thickness)) - storage_before_floor,
     }
 
 
@@ -509,6 +519,7 @@ def soil_water_balance_1d(
     evap_fraction=None,
     diff_factor=1e3,
     transpiration_data=None,
+    state_timing="start",
 ):
     if isinstance(precip_data, pd.DataFrame):
         precip_values = precip_data.iloc[:, 0].values
@@ -534,7 +545,18 @@ def soil_water_balance_1d(
     else:
         transp_values = None
 
-    time_index = pd.to_datetime(time)
+    if not np.isfinite(time_step) or time_step <= 0:
+        raise ValueError("time_step must be finite and positive.")
+    if state_timing not in {"start", "end"}:
+        raise ValueError("state_timing must be 'start' or 'end'.")
+    bottoms = layer_bottoms(soil_properties["layer_depth"])
+    if not np.allclose(np.diff(np.r_[0., bottoms]), soil_properties["layer_thickness"]):
+        raise ValueError("Layer thickness and bottom depths disagree.")
+    time_index = pd.DatetimeIndex(time)
+    if not len(time_index) or time_index.hasnans or time_index.has_duplicates or not time_index.is_monotonic_increasing:
+        raise ValueError("Time must be non-empty, unique and increasing.")
+    if len(time_index) > 1 and not np.allclose(np.diff(time_index.to_numpy(dtype="datetime64[ns]")) / np.timedelta64(1, "D"), time_step):
+        raise ValueError("Time coordinate cadence must match time_step.")
     assert len(precip_values) == len(et_values), (
         "Effective precipitation and ET data must have the same length"
     )
@@ -570,19 +592,27 @@ def soil_water_balance_1d(
     else:
         current_soil_moisture = np.array(initial_soil_moisture)
 
-    soil_moisture_array[0, :] = current_soil_moisture
+    initial_state = current_soil_moisture.copy()
+    if initial_state.shape != (num_layers,) or not np.all(np.isfinite(initial_state)):
+        raise ValueError("Initial soil moisture must contain one finite value per layer.")
+    if np.any(initial_state < 0) or np.any(initial_state > sm_max_bound):
+        raise ValueError("Initial soil moisture is outside the configured storage bounds.")
+    budget_names = ("infiltration", "actual_et", "drainage", "overflow", "storage_adjustment", "storage_change", "balance_residual")
+    budget = {name: np.full(num_times, np.nan) for name in budget_names}
+    forcing_valid = np.zeros(num_times, dtype=bool)
 
     for t_idx in range(num_times):
         eff_precip_t = precip_values[t_idx]
         et_t = et_values[t_idx]
         transp_t_in = transp_values[t_idx] if transp_values is not None else np.nan
 
-        if np.isnan(eff_precip_t) or np.isnan(et_t) or (
-            transp_values is not None and np.isnan(transp_t_in)
-        ):
-            if t_idx < num_times - 1:
-                soil_moisture_array[t_idx + 1, :] = soil_moisture_array[t_idx, :]
+        soil_moisture_array[t_idx, :] = current_soil_moisture
+        if not (np.isfinite(eff_precip_t) and np.isfinite(et_t) and
+                (transp_values is None or np.isfinite(transp_t_in))):
+            # Retain the state but leave fluxes missing and expose an explicit QC flag.
             continue
+        forcing_valid[t_idx] = True
+        storage_before = float(np.sum(current_soil_moisture * soil_props["layer_thickness"]))
 
         eff_precip_t = max(0.0, float(eff_precip_t))
         et_t = max(0.0, float(et_t))
@@ -645,13 +675,29 @@ def soil_water_balance_1d(
 
         current_soil_moisture = result["soil_moisture"]
 
-        if t_idx < num_times - 1:
-            soil_moisture_array[t_idx + 1, :] = current_soil_moisture
+        if state_timing == "end":
+            soil_moisture_array[t_idx, :] = current_soil_moisture
+        budget["infiltration"][t_idx] = eff_precip_t * time_step
+        budget["actual_et"][t_idx] = float(np.sum(et_by_layer)) * time_step
+        budget["drainage"][t_idx] = result["drainage_soil_bot"]
+        budget["overflow"][t_idx] = result["overflow_mm"]
+        budget["storage_adjustment"][t_idx] = result["storage_adjustment_mm"]
+        budget["storage_change"][t_idx] = float(np.sum(current_soil_moisture * soil_props["layer_thickness"])) - storage_before
+        expected_change = (budget["infiltration"][t_idx] - budget["actual_et"][t_idx]
+                           - budget["drainage"][t_idx] - budget["overflow"][t_idx]
+                           + budget["storage_adjustment"][t_idx])
+        budget["balance_residual"][t_idx] = budget["storage_change"][t_idx] - expected_change
 
     layer_columns = [f"layer_{i + 1}" for i in range(num_layers)]
     soil_moisture_df = pd.DataFrame(
         soil_moisture_array,
         index=time_index,
         columns=layer_columns,
+    )
+    soil_moisture_df.attrs.update(
+        state_timing=state_timing, initial_state=initial_state,
+        final_state=current_soil_moisture.copy(),
+        final_state_time=time_index[-1] + pd.Timedelta(days=time_step),
+        water_balance=budget, forcing_valid=forcing_valid,
     )
     return soil_moisture_df

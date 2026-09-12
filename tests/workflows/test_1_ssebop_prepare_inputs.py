@@ -2,9 +2,9 @@
 """
 Script: test_1_ssebop_prepare_inputs.py
 Objective: Verify the unified SSEBop prepare-inputs workflow exposes the package-backed CLI contract.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-04-20
+Last updated: 2026-09-12
 Inputs: Workflow module imports and CLI arguments supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_1_ssebop_prepare_inputs.py
@@ -44,7 +44,8 @@ def test_unified_first_step_cli_exposes_met_source():
     assert args.gee_project == "workflow-project"
     assert not hasattr(args, "dem")
     assert not hasattr(args, "gee_config")
-    assert module.parse_extent.__module__ == "pysweb.ssebop.landsat"
+    from pysweb.ssebop import cli_prepare
+    assert cli_prepare.parse_extent.__module__ == "pysweb.ssebop.landsat"
 
 
 def test_unified_first_step_cli_rejects_unwired_met_source():
@@ -76,7 +77,8 @@ def test_unified_first_step_cli_calls_package_api(monkeypatch, tmp_path: Path):
     spec.loader.exec_module(module)
 
     recorded = {}
-    monkeypatch.setattr(module, "prepare_inputs", lambda **kwargs: recorded.update(kwargs))
+    from pysweb.ssebop import cli_prepare
+    monkeypatch.setattr(cli_prepare, "prepare_inputs", lambda **kwargs: recorded.update(kwargs))
 
     module.main(
         [
@@ -128,7 +130,8 @@ def test_unified_first_step_cli_rejects_blank_gee_project(monkeypatch, tmp_path:
     spec.loader.exec_module(module)
 
     recorded = {}
-    monkeypatch.setattr(module, "prepare_inputs", lambda **kwargs: recorded.update(kwargs))
+    from pysweb.ssebop import cli_prepare
+    monkeypatch.setattr(cli_prepare, "prepare_inputs", lambda **kwargs: recorded.update(kwargs))
 
     try:
         module.main(

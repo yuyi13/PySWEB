@@ -2,9 +2,9 @@
 """
 Script: gee_downloader.py
 Objective: Download and post-process Google Earth Engine composites used by PySWEB preprocessing workflows, including tiled fallback for oversized requests.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-05-03
+Last updated: 2026-09-12
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
 Usage: python -m pysweb.io.gee_downloader <config.yaml>
@@ -653,6 +653,10 @@ class GEEDownloader:
             shutil.rmtree(tile_root, ignore_errors=True)
 
     def run(self):
+        from pathlib import Path
+        import json
+        from pysweb.io.provenance import input_manifest, save_output_manifest, sha256
+
         print("Initializing Earth Engine...")
         self.initialize()
         _safe_mkdir(self.cfg["download_dir"])
@@ -678,10 +682,23 @@ class GEEDownloader:
                 collection_tag = collection.replace("/", "_")
                 out_tmp = os.path.join(self.cfg["download_dir"], f"__tmp_{collection_tag}_{out_name}")
 
-                if os.path.exists(out_final):
-                    print(f"[{i}/{total}] {day}: skip duplicate (already exists {out_name})")
-                    skipped_dup += 1
-                    continue
+                manifest = input_manifest({"download": self.cfg, "day": day}, [])
+                sidecar = Path(out_final + ".manifest.json")
+                if os.path.exists(out_final) and sidecar.exists():
+                    try:
+                        saved = json.loads(sidecar.read_text())
+                        reusable = (saved.get("fingerprint") == manifest["fingerprint"]
+                                    and saved.get("output", {}).get("sha256") == sha256(out_final))
+                        with rasterio.open(out_final) as existing:
+                            existing.read()
+                            reusable = reusable and existing.crs is not None
+                        if reusable:
+                            print(f"[{i}/{total}] {day}: reuse verified {out_name}")
+                            skipped_dup += 1
+                            continue
+                    except (ValueError, OSError, rasterio.errors.RasterioError):
+                        pass
+
 
                 print(f"[{i}/{total}] {day}: building composite ({collection})")
                 try:
@@ -695,17 +712,18 @@ class GEEDownloader:
                     maskval_to_na = pp.get("maskval_to_na", True)
                     enforce_f32 = pp.get("enforce_float32", False)
 
-                    try:
-                        _postprocess_geotiff(
-                            out_tmp,
-                            expected_band_names=ee_band_names,
-                            maskval_to_na=maskval_to_na,
-                            enforce_float32=enforce_f32,
-                        )
-                    except Exception as e:
-                        print(f"[post] warning: postprocessing failed: {e}")
-
+                    _postprocess_geotiff(
+                        out_tmp, expected_band_names=ee_band_names,
+                        maskval_to_na=maskval_to_na, enforce_float32=enforce_f32,
+                    )
+                    with rasterio.open(out_tmp) as check:
+                        check.read()
+                        if not check.crs or check.count != len(ee_band_names):
+                            raise ValueError("Downloaded GeoTIFF has invalid CRS or band count.")
                     os.replace(out_tmp, out_final)
+                    manifest["source_collection"] = collection
+                    manifest["source_day"] = day
+                    save_output_manifest(out_final, manifest)
                     print(f"  saved {out_name}")
                     ok += 1
 
@@ -720,6 +738,8 @@ class GEEDownloader:
                     fail += 1
 
         print(f"Done. Success={ok}, Failed={fail}, SkippedDuplicates={skipped_dup}")
+        if fail:
+            raise RuntimeError(f"Earth Engine download incomplete: {fail} failed daily composites.")
 
 
 # ----------------------------

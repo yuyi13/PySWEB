@@ -2,9 +2,9 @@
 """
 Script: test_api_prepare_inputs.py
 Objective: Verify the SSEBop package API orchestrates Landsat and meteorological input preparation steps.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-04-20
+Last updated: 2026-09-12
 Inputs: Temporary paths and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_prepare_inputs.py
@@ -80,7 +80,7 @@ def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, 
             "era5land_download",
             {
                 "start_date": "2024-01-01",
-                "end_date": "2024-01-03",
+                "end_date": "2024-01-31",
                 "extent": [147.2, -35.1, 147.3, -35.0],
                 "output_dir": str(tmp_path / "raw"),
                 "gee_project": "workflow-project",
@@ -104,7 +104,12 @@ def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, 
                 "end_date": "2024-01-03",
                 "output_dir": str(tmp_path / "stack"),
             },
+        ),        (
+            "era5land_stack",
+            {"raw_dir": str(tmp_path / "raw"), "dem": str(tmp_path / "dem" / "nasadem.tif"),
+             "start_date": "2024-01-01", "end_date": "2024-01-31", "output_dir": str(tmp_path / "stack")},
         ),
+
     ]
 
 

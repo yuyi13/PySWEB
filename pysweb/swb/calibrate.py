@@ -2,9 +2,9 @@
 """
 Script: calibrate.py
 Objective: Provide the package-owned SWB domain calibration workflow and CLI parser.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-09-12
 Inputs: Prepared forcing NetCDFs, soil-property NetCDFs, reference surface soil moisture, and calibration options.
 Outputs: Calibration CSV containing optimized SWB parameters and fit metrics for the target domain.
 Usage: Imported as `pysweb.swb.calibrate` or run as a module entry point.
@@ -18,6 +18,8 @@ import inspect
 import sys
 import types
 from pathlib import Path
+import os
+import tempfile
 from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
@@ -25,6 +27,9 @@ import pandas as pd
 import xarray as xr
 
 from pysweb.swb.solver import soil_water_balance_1d
+from pysweb.swb.core import ensure_matching_grid, infer_layer_bottoms
+from pysweb.contracts import geographic_weights, layer_bottoms
+from pysweb.io.provenance import input_manifest, atomic_json, save_output_manifest
 
 SOIL_FILE_STEMS = {
     "porosity": "soil_porosity.nc",
@@ -38,13 +43,13 @@ DEFAULT_LAYER_BOTTOMS_MM: Sequence[float] = (50.0, 150.0, 300.0, 600.0, 1000.0)
 
 
 def _load_single_variable(path: Path, var: Optional[str] = None) -> xr.DataArray:
-    with xr.open_dataset(path) as ds:
+    with xr.open_dataset(path, decode_coords="all") as ds:
         if var is not None:
             if var not in ds:
                 raise KeyError(f"Variable '{var}' not found in {path}")
             da = ds[var]
         else:
-            data_vars = list(ds.data_vars)
+            data_vars = [name for name in ds.data_vars if name != "spatial_ref"]
             if not data_vars:
                 raise ValueError(f"No data variables found in {path}")
             da = ds[data_vars[0]]
@@ -203,19 +208,28 @@ def _compute_rmse(
     drainage_upper_limit: float,
     drainage_lower_limit: float,
     use_ndvi_root_depth: bool,
+    cell_weights=None,
+    state_timing="start",
+    spinup_days=0,
 ) -> Tuple[float, int]:
     diff_factor, sm_max_factor, sm_min_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
 
-    obs_mask = np.isfinite(reference_vals) & soil_valid[None, :, :]
-    obs_sum = np.where(obs_mask, reference_vals, 0.0).sum(axis=(1, 2))
-    obs_count = obs_mask.sum(axis=(1, 2))
+    complete_forcing = np.all(np.isfinite(effective_precip_vals) & np.isfinite(et_vals) & np.isfinite(t_vals), axis=0)
+    obs_mask = np.isfinite(reference_vals) & soil_valid[None, :, :] & complete_forcing[None, :, :]
+    obs_mask[:spinup_days] = False
+    weights = np.ones(soil_valid.shape) if cell_weights is None else np.asarray(cell_weights, dtype=float)
+    if weights.shape != soil_valid.shape or np.any(~np.isfinite(weights)) or np.any(weights < 0):
+        raise ValueError("Cell weights must be finite, non-negative and match the calibration grid.")
+    obs_mask &= weights[None, :, :] > 0
+    obs_sum = np.where(obs_mask, reference_vals * weights[None, :, :], 0.0).sum(axis=(1, 2))
+    obs_count = np.where(obs_mask, weights[None, :, :], 0.0).sum(axis=(1, 2))
     obs_mean = np.full_like(obs_sum, np.nan, dtype=float)
     valid_obs = obs_count > 0
     obs_mean[valid_obs] = obs_sum[valid_obs] / obs_count[valid_obs]
 
     sim_sum = np.zeros_like(obs_sum, dtype=float)
-    sim_count = np.zeros_like(obs_count, dtype=int)
+    sim_count = np.zeros_like(obs_count, dtype=float)
 
     n_lat, n_lon = soil_valid.shape
     for lat_idx in range(n_lat):
@@ -255,17 +269,21 @@ def _compute_rmse(
                     initial_soil_moisture=None,
                     diff_factor=diff_factor,
                     transpiration_data=t_vals[:, lat_idx, lon_idx],
+                    state_timing=state_timing,
                 )
-            except Exception:
-                continue
+            except (ValueError, FloatingPointError, ArithmeticError):
+                # Penalise this candidate instead of changing its calibration population.
+                return float("inf"), 0
 
             if model_col not in simulated.columns:
-                continue
+                return float("inf"), 0
 
             sim_vals = simulated[model_col].values
             valid_time = obs_mask[:, lat_idx, lon_idx]
-            sim_sum[valid_time] += sim_vals[valid_time]
-            sim_count[valid_time] += 1
+            if not np.all(np.isfinite(sim_vals[valid_time])):
+                return float("inf"), 0
+            sim_sum[valid_time] += sim_vals[valid_time] * weights[lat_idx, lon_idx]
+            sim_count[valid_time] += weights[lat_idx, lon_idx]
 
     valid_time = (obs_count > 0) & (sim_count > 0)
     if not np.any(valid_time):
@@ -276,7 +294,7 @@ def _compute_rmse(
 
     diff = sim_mean[valid_time] - obs_mean[valid_time]
     rmse = float(np.sqrt(np.mean(diff ** 2)))
-    return rmse, int(obs_count[valid_time].sum())
+    return rmse, int(obs_mask[valid_time].sum())
 
 
 def _objective_function(
@@ -295,6 +313,9 @@ def _objective_function(
     drainage_upper_limit: float,
     drainage_lower_limit: float,
     use_ndvi_root_depth: bool,
+    cell_weights=None,
+    state_timing="start",
+    spinup_days=0,
 ) -> float:
     rmse, _ = _compute_rmse(
         params,
@@ -312,6 +333,9 @@ def _objective_function(
         drainage_upper_limit,
         drainage_lower_limit,
         use_ndvi_root_depth,
+        cell_weights,
+        state_timing,
+        spinup_days,
     )
     return rmse
 
@@ -349,9 +373,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sm-res",
         type=float,
-        default=0.01,
-        help="Target resolution in degrees for domain-mean calibration (square grid).",
+        default=None,
+        help="Optional coarser resolution in degrees; defaults to the input grid.",
     )
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducible differential evolution.")
+    parser.add_argument("--state-timing", choices=("start", "end"), default="start", help="Model state convention matched to reference observations.")
+    parser.add_argument("--spinup-days", type=int, default=0, help="Initial simulated days excluded from the objective.")
+    parser.add_argument("--allow-unconverged", action="store_true", help="Explicitly retain a non-converged candidate with its status recorded.")
     parser.add_argument("--max-iter", type=int, default=30, help="Maximum iterations for optimization.")
     parser.add_argument("--surface-depth", type=float, default=50.0, help="Depth of surface observation (mm).")
     parser.add_argument("--root-beta", type=float, default=0.961, help="Initial root_beta value for optimizer seeding.")
@@ -427,7 +455,9 @@ def _coarsen_to_target(
     if lat_factor == 1 and lon_factor == 1:
         return da
 
-    return da.coarsen({lat_dim: lat_factor, lon_dim: lon_factor}, boundary="trim").mean()
+    if da.sizes[lat_dim] % lat_factor or da.sizes[lon_dim] % lon_factor:
+        raise ValueError("Coarsening would discard edge cells; use the native grid or an exactly divisible grid.")
+    return da.coarsen({lat_dim: lat_factor, lon_dim: lon_factor}, boundary="exact").mean(skipna=False)
 
 
 def _namespace_from_kwargs(kwargs: Dict[str, object]) -> argparse.Namespace:
@@ -501,6 +531,8 @@ def calibrate_domain(**kwargs) -> None:
         raise ValueError("NDVI data must include a 'time' coordinate.")
 
     expected_dates = pd.date_range(start = start, end = end, freq = "D")
+    if args.spinup_days < 0 or args.spinup_days >= len(expected_dates):
+        raise ValueError("spinup_days must leave at least one calibration day.")
     effective_precip = _select_daily_timesteps(
         effective_precip,
         expected_dates,
@@ -546,7 +578,7 @@ def calibrate_domain(**kwargs) -> None:
                 t,
                 reference_ssm,
                 ndvi,
-                join="inner",
+                join="exact",
             )
         else:
             effective_precip, et, t, reference_ssm = xr.align(
@@ -554,7 +586,7 @@ def calibrate_domain(**kwargs) -> None:
                 et,
                 t,
                 reference_ssm,
-                join="inner",
+                join="exact",
             )
 
     soil_dir = Path(args.soil_dir).expanduser().resolve()
@@ -566,7 +598,16 @@ def calibrate_domain(**kwargs) -> None:
             for key, da in soil_arrays.items()
         }
 
-    layer_bottoms_mm = args.layer_bottoms_mm or list(DEFAULT_LAYER_BOTTOMS_MM)
+    forcing = {"et":et,"transpiration":t,"reference_ssm":reference_ssm}
+    if ndvi is not None:
+        forcing["ndvi"] = ndvi
+    ensure_matching_grid(effective_precip, forcing, lat_dim, lon_dim)
+    ensure_matching_grid(effective_precip, soil_arrays, lat_dim, lon_dim)
+    soil_arrays = {key:da.transpose("layer",lat_dim,lon_dim) for key,da in soil_arrays.items()}
+    layer_bottoms_mm = layer_bottoms(infer_layer_bottoms(soil_arrays, args.layer_bottoms_mm)).tolist()
+    if any(da.sizes["layer"] != len(layer_bottoms_mm) for da in soil_arrays.values()):
+        raise ValueError("Soil layer counts and depth metadata disagree.")
+    cell_weights = geographic_weights(effective_precip, lat_dim, lon_dim).values
     surface_layer_idx = _surface_layer_index(layer_bottoms_mm, args.surface_depth)
 
     soil_values = {key: da.values for key, da in soil_arrays.items()}
@@ -671,9 +712,9 @@ def calibrate_domain(**kwargs) -> None:
     )
     print("  objective: RMSE between domain-mean simulated and observed reference SSM", flush=True)
     print(
-        f"  optimizer seed x0: diff_factor={de_x0[0]:.6g}, "
-        f"sm_max_factor={de_x0[1]:.6g}, sm_min_factor={de_x0[2]:.6g}, "
-        f"root_beta={de_x0[3]:.6g}",
+        f"  optimizer seed x0: diff_factor={de_x0[0]:.17g}, "
+        f"sm_max_factor={de_x0[1]:.17g}, sm_min_factor={de_x0[2]:.17g}, "
+        f"root_beta={de_x0[3]:.17g}",
         flush=True,
     )
 
@@ -699,7 +740,11 @@ def calibrate_domain(**kwargs) -> None:
             args.drainage_upper_limit,
             args.drainage_lower_limit,
             args.use_ndvi_root_depth,
+            cell_weights,
+            args.state_timing,
+            args.spinup_days,
         ),
+        seed=args.seed,
         maxiter=args.max_iter,
         popsize=de_popsize,
         mutation=(0.5, 1.0),
@@ -712,6 +757,10 @@ def calibrate_domain(**kwargs) -> None:
         **de_extra,
     )
 
+    converged = bool(getattr(result, "success", False))
+    if not converged and not args.allow_unconverged:
+        raise ValueError("Calibration did not converge: " + str(getattr(result, "message", "unknown status"))
+                         + "; increase max_iter or explicitly set allow_unconverged=True.")
     best_params = result.x
     final_rmse, n_obs = _compute_rmse(
         best_params,
@@ -729,6 +778,9 @@ def calibrate_domain(**kwargs) -> None:
         args.drainage_upper_limit,
         args.drainage_lower_limit,
         args.use_ndvi_root_depth,
+        cell_weights,
+        args.state_timing,
+        args.spinup_days,
     )
     if n_obs == 0 or not np.isfinite(final_rmse):
         raise ValueError("Calibration produced no valid observations for RMSE computation.")
@@ -736,21 +788,34 @@ def calibrate_domain(**kwargs) -> None:
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_path.open("w", newline="") as handle:
+    fd, temporary_name = tempfile.mkstemp(dir=output_path.parent, prefix=".calibration-", suffix=".csv")
+    with os.fdopen(fd, "w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(["diff_factor", "sm_max_factor", "sm_min_factor", "root_beta", "rmse", "n_obs"])
         writer.writerow(
             [
-                f"{best_params[0]:.6g}",
-                f"{best_params[1]:.6g}",
-                f"{best_params[2]:.6g}",
-                f"{best_params[3]:.6g}",
-                f"{final_rmse:.6g}",
+                f"{best_params[0]:.17g}",
+                f"{best_params[1]:.17g}",
+                f"{best_params[2]:.17g}",
+                f"{best_params[3]:.17g}",
+                f"{final_rmse:.17g}",
                 str(int(n_obs)),
             ]
         )
 
-    print(f"Wrote domain calibration CSV: {output_path}", flush=True)
+    paths = [args.effective_precip,args.et,args.t,args.reference_ssm]
+    paths += [str(soil_dir / name) for name in SOIL_FILE_STEMS.values()]
+    if args.ndvi:
+        paths.append(args.ndvi)
+    manifest = input_manifest(vars(args), paths)
+    manifest["calibration"] = {"converged":converged, "message":str(getattr(result,"message","")),
+                               "n_observations":n_obs,"rmse":final_rmse,
+                               "parameters":dict(zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),best_params.tolist())),
+                               "spatial_weighting":"regular geographic cell area", "seed":args.seed,
+                               "nit":int(getattr(result,"nit",0)),"nfev":int(getattr(result,"nfev",0))}
+    Path(temporary_name).replace(output_path)
+    save_output_manifest(output_path, manifest)
+    print(f"Wrote domain calibration CSV: {output_path} (converged={converged})", flush=True)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

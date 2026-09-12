@@ -2,9 +2,9 @@
 """
 Script: test_2_ssebop_run_model.py
 Objective: Verify meteorology path resolution and workflow bootstrap behavior for the SSEBop runner.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-04-23
+Last updated: 2026-09-12
 Inputs: Temporary paths, helper-module imports, and workflow CLI invocations.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_2_ssebop_run_model.py
@@ -178,7 +178,8 @@ def test_workflow_main_forwards_parsed_args_to_package_run(monkeypatch):
     def fake_run_ssebop_workflow(**kwargs):
         recorded.update(kwargs)
 
-    monkeypatch.setattr(workflow_module, "run_ssebop_workflow", fake_run_ssebop_workflow)
+    from pysweb.ssebop import cli_run
+    monkeypatch.setattr(cli_run, "run_ssebop_workflow", fake_run_ssebop_workflow)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -216,7 +217,8 @@ def test_workflow_main_forwards_tcold_fano_args(monkeypatch):
     def fake_run_ssebop_workflow(**kwargs):
         recorded.update(kwargs)
 
-    monkeypatch.setattr(workflow_module, "run_ssebop_workflow", fake_run_ssebop_workflow)
+    from pysweb.ssebop import cli_run
+    monkeypatch.setattr(cli_run, "run_ssebop_workflow", fake_run_ssebop_workflow)
     monkeypatch.setattr(
         sys,
         "argv",

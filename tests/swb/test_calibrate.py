@@ -2,9 +2,9 @@
 """
 Script: test_calibrate.py
 Objective: Verify the package-owned SWB calibration parser exposes the neutral reference SSM interface.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-09-12
 Inputs: Package calibration parser construction and CLI argument parsing under pytest.
 Outputs: Test assertions.
 Usage: pytest tests/swb/test_calibrate.py
@@ -128,7 +128,7 @@ def test_calibrate_domain_rejects_requested_window_with_no_overlapping_timesteps
         calibrate_module,
         "_get_differential_evolution",
         lambda: (
-            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 1.0, 1.0, 0.96], dtype=float)})()
+            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 1.0, 1.0, 0.96], dtype=float), "success": True})()
         ),
     )
 
@@ -166,11 +166,17 @@ def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_pat
         calibrate_module,
         "_get_differential_evolution",
         lambda: (
-            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 1.0, 1.0, 0.96], dtype=float)})()
+            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 1.0, 1.0, 0.96], dtype=float), "success": True})()
         ),
     )
     monkeypatch.setattr(calibrate_module, "_compute_rmse", lambda *args, **kwargs: (0.42, 2))
 
+    # Keep real input files available to the provenance writer; only optimization is mocked.
+    for filename, da in data_by_path.items():
+        da.to_netcdf(tmp_path / filename)
+    (tmp_path / "soil").mkdir()
+    for name, da in soil_arrays.items():
+        da.to_netcdf(tmp_path / "soil" / f"soil_{name}.nc")
     output_path = tmp_path / "calibration.csv"
     calibrate_module.calibrate_domain(
         effective_precip = str(tmp_path / "effective.nc"),
@@ -207,7 +213,7 @@ def test_calibrate_domain_rejects_invalid_rmse_outputs(monkeypatch, tmp_path: Pa
         calibrate_module,
         "_get_differential_evolution",
         lambda: (
-            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 1.0, 1.0, 0.96], dtype=float)})()
+            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 1.0, 1.0, 0.96], dtype=float), "success": True})()
         ),
     )
     monkeypatch.setattr(calibrate_module, "_compute_rmse", lambda *args, **kwargs: (float("inf"), 0))

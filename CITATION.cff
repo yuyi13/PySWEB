@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "Please cite the software version or commit used in your analysis."
+title: "PySWEB: Soil Water-Energy Balance"
+type: software
+authors:
+  - family-names: Yu
+    given-names: Yi
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/yuyi13/PySWEB"
+url: "https://github.com/yuyi13/PySWEB"

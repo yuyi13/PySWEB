@@ -2,9 +2,9 @@
 """
 Script: test_4_sweb_calib_domain.py
 Objective: Verify Workflow 4 remains a thin wrapper around the package-owned SWB calibration entry points.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-09-12
 Inputs: Workflow module loading and monkeypatched calibration dispatch under pytest.
 Outputs: Test assertions.
 Usage: pytest tests/workflows/test_4_sweb_calib_domain.py
@@ -72,11 +72,3 @@ def test_workflow_main_rejects_legacy_smap_flag(monkeypatch):
         ])
 
     assert exc_info.value.code == 2
-
-
-def test_shell_runner_uses_reference_ssm_flag_for_calibration():
-    runner_path = ROOT / "workflows" / "sweb_domain_runner.sh"
-    runner_text = runner_path.read_text(encoding = "utf-8")
-
-    assert '--reference-ssm "${CALIB_REFERENCE_SSM_FILE}"' in runner_text
-    assert '--reference-ssm "${CALIB_SMAP_SSM_FILE}"' not in runner_text

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+.env
+.DS_Store
+.ipynb_checkpoints/
+outputs/
+!examples/outputs/
+examples/outputs/*
+!examples/outputs/README.md
+*.log

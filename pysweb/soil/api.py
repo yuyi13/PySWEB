@@ -2,9 +2,9 @@
 """
 Script: api.py
 Objective: Validate and dispatch soil property loading requests to the supported backend surface.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-04-19
+Last updated: 2026-09-12
 Inputs: Soil source selection, args namespace, grid object, and backend-specific kwargs.
 Outputs: SoilOutputs dataclass instances from implemented backends and validation errors for unsupported placeholders.
 Usage: Imported and called by package consumers.
@@ -19,7 +19,7 @@ import numpy as np
 import xarray as xr
 
 SUPPORTED_SOIL_SOURCES = ("openlandmap", "mlcons", "slga", "custom")
-IMPLEMENTED_SOIL_SOURCES = ("openlandmap",)
+IMPLEMENTED_SOIL_SOURCES = ("openlandmap", "mlcons", "custom")
 PLACEHOLDER_SOIL_SOURCES = tuple(
     soil_source for soil_source in SUPPORTED_SOIL_SOURCES if soil_source not in IMPLEMENTED_SOIL_SOURCES
 )

@@ -2,9 +2,9 @@
 """
 Script: test_api_run.py
 Objective: Verify the SSEBop package run API validates incomplete calls while forwarding supported workflow inputs.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-11
+Last updated: 2026-09-12
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_run.py
@@ -319,6 +319,10 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
     monkeypatch.setattr(ssebop_api, "process_landsat_scene", fake_process_landsat_scene)
     monkeypatch.setattr(ssebop_api, "load_output_stack", lambda *args, **kwargs: stack)
 
+    # Provenance is exercised separately with real rasters; this test isolates executor selection.
+    import pysweb.io.provenance as provenance
+    monkeypatch.setattr(provenance, "input_manifest", lambda config, paths: {
+        "fingerprint": "executor-test", "software": {"code_sha256": "test"}})
     ssebop_api.run_ssebop_workflow(
         date_range="2024-01-01 to 2024-01-02",
         landsat_dir=str(tmp_path),

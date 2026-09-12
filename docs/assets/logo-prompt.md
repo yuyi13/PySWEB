@@ -1,0 +1,11 @@
+# PySWEB logo
+
+Generated with the built-in ImageGen tool on 2026-09-12 and revised to reflect coupled water and energy exchange. The final logo uses a white background for clear README rendering.
+
+## Design prompt
+
+Use case: logo-brand. Edit the attached PySWEB logo into a more scientifically expressive, polished logo for a scientific Python model repository. Preserve the clear name PySWEB and coherent blue, warm ochre, soil-brown colours, but substantially enrich the emblem to show the WATER–ENERGY BALANCE concept: a sun with a warm downward solar-energy arrow, a blue rainfall droplet with downward infiltration into a layered soil cross-section, a small simple green plant rooted in the soil, and an upward teal evapotranspiration arrow from the plant/soil toward the atmosphere. Compose the flux arrows into a restrained circular exchange surrounding the soil/plant, so water storage and energy exchange are legible at logo size. It must look like a modern scientific software identity, not a detailed textbook diagram; clean deliberate geometric forms, balanced whitespace, limited colours, no glossy gradients or 3D, no cartoon face. Use a horizontal lockup suitable for a GitHub README: compact emblem on the left, large dark navy wordmark 'PySWEB' on the right, and immediately beneath the wordmark the exact full name 'Soil Water-Energy Balance' clearly typeset in an elegant readable sans-serif. These are the only two text strings; no process labels or equations. Full name must be crisp and large enough to read in a 650px-wide README rendering. Transparent background, generous clean margins, no watermark.
+
+## Final cleanup prompt
+
+Edit the provided PySWEB logo. Keep the entire emblem, flux arrows, composition, colours, wordmark and EXACT text 'PySWEB' and 'Soil Water-Energy Balance' unchanged. Remove the grey checkerboard completely and replace it with a pure solid white #FFFFFF background. The checkerboard is an unwanted baked pattern, not real transparency. Use a clean solid white background everywhere outside the artwork. No checkerboard, no grey squares, no transparency, no new text, no watermark. Retain the horizontal aspect ratio and all margins and legible typography.

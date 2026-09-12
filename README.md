@@ -1,236 +1,121 @@
-<img src="SWEB_logo.png" alt="SWEB logo" align="right" width="180" />
+<p align="center"><img src="docs/assets/pysweb-logo.png" alt="PySWEB — Soil Water-Energy Balance" width="700"></p>
 
-# The Sydney Soil Water-Energy Balance (SWEB) Model (work in progress)
+# PySWEB · Soil Water-Energy Balance
 
-[![Python](https://img.shields.io/badge/Python-3.12+-306998?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Preprint](https://img.shields.io/badge/Preprint-Release%20Soon-0072BC?style=flat)]()
-[![Dataset](https://img.shields.io/badge/Dataset-Release%20Soon-1682D4?style=flat)]()
+[![Tests](https://github.com/yuyi13/PySWEB/actions/workflows/tests.yml/badge.svg)](https://github.com/yuyi13/PySWEB/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)](https://www.python.org/)
+[![MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Python workflows for generating root-zone soil moisture from gridded precipitation, evapotranspiration, and soil hydraulic properties. The current meteorology pathway is ERA5-Land-based and globally usable; SWB soil inputs now default to Earth Engine OpenLandMap, and the reference SSM path now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`. The repository is under active development; interfaces and defaults may change.
+PySWEB estimates daily, layered soil moisture from precipitation, evapotranspiration and soil hydraulic properties. It links satellite-based SSEBop evapotranspiration with a one-dimensional soil water balance, including root uptake, vertical redistribution and bottom drainage. It continues development of the Sydney Soil Water-Energy Balance model.
 
-The package-first refactor is now the main execution path. The canonical code layout lives under `pysweb/`, while `workflows/` keeps thin CLI entrypoints and convenience wrappers around those package modules. Supported runtime imports should come from `pysweb/`.
+**Research software under active development.** The offline example is runnable immediately. Regional applications require external data, appropriate calibration and independent validation. The energy connection enters through the evapotranspiration estimate; the soil solver does not integrate a prognostic soil heat balance.
 
-## Current repository structure
-```
-PySWEB/
-├── pysweb/                                # Canonical package code
-│   ├── dem/                               # DEM backend dispatch and NASADEM preparation
-│   ├── io/                                # Shared I/O helpers
-│   ├── met/                               # Meteorology path resolution and source-specific helpers
-│   │   ├── era5land/
-│   │   └── silo/
-│   ├── soil/                              # Canonical soil-source discovery and loading logic
-│   ├── ssebop/                            # Package-backed SSEBop prepare/run logic
-│   │   ├── api.py
-│   │   ├── landsat.py
-│   │   └── inputs/                        # Legacy shim path during the transition
-│   ├── swb/                               # Package-backed SWB preprocess/calibrate/run logic
-│   │   ├── __init__.py
-│   │   ├── api.py
-│   │   ├── calibrate.py
-│   │   ├── core.py
-│   │   ├── preprocess.py
-│   │   ├── run.py
-│   │   └── solver.py
-│   └── visualisation/                     # Canonical plotting modules for notebooks and scripts
-│
-├── workflows/                             # CLI entrypoints and convenience wrappers
-│   ├── 1_ssebop_prepare_inputs.py         # Unified first SSEBop step: Landsat + ERA5-Land + DEM + stacks
-│   ├── 2_ssebop_run_model.py              # Thin CLI wrapper over the package-backed SSEBop run workflow
-│   ├── 3_sweb_preprocess_inputs.py        # Thin CLI wrapper over the package-backed SWB preprocess workflow
-│   ├── 4_sweb_calib_domain.py             # Thin CLI wrapper over the package-backed SWB calibration workflow
-│   ├── 5_sweb_run_model.py                # Thin CLI wrapper over the package-backed SWB run workflow
-│   ├── 6_plot_results.py                  # Optional post-run plotting wrapper over pysweb.visualisation
-│   ├── ssebop_runner_landsat.sh           # Convenience bash wrapper for Steps 1-2
-│   └── sweb_domain_runner.sh              # Convenience bash wrapper for Steps 3-5
-│
-├── notebooks/                             # Example Jupyter notebooks
-│   ├── README.md                          # Notebook index and scope
-│   ├── 01_run_pysweb.ipynb                # Canonical notebook run example for SSEBop + SWB
-│   ├── 02_plot_heatmap.ipynb              # Heatmap plotting walkthrough
-│   └── 03_plot_time_series.ipynb          # Time-series plotting walkthrough
-│
-├── README.md
-└── SWEB_logo.png
-```
-
-Runtime outputs are written under the unified prepared-input layout rooted at `1_ssebop_inputs/` plus `2_ssebop_outputs/`, `3_sweb_inputs/`, and `4_sweb_outputs/`.
-
-## Workflow overview
-1. `workflows/1_ssebop_prepare_inputs.py`: unified first SSEBop step. It prepares Landsat inputs, downloads ERA5-Land daily GeoTIFFs, prepares NASADEM, and stacks ERA5-Land meteorology products, writing Landsat to `out_dir/landsat`, DEM to `out_dir/dem/nasadem.tif`, and ERA5-Land outputs to `out_dir/met/era5land/{raw,stack}`.
-2. `workflows/2_ssebop_run_model.py`: thin CLI wrapper over the package-backed SSEBop run workflow. It consumes the prepared Landsat directory plus a meteorology stack directory (for example `out_dir/met/era5land/stack`).
-3. `workflows/3_sweb_preprocess_inputs.py`: thin wrapper over `pysweb.swb.preprocess`; it aligns ERA5-Land precipitation, SSEBop `E/T/ET`, OpenLandMap soil properties, and optional `gssm1km` reference SSM to one grid.
-4. `workflows/4_sweb_calib_domain.py`: thin wrapper over `pysweb.swb.calibrate`; it calibrates domain-wide SWEB parameters (`diff_factor`, `sm_max_factor`, `sm_min_factor`, `root_beta`).
-5. `workflows/5_sweb_run_model.py`: thin CLI wrapper over the package-backed SWB run workflow.
-6. `workflows/6_plot_results.py`: optional post-processing wrapper over `pysweb.visualisation` for heatmaps and time-series plots.
-
-The wrapper handoff follows the same contract: `ssebop_runner_landsat.sh` prepares meteorology under `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, and `sweb_domain_runner.sh` consumes that location by default.
+[Quick start](#quick-start) · [Workflow](#configured-workflow) · [Your soil data](#using-your-own-soil-data) · [Methods](docs/methods.md) · [Migration](docs/migration.md)
 
 ## Quick start
-The primary entrypoints are the workflow CLIs in `workflows/`, which delegate into `pysweb/` where that package wiring exists:
+
+Python 3.12 or newer is required. From the repository root:
 
 ```bash
-python workflows/1_ssebop_prepare_inputs.py \
-  --date-range "2024-01-01 to 2024-01-31" \
-  --extent "147.20,-35.10,147.30,-35.00" \
-  --met-source era5land \
-  --gee-project your-gee-project \
-  --out-dir /path/to/run_inputs
-
-python workflows/2_ssebop_run_model.py \
-  --date-range "2024-01-01 to 2024-01-31" \
-  --landsat-dir /path/to/run_inputs/landsat \
-  --met-dir /path/to/run_inputs/met/era5land/stack \
-  --dem /path/to/run_inputs/dem/nasadem.tif \
-  --output-dir /path/to/ssebop_outputs
+git clone https://github.com/yuyi13/PySWEB.git
+cd PySWEB
+python -m pip install -e ".[dev]"
+pysweb demo
 ```
 
-The unified first step now prepares NASADEM automatically under `run_inputs/dem/nasadem.tif`, so the SSEBop run step should consume that prepared DEM artifact instead of an unrelated external DEM path.
+The demo generates a small synthetic two-layer soil dataset and a full month of forcing, preprocesses a 14-day window, runs four cells and checks water-budget closure. It needs no Earth Engine account or external downloads. Its output is:
 
-Convenience wrappers remain available for environment-specific end-to-end runs, but they are wrappers around the workflow CLIs rather than the primary architecture:
-
-```bash
-# Step A: prepare Landsat + meteorology inputs and run SSEBop
-GEE_PROJECT=your-gee-project bash workflows/ssebop_runner_landsat.sh <run_subdir>
-
-# Step B: preprocess, calibrate, and run SWEB against the same run_subdir
-bash workflows/sweb_domain_runner.sh <run_subdir>
+```text
+examples/outputs/demo/
+├── source/       # Synthetic forcing and custom hydraulic properties
+├── prepared/     # Aligned daily forcing, soil files and provenance
+└── results/      # SWEB_RZSM_2024-01-01_2024-01-14.nc and manifest
 ```
 
-In that wrapper sequence, `GEE_PROJECT` must be provided when the SSEBop wrapper runs Step 1. The SWEB wrapper reads precipitation from `1_ssebop_inputs/<run_subdir>/met/era5land/stack`, so the handoff works without manually copying ERA5-Land stacks.
-
-## NCI PBS operation notes
-PySWEB has two different execution modes on NCI Gadi:
-
-- GEE/data-staging steps need external HTTPS access and should run on `copyq`.
-- Offline model-compute steps can run on standard compute queues once all inputs have been written to `/g/data`.
-
-NCI standard compute nodes do not have external internet access. Any PySWEB stage that calls Google Earth Engine or downloads from Earth Engine URLs should therefore be submitted separately to `copyq`. In the current package-backed workflow, these internet-dependent stages are:
-
-- `pysweb.ssebop.prepare_inputs(...)`, which downloads Landsat, ERA5-Land daily GeoTIFFs, and NASADEM before stacking ERA5-Land meteorology.
-- `pysweb.swb.preprocess(...)` when using `soil_source="openlandmap"` or the default reference SSM source, because OpenLandMap soil properties and `gssm1km` reference SSM are read through Earth Engine.
-
-The SSEBop model run, SWB calibration, and SWB model run are offline after their prepared inputs exist locally. A robust NCI workflow is therefore:
-
-1. Authenticate Earth Engine once in an interactive environment such as ARE or an interactive notebook session.
-2. Submit a small `copyq` PBS job for GEE/data staging.
-3. Submit a standard compute PBS job for SSEBop/SWB model computation against the prepared `/g/data` inputs.
-
-For Earth Engine setup, an initialization notebook such as `ee_init.ipynb` can be used before submitting PBS jobs:
+The same runnable example is available through Python:
 
 ```python
-import ee
-
-ee.Reset()
-ee.Authenticate(force=True)
-ee.Initialize(project="your-gee-project")
+from pysweb.demo import run_demo
+output = run_demo("examples/outputs/demo")
 ```
 
-Run that interactively only. It writes user credentials under `~/.config/earthengine/credentials`; subsequent batch jobs for the same NCI user should call `ee.Initialize(project="your-gee-project")` without prompting if the credentials and project permissions are valid. Do not put `ee.Authenticate(force=True)` inside an unattended PBS job.
+For runtime dependencies only, install `python -m pip install .`. Plotting is available with `python -m pip install ".[plot]"`. Installation currently uses the Git repository; no PyPI publication is claimed.
 
-For a quick non-interactive authentication check before `qsub`, run:
+## Configured workflow
+
+[examples/workflow.toml](examples/workflow.toml) centralizes paths, dates, extent, soil source, calibration and model settings. Copy it to a study configuration and edit the values. Relative paths resolve from the configuration file's directory. The example extent is illustrative.
 
 ```bash
-python - <<'PY'
-import ee
-ee.Initialize(project="your-gee-project")
-print(ee.Image("NASA/NASADEM_HGT/001").bandNames().getInfo())
-PY
+pysweb workflow --config examples/workflow.toml --dry-run
+# After setting a real study extent and Earth Engine project:
+pysweb workflow --config study.toml
 ```
 
-For PBS jobs, request all project storage that the script reads or writes, for example:
+The five stages share one implementation in `pysweb.workflow`:
 
-```bash
-#PBS -q copyq
-#PBS -l storage=gdata/ym05+gdata/yx97
+| Stage | Role | Inputs / requirements |
+|---|---|---|
+| `prepare` | Download Landsat, ERA5-Land and NASADEM; stack meteorology | Earth Engine authentication and your project |
+| `ssebop` | Estimate daily ET and partition E/T | Prepared satellite, meteorology and DEM files |
+| `preprocess` | Align forcing and soil properties; calculate effective rain | Full calendar-month rain; local or online soil inputs |
+| `calibrate` | Fit four domain parameters to reference surface soil moisture | Enabled explicitly; local reference or configured Earth Engine asset |
+| `run` | Simulate independent soil columns | Prepared forcing and hydraulic properties |
+
+Select stages with `--stages preprocess,calibrate,run`. Calibration is skipped when `calibration.enabled = false`. Its date window can differ from the simulation window. Both windows are prepared when required; calibration and simulation share process settings and state timing. See [the workflow guide](docs/workflows.md) for offline operation, HPC execution and individual APIs.
+
+Every configured run writes `resolved-config.json`. Model output manifests record input SHA-256 checksums, configuration, code identity and output checksums. `skip_existing` validates the model output against this identity before reuse. Unmanifested older outputs require regeneration. Generated data and environments stay outside version control.
+
+## Using your own soil data
+
+**Local soil data are a maintained pathway.** `spec/` provides compatibility entrypoints and guidance for the MLConstraints and custom-soil workflows; their implementations live in `pysweb.soil` and use the shared SWB solver.
+
+| Soil source | Status | Contract |
+|---|---|---|
+| `openlandmap` | Implemented; online | Versioned global clay, sand and organic-carbon assets; five model layers |
+| `custom` | Implemented; offline | NetCDF hydraulic properties with units, CRS and explicit layer depths |
+| `mlcons` | Implemented; local data required | Existing MLConstraints Clay/Sand/OC rasters, or RDS extraction using R |
+| `slga` | Reserved | Fails explicitly until a backend is implemented |
+
+A custom hydraulic file contains `porosity`, `wilting_point`, `available_water_capacity`, `b_coefficient` and `conductivity_sat` on a common layered grid. Supply your actual layer bottoms in millimetres. The model validates units, geometry, CRS and hydraulic ranges before use. See [the soil input contract](docs/soil-inputs.md), [spec/README.md](spec/README.md) and [examples/custom-soil.toml](examples/custom-soil.toml).
+
+Measured hydraulic parameters can avoid uncertainty from global texture maps and pedotransfer functions. Their benefit still depends on measurement quality, depth support and spatial representativeness.
+
+## Outputs and scientific interpretation
+
+The SWB NetCDF contains individual-layer soil moisture (`rzsm_layer_*`, m³ m⁻³), total profile water storage (`profile_sm`, mm), forcing summaries, daily budget terms, valid-forcing fractions and the final state of each layer. The default `state_timing = "start"` preserves historical timestamps. Select `"end"` to report each day's updated state. The final state is retained in both modes.
+
+Water-budget diagnostics distinguish infiltration, actual soil-limited ET, drainage, saturation overflow, numerical storage adjustments and residuals. Missing forcing freezes a cell's state and marks that day invalid; these stored states must be screened with the QC variable. Calibration excludes cells with incomplete forcing and compares model and observation means over the same support, weighted by geographic cell area. A failed solver candidate receives an infinite objective.
+
+Effective rainfall follows the existing monthly Smith formula, evaluated using complete calendar months before slicing the requested window. Partial-month source data now fail explicitly. These changes can alter historical outputs; [migration notes](docs/migration.md) identify the intentional differences.
+
+This update verifies numerical and software behavior with synthetic tests. It does not establish regional predictive skill. Retained empirical assumptions, reference-data limitations, initialization and validation priorities are documented in [methods and limitations](docs/methods.md).
+
+## Repository map
+
+| Path | Purpose |
+|---|---|
+| [pysweb/](pysweb/) | Canonical package: `ssebop`, `swb`, `soil`, `met`, `dem`, `io`, `visualisation` |
+| [workflows/](workflows/) | Thin numbered CLIs and portable shell launchers |
+| [spec/](spec/) | Maintained custom-soil / MLConstraints compatibility entrypoints |
+| [examples/](examples/) | Small configurations; ignored generated demo results |
+| [notebooks/](notebooks/README.md) | Shared-config run notebook and diagnostic plotting examples |
+| [tests/](tests/) | Unit, scientific-contract and integration tests |
+| [docs/](docs/) | Methods, data contracts, workflow and migration guidance |
+| [.github/workflows/](.github/workflows/) | Linux/macOS tests, wheel build and installed-package demo |
+
+`pysweb/` is the sole runtime package. The former top-level `core/` retirement is complete; no new code should depend on that namespace. Obsolete `superpowers` implementation plans have been replaced by maintained documentation, with historical versions retained in Git.
+
+Notebook entrypoints are [01_run_pysweb.ipynb](notebooks/01_run_pysweb.ipynb), [02_plot_heatmap.ipynb](notebooks/02_plot_heatmap.ipynb) and [03_plot_time_series.ipynb](notebooks/03_plot_time_series.ipynb). Plotting is owned by `pysweb.visualisation`; `workflows/6_plot_results.py` remains available.
+
+## Data and citation
+
+The full workflow uses external datasets with their own access and reuse terms: [Landsat Collection 2](https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC08_C02_T1_L2), [ERA5-Land daily aggregates](https://developers.google.com/earth-engine/datasets/catalog/ECMWF_ERA5_LAND_DAILY_AGGR), [NASADEM](https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001) and [OpenLandMap](https://openlandmap.org/). The default reference SSM asset is user-hosted and may require access permission. [Data provenance](docs/data.md) lists versions, units and acquisition constraints.
+
+Cite the software version and commit used in an analysis; GitHub can export the [CITATION.cff](CITATION.cff) metadata. No paper DOI or permanent software archive is currently assigned in this repository.
+
+```text
+Yu, Y. (2026). PySWEB: Soil Water-Energy Balance (version 0.1.0).
+https://github.com/yuyi13/PySWEB [include the commit used].
 ```
 
-Also activate the intended Python environment explicitly, or call its Python executable by absolute path, so that PBS does not accidentally run a different `python` than the interactive notebook environment.
-
-For notebook-driven runs, start with `notebooks/01_run_pysweb.ipynb`. For plotting from Python or the command line, use the Step 6 post-processing wrapper or the canonical modules under `pysweb.visualisation`:
-
-```bash
-python workflows/6_plot_results.py time-series \
-  --run-subdir <run_subdir> \
-  --output /g/data/ym05/sweb_model/figures/<run_subdir>_timeseries.png
-
-python workflows/6_plot_results.py heatmap \
-  --run-subdir <run_subdir> \
-  --domain-mean \
-  --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap_domain.png
-
-python -m pysweb.visualisation.plot_time_series \
-  --run-subdir <run_subdir> \
-  --output /g/data/ym05/sweb_model/figures/<run_subdir>_timeseries.png
-
-python -m pysweb.visualisation.plot_heatmap \
-  --run-subdir <run_subdir> \
-  --lat <latitude> --lon <longitude> \
-  --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap.png
-
-python -m pysweb.visualisation.plot_heatmap \
-  --run-subdir <run_subdir> \
-  --domain-mean \
-  --output /g/data/ym05/sweb_model/figures/<run_subdir>_heatmap_domain.png
-
-cd notebooks
-jupyter notebook
-```
-
-The canonical plotting modules are `pysweb.visualisation.plot_time_series` and `pysweb.visualisation.plot_heatmap`; `workflows/6_plot_results.py` is the workflow-level plotting entrypoint.
-
-The meteorology path is now ERA5-Land-based and globally usable. SWB soil texture/SOC inputs now default to Earth Engine OpenLandMap, and the reference SSM input now defaults to `gssm1km` from `users/qianrswaterr/GlobalSSM1km0509`.
-
-## Key outputs
-- From the unified first SSEBop step (`1_ssebop_prepare_inputs.py`): a prepared run directory containing `landsat/`, `dem/nasadem.tif`, `met/era5land/raw/`, and `met/era5land/stack/`. The stack directory holds `precipitation_daily_<start>_<end>.nc`, `tmax_daily_<start>_<end>.nc`, `tmin_daily_<start>_<end>.nc`, `rs_daily_<start>_<end>.nc`, `ea_daily_<start>_<end>.nc`, and `et_short_crop_daily_<start>_<end>.nc`.
-- From SSEBop run (`2_ssebop_run_model.py`): `et_daily_ssebop_<start>_<end>.nc` plus intermediate `etf`/`ndvi` products, driven by the prepared meteorology stack directory.
-- From SWEB preprocess (`3_sweb_preprocess_inputs.py`): `rain_daily_*.nc`, `effective_precip_daily_*.nc`, `et_daily_*.nc`, `t_daily_*.nc`, `soil_*.nc`, and optionally `reference_ssm_daily_*.nc`. When invoked via `sweb_domain_runner.sh`, precipitation is sourced from the unified prepared stack.
-- From calibration (`4_sweb_calib_domain.py`): CSV with calibrated domain parameters.
-- From SWEB run (`5_sweb_run_model.py`): consolidated RZSM NetCDF, optionally split into burn-in and post-burn products by `sweb_domain_runner.sh`.
-- From the Step 6 plotting workflow (`workflows/6_plot_results.py`) and canonical plotting modules (`pysweb.visualisation.plot_time_series`, `pysweb.visualisation.plot_heatmap`):
-  PNG plots and optional extracted CSV tables.
-
-## Requirements
-- Python 3.12+ (recommended)
-- Core packages: `numpy`, `pandas`, `xarray`, `rioxarray`, `rasterio`, `netCDF4`, `scipy`, `pyproj`, `pyyaml`, `tqdm`
-- System libs for geospatial reprojection: GDAL/PROJ
-- Access to forcing and ancillary datasets (Landsat, ERA5-Land, DEM, SSEBop-ready ET products)
-- Google Earth Engine access for OpenLandMap and `users/qianrswaterr/GlobalSSM1km0509` (for example with project `your-gee-project`)
-
-## Naming convention
-This repository uses:
-
-- `pysweb/` for the canonical package code.
-- `workflows/` for runnable CLI entry points and convenience wrappers around package or workflow-owned implementations.
-
-For soil-source logic, `pysweb.soil` is now the canonical package location. Keep new soil backend selection and loading changes there, with workflows and wrappers delegating into that package.
-
-## Development guidance
-Use this rule of thumb while the package-first refactor is still in progress:
-
-- Prefer `pysweb/` for new reusable logic and for revisions to already-migrated functionality.
-- Keep `workflows/` thin. Update them when CLI arguments, orchestration, or wrapper behavior changes.
-
-In practice:
-
-- SSEBop prepare/run changes should usually go into `pysweb.ssebop` first.
-- SWB run changes should usually go into `pysweb.swb` first.
-- SWB preprocess/calibration are now package-backed entry points, so edits should usually go into `pysweb.swb.preprocess` and `pysweb.swb.calibrate` first, with `workflows/3_sweb_preprocess_inputs.py` and `workflows/4_sweb_calib_domain.py` kept as thin wrappers.
-
-The package test suite includes a guard that fails if a `pysweb` module imports a top-level `core` package.
-
-### Workflow naming note
-For the SSEBop first step, keep `workflows/1_ssebop_prepare_inputs.py` as the canonical entrypoint.
-
-- `prepare_inputs` is the current package/API naming.
-
-## Development status
-This repository is actively evolving. Verify file paths, date ranges, and spatial settings before running large jobs.
-
-`pysweb.ssebop.prepare_inputs`, `pysweb.ssebop.run`, `pysweb.swb.preprocess`, `pysweb.swb.calibrate`, and `pysweb.swb.run` are wired today. `workflows/2_ssebop_run_model.py`, `workflows/3_sweb_preprocess_inputs.py`, `workflows/4_sweb_calib_domain.py`, and `workflows/5_sweb_run_model.py` are thin wrappers over those package modules.
-
-The `notebooks/` directory currently contains:
-
-- `01_run_pysweb.ipynb`: canonical notebook run example using `import pysweb` for SSEBop plus SWB preprocess/calibrate/run
-- `02_plot_heatmap.ipynb`: heatmap plotting walkthrough, with plotting modules exposed through `pysweb.visualisation`
-- `03_plot_time_series.ipynb`: SSEBop + SWEB time-series plotting walkthrough, with plotting modules exposed through `pysweb.visualisation`
+The code is distributed under the [MIT licence](LICENSE). Dataset licences remain those of their providers. For development checks and contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).

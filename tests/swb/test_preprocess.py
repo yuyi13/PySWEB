@@ -2,9 +2,9 @@
 """
 Script: test_preprocess.py
 Objective: Verify SWB preprocess helpers and package-owned preprocessing orchestration for forcing, soil dispatch, and reference SSM outputs.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-05-13
+Last updated: 2026-09-12
 Inputs: Pytest fixtures, temporary directories, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_preprocess.py -q
@@ -586,7 +586,12 @@ def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
         lambda **kwargs: reference,
     )
 
+    # Real file identities accompany mocked orchestration helpers.
+    rain.to_netcdf(tmp_path / "input_rain.nc")
+    et.to_netcdf(tmp_path / "input_et.nc")
     preprocess_inputs(
+        rain_file=str(tmp_path / "input_rain.nc"),
+        et_file=str(tmp_path / "input_et.nc"),
         date_range=["2024-01-01", "2024-01-02"],
         extent=[148.0, -35.1, 148.1, -35.0],
         sm_res=0.1,
@@ -655,12 +660,18 @@ def test_preprocess_inputs_delegates_soil_loading_to_soil_api(monkeypatch, tmp_p
         ),
     )
 
+    # Real file identities accompany mocked orchestration helpers.
+    rain.to_netcdf(tmp_path / "input_rain.nc")
+    et.to_netcdf(tmp_path / "input_et.nc")
     preprocess_inputs(
+        rain_file=str(tmp_path / "input_rain.nc"),
+        et_file=str(tmp_path / "input_et.nc"),
         date_range=["2024-01-01", "2024-01-02"],
         extent=[148.0, -35.1, 148.1, -35.0],
         sm_res=0.1,
         output_dir=str(tmp_path),
         skip_reference_ssm=True,
+        gee_project="test-project",
         workers=1,
     )
 
@@ -683,13 +694,13 @@ def test_preprocess_inputs_rejects_placeholder_soil_source_before_forcing_work(m
     monkeypatch.setattr(preprocess_module, "process_precipitation", fail_if_called)
     monkeypatch.setattr(preprocess_module, "process_et", fail_if_called)
 
-    with pytest.raises(NotImplementedError, match=r"'mlcons'"):
+    with pytest.raises(NotImplementedError, match=r"'slga'"):
         preprocess_inputs(
             date_range=["2024-01-01", "2024-01-02"],
             extent=[148.0, -35.1, 148.1, -35.0],
             sm_res=0.1,
             output_dir=str(tmp_path),
-            soil_source="mlcons",
+            soil_source="slga",
             skip_reference_ssm=True,
             workers=1,
         )

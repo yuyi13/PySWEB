@@ -1,9 +1,9 @@
 """
 Script: run.py
 Objective: Provide the package-owned SWB run workflow and CLI parser shared by workflow wrappers and the facade API.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-09-12
 Inputs: CLI-style SWB run options, forcing NetCDFs, soil-property NetCDFs, and optional NDVI or parameter grids.
 Outputs: Consolidated RZSM NetCDF outputs and run-progress messages for the requested simulation period.
 Usage: Imported as `pysweb.swb.run`
@@ -33,6 +33,10 @@ from pysweb.swb.core import (
     prepare_soil_property_grids,
 )
 from pysweb.swb.solver import soil_water_balance_1d
+from pysweb.contracts import daily_data
+from pysweb.io.provenance import input_manifest, atomic_netcdf, save_output_manifest, validate_existing_output
+
+BUDGET_NAMES = ("infiltration", "actual_et", "drainage", "overflow", "storage_adjustment", "storage_change", "balance_residual")
 
 _PROCESS_RUN_STATE: Dict[str, object] = {}
 
@@ -71,6 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar=("START", "END"),
         help="Shortcut for supplying start and end date.",
     )
+    parser.add_argument("--calibration-file", help="CSV of calibrated parameters; its checksum enters run provenance.")
+    parser.add_argument("--state-timing", choices=("start", "end"), default="start", help="State timestamp convention; final state is always retained.")
     parser.add_argument("--time-step", type=float, default=1.0, help="Model time step in days.")
     parser.add_argument("--diff-factor", type=float, default=1e3, help="Diffusivity scaling factor (mm).")
     parser.add_argument(
@@ -230,10 +236,14 @@ def _compute_row_soil_moisture(
     default_diff_factor: float,
     use_ndvi_root_depth: bool,
     emit_warnings: bool = True,
+    state_timing: str = "start",
 ) -> np.ndarray:
     n_time = effective_precip_values.shape[0]
     n_layers = int(np.asarray(soil_grids["layer_depth"]).size)
     row_soil_moisture = np.full((n_time, n_layers, n_lon), np.nan, dtype=float)
+    final_state = np.full((n_layers, n_lon), np.nan)
+    budgets = np.full((n_time, len(BUDGET_NAMES), n_lon), np.nan)
+    valid = np.zeros((n_time, n_lon), dtype=np.uint8)
 
     for lon_idx in range(n_lon):
         effective_precip_series = effective_precip_values[:, lat_idx, lon_idx]
@@ -274,6 +284,7 @@ def _compute_row_soil_moisture(
                 initial_soil_moisture = None,
                 diff_factor = diff_factor,
                 transpiration_data = t_series,
+                state_timing = state_timing,
             )
         except Exception as exc:  # pragma: no cover - diagnostic output
             if emit_warnings:
@@ -284,8 +295,12 @@ def _compute_row_soil_moisture(
             continue
 
         row_soil_moisture[:, :, lon_idx] = result.to_numpy(dtype=float, copy=False)
+        final_state[:, lon_idx] = result.attrs["final_state"]
+        valid[:, lon_idx] = result.attrs["forcing_valid"]
+        for idx, name in enumerate(BUDGET_NAMES):
+            budgets[:, idx, lon_idx] = result.attrs["water_balance"][name]
 
-    return row_soil_moisture
+    return row_soil_moisture, final_state, budgets, valid
 
 
 def _init_process_run_worker(
@@ -299,6 +314,7 @@ def _init_process_run_worker(
     time_step: float,
     default_diff_factor: float,
     use_ndvi_root_depth: bool,
+    state_timing: str,
 ) -> None:
     global _PROCESS_RUN_STATE
     _PROCESS_RUN_STATE = {
@@ -312,6 +328,7 @@ def _init_process_run_worker(
         "time_step": time_step,
         "default_diff_factor": default_diff_factor,
         "use_ndvi_root_depth": bool(use_ndvi_root_depth),
+        "state_timing": state_timing,
     }
 
 
@@ -342,13 +359,25 @@ def _run_model_for_lat_process(lat_idx: int) -> tuple[int, np.ndarray]:
         time_step = time_step,
         default_diff_factor = default_diff_factor,
         use_ndvi_root_depth = use_ndvi_root_depth,
-        emit_warnings = False,
+        emit_warnings = True,
+        state_timing = state["state_timing"],
     )
     return lat_idx, row_soil_moisture
 
 
 def run_swb_workflow(**workflow_kwargs) -> Path | None:
     args = _build_run_args(dict(workflow_kwargs))
+    if args.calibration_file:
+        parameters = pd.read_csv(args.calibration_file)
+        if len(parameters) != 1:
+            raise ValueError("Calibration CSV must contain exactly one parameter row.")
+        for key in ("diff_factor", "sm_max_factor", "sm_min_factor", "root_beta"):
+            value = float(parameters.iloc[0][key])
+            if not np.isfinite(value):
+                raise ValueError(f"Non-finite calibrated parameter: {key}")
+            setattr(args, key, value)
+    if args.time_step != 1.0:
+        raise ValueError("Daily SWB forcing requires time_step=1 day.")
     if args.workers < 1:
         raise ValueError("workers must be >= 1")
 
@@ -381,10 +410,17 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
             flush=True,
         )
 
-    if ndvi is not None:
-        precip, effective_precip, et, t, ndvi = xr.align(precip, effective_precip, et, t, ndvi, join="inner")
-    else:
-        precip, effective_precip, et, t = xr.align(precip, effective_precip, et, t, join="inner")
+    inputs = [precip, effective_precip, et, t] + ([ndvi] if ndvi is not None else [])
+    first = args.start_date or str(pd.Timestamp(effective_precip.time.values[0]).date())
+    last = args.end_date or str(pd.Timestamp(effective_precip.time.values[-1]).date())
+    validated = [daily_data(da, first, last, label) for da, label in zip(
+        inputs, ["Precipitation", "Effective precipitation", "ET", "Transpiration", "NDVI"])]
+    try:
+        aligned = xr.align(*validated, join="exact")
+    except ValueError as exc:
+        raise ValueError("Forcing grids must match exactly; preprocess onto one grid first.") from exc
+    precip, effective_precip, et, t = aligned[:4]
+    ndvi = aligned[4] if ndvi is not None else None
 
     precip = precip.transpose("time", args.lat_dim, args.lon_dim)
     effective_precip = effective_precip.transpose("time", args.lat_dim, args.lon_dim)
@@ -463,6 +499,26 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         f"(workers={args.workers})...",
         flush=True,
     )
+    if args.output_file:
+        output_path = Path(args.output_file).expanduser()
+        if not output_path.is_absolute():
+            output_path = out_dir / output_path
+    else:
+        output_path = out_dir / f"SWEB_RZSM_{time_index[0]:%Y-%m-%d}_{time_index[-1]:%Y-%m-%d}.nc"
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    source_paths = [args.precip, args.effective_precip, args.et, args.t, *soil_paths.values()]
+    source_paths += [p for p in [args.ndvi, args.param_grid, args.calibration_file] if p]
+    manifest = input_manifest(vars(args), source_paths)
+    if args.skip_existing and output_path.exists():
+        validate_existing_output(output_path, manifest)
+        print(f"Skipping existing output: {output_path}", flush=True)
+        return output_path
+
+    final_soil_moisture = np.full((n_layers, n_lat, n_lon), np.nan)
+    budget_values = np.full((n_time, len(BUDGET_NAMES), n_lat, n_lon), np.nan)
+    forcing_valid = np.zeros((n_time, n_lat, n_lon), dtype=np.uint8)
     soil_moisture = np.full((n_time, n_layers, n_lat, n_lon), np.nan, dtype=float)
     progress_interval = max(1, total_cells // 20)
     processed_cells = 0
@@ -483,8 +539,9 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 time_step = args.time_step,
                 default_diff_factor = args.diff_factor,
                 use_ndvi_root_depth = args.use_ndvi_root_depth,
+                state_timing = args.state_timing,
             )
-            soil_moisture[:, :, lat_idx, :] = row_soil_moisture
+            soil_moisture[:, :, lat_idx, :], final_soil_moisture[:, lat_idx, :], budget_values[:, :, lat_idx, :], forcing_valid[:, lat_idx, :] = row_soil_moisture
             processed_cells += n_lon
             if (processed_cells - reported_cells) >= progress_interval or processed_cells == total_cells:
                 print(f"Processed {processed_cells}/{total_cells} cells", flush=True)
@@ -515,17 +572,20 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 args.time_step,
                 args.diff_factor,
                 args.use_ndvi_root_depth,
+                args.state_timing,
             ),
         ) as executor:
             futures = [executor.submit(_run_model_for_lat_process, lat_idx) for lat_idx in range(n_lat)]
             for future in as_completed(futures):
                 lat_idx, row_soil_moisture = future.result()
-                soil_moisture[:, :, lat_idx, :] = row_soil_moisture
+                soil_moisture[:, :, lat_idx, :], final_soil_moisture[:, lat_idx, :], budget_values[:, :, lat_idx, :], forcing_valid[:, lat_idx, :] = row_soil_moisture
                 processed_cells += n_lon
                 if (processed_cells - reported_cells) >= progress_interval or processed_cells == total_cells:
                     print(f"Processed {processed_cells}/{total_cells} cells", flush=True)
                     reported_cells = processed_cells
 
+    if not np.any(forcing_valid):
+        raise ValueError("No cells had valid forcing and a successful model solution.")
     layer_ids = np.arange(1, n_layers + 1, dtype=int)
     storage_dtype = np.float32 if args.dtype == "float32" else np.float64
     fill_value = storage_dtype(np.nan)
@@ -535,19 +595,6 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         soil_source_dir = Path(args.soil_dir).expanduser().resolve()
     else:
         soil_source_dir = Path(next(iter(soil_paths.values()))).parent
-
-    if args.output_file:
-        output_path = Path(args.output_file).expanduser()
-        if not output_path.is_absolute():
-            output_path = out_dir / output_path
-    else:
-        output_path = out_dir / f"SWEB_RZSM_{time_index[0]:%Y-%m-%d}_{time_index[-1]:%Y-%m-%d}.nc"
-    output_path = output_path.resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if args.skip_existing and output_path.exists():
-        print(f"Skipping existing output: {output_path}", flush=True)
-        return output_path
 
     sm_target_lat = None
     sm_target_lon = None
@@ -653,8 +700,30 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     ds_rzsm["precipitation"] = precip_da
     ds_rzsm["effective_precipitation"] = effective_precip_da
 
+    native_coords = {"time":time_index, args.lat_dim:latitudes, args.lon_dim:longitudes}
+    for idx, name in enumerate(BUDGET_NAMES):
+        da = xr.DataArray(budget_values[:, idx], dims=("time",args.lat_dim,args.lon_dim), coords=native_coords,
+                          attrs={"units":"mm", "long_name":name.replace("_", " "),
+                                 "time_support":"interval starting at time, duration 1 day"})
+        ds_rzsm[name] = _maybe_resample(da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon)
+    valid_da = xr.DataArray(forcing_valid.astype(float), dims=("time",args.lat_dim,args.lon_dim), coords=native_coords)
+    ds_rzsm["valid_forcing_fraction"] = _maybe_resample(valid_da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon)
+    ds_rzsm["valid_forcing_fraction"].attrs.update(units="1", long_name="Valid forcing and successful solver fraction", comment="0 indicates a held or invalid state; fractions can occur after output resampling.")
+    for idx in range(n_layers):
+        da = xr.DataArray(final_soil_moisture[idx], dims=(args.lat_dim,args.lon_dim),
+                          coords={args.lat_dim:latitudes,args.lon_dim:longitudes},
+                          attrs={"units":"m3 m-3", "state_time":str(time_index[-1]+pd.Timedelta(days=1))})
+        ds_rzsm[f"final_sm_layer_{idx+1}"] = _maybe_resample(da,args.lat_dim,args.lon_dim,sm_target_lat,sm_target_lon)
+
     attrs = {
         "title": "Soil Water Balance Model Output (Consolidated RZSM)",
+        "state_timing": args.state_timing,
+        "state_timing_description": "Start-of-day states preserve historical convention; end states include that day forcing. Final state is saved separately.",
+        "run_fingerprint": manifest["fingerprint"],
+        "code_sha256": manifest["software"]["code_sha256"],
+        "missing_forcing_policy": "hold state; flag valid_forcing_fraction=0 and leave fluxes missing",
+        "valid_cell_days": int(np.sum(forcing_valid)),
+        "total_cell_days": int(forcing_valid.size),
         "source": "pysweb.swb.solver soil_water_balance_1d",
         "soil_property_source": str(soil_source_dir),
         "layer_bottoms_mm": np.asarray(soil_grids["layer_depth"], dtype=float).tolist(),
@@ -685,9 +754,14 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
             "zlib": True,
             "complevel": 4,
         }
-    ds_rzsm.to_netcdf(output_path, encoding=encoding)
+    atomic_netcdf(ds_rzsm, output_path, encoding=encoding)
+    save_output_manifest(output_path, manifest)
     print(f"Wrote {output_path}", flush=True)
     return output_path
+
+
+def main(argv=None):
+    run_swb_workflow(**vars(build_parser().parse_args(argv)))
 
 
 def _restore_package_run_facade() -> None:
@@ -708,3 +782,7 @@ def _restore_package_run_facade() -> None:
 
 
 _restore_package_run_facade()
+
+
+if __name__ == "__main__":
+    main()

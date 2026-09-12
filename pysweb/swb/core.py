@@ -1,9 +1,9 @@
 """
 Script: core.py
 Objective: Provide reusable SWB forcing and soil-input helpers for package-owned run and calibration workflows.
-Author: Yi Yu
+Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-09-12
 Inputs: NetCDF forcing paths, soil-property NetCDF paths, and layer metadata or user-supplied layer depths.
 Outputs: Loaded xarray DataArrays, resolved soil-path mappings, numpy soil-property grids, and validation errors.
 Usage: Imported as `pysweb.swb.core`
@@ -16,6 +16,7 @@ from typing import Dict, Mapping, Optional, Sequence
 
 import numpy as np
 import xarray as xr
+from pysweb.contracts import layer_bottoms
 
 SOIL_FILE_STEMS = {
     "porosity": "soil_porosity.nc",
@@ -32,8 +33,8 @@ _LAYER_COORD_KEYS: Sequence[str] = ("layer_depth", "depth_mm", "depth")
 
 def load_single_variable(path: str | Path) -> xr.DataArray:
     dataset_path = Path(path).expanduser().resolve()
-    with xr.open_dataset(dataset_path) as ds:
-        data_vars = list(ds.data_vars)
+    with xr.open_dataset(dataset_path, decode_coords="all") as ds:
+        data_vars = [name for name in ds.data_vars if name != "spatial_ref"]
         if not data_vars:
             raise ValueError(f"No data variables found in {dataset_path}")
         da = ds[data_vars[0]].load()
@@ -159,19 +160,17 @@ def prepare_soil_property_grids(
     if "layer" not in sample.dims:
         raise ValueError("Soil arrays must include a 'layer' dimension.")
 
-    layer_bottoms = np.asarray(layer_bottoms_mm, dtype=float)
-    if layer_bottoms.ndim != 1 or layer_bottoms.size == 0:
-        raise ValueError("layer_bottoms_mm must contain at least one depth value.")
-    if layer_bottoms.size != sample.sizes["layer"]:
+    bottoms = layer_bottoms(layer_bottoms_mm)
+    if bottoms.size != sample.sizes["layer"]:
         raise ValueError(
             "Number of layer bottoms does not match number of soil layers "
-            f"({layer_bottoms.size} vs {sample.sizes['layer']})."
+            f"({bottoms.size} vs {sample.sizes['layer']})."
         )
 
-    layer_thickness = np.empty_like(layer_bottoms, dtype=float)
-    layer_thickness[0] = layer_bottoms[0]
-    if layer_bottoms.size > 1:
-        layer_thickness[1:] = np.diff(layer_bottoms)
+    layer_thickness = np.diff(np.r_[0.0, bottoms])
+    for name, da in soil_arrays.items():
+        if da.sizes.get("layer") != bottoms.size or not np.array_equal(da.layer, sample.layer):
+            raise ValueError(f"Soil layer coordinates disagree for {name}.")
 
     lat_count = sample.sizes[lat_dim]
     lon_count = sample.sizes[lon_dim]
@@ -181,7 +180,7 @@ def prepare_soil_property_grids(
         return np.asarray(da.values, dtype=float)
 
     soil_grids: Dict[str, np.ndarray] = {
-        "layer_depth": layer_bottoms.astype(float),
+        "layer_depth": bottoms,
         "layer_thickness": layer_thickness.astype(float),
         "porosity": to_numpy("porosity"),
         "wilting_point": to_numpy("wilting_point"),
@@ -228,7 +227,7 @@ def load_forcing(
     end: str | None = None,
 ) -> xr.DataArray:
     dataset_path = Path(path).expanduser().resolve()
-    with xr.open_dataset(dataset_path) as ds:
+    with xr.open_dataset(dataset_path, decode_coords="all") as ds:
         if variable not in ds:
             raise KeyError(f"Variable '{variable}' not found in {dataset_path}")
         da = ds[variable]
