@@ -12,3 +12,4 @@
 - Replaced obsolete implementation plans with current methods, data and migration documentation; revised the scientific logo and README.
 
 See `docs/migration.md` for behavior changes and retained assumptions. This version identifies the package interface; predictive skill requires study-specific validation.
+- Preserved observed SSEBop dates at interpolation boundaries and across long gaps; added sparse-scene regression tests and explicit NumPy datetime units.

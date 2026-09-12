@@ -2,7 +2,7 @@
 
 The modernization was checked locally with Python 3.12.12:
 
-- 227 pytest tests passed, including the existing numerical helpers and new solver, local soil, calendar, calibration-support, download-integrity and workflow tests.
+- 231 pytest tests passed, including the existing numerical helpers and new solver, local soil, calendar, calibration-support, download-integrity and workflow tests.
 - Source distribution and wheel built successfully. The wheel was installed and imported from `site-packages` outside the repository; the two-worker offline demo completed with a maximum daily water-budget residual of 2.58 × 10⁻¹⁴ mm.
 - The demo exercised real NetCDF writing/reading, two-layer custom soil preparation, partial-window output using full-month rainfall, and final-state/QC/budget export.
 - Wet, dry and saturation tests covered one-, two- and five-layer profiles. Restart and state-timing tests checked the complete direct-solver sequence.

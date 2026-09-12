@@ -358,25 +358,34 @@ def interpolate_etf_daily(
     etf_time_ns = pd.to_datetime(etf_stack.time.values, errors="coerce").values.astype("datetime64[ns]")
     if pd.isna(etf_time_ns).any():
         raise ValueError("etf_stack.time contains non-convertible values")
+    if not len(etf_time_ns) or np.any(np.diff(etf_time_ns) <= np.timedelta64(0, "ns")):
+        raise ValueError("Satellite observation times must be non-empty, unique and increasing.")
+    if max_gap_days < 0:
+        raise ValueError("max_gap_days must be non-negative.")
     etf_stack = etf_stack.assign_coords(time=etf_time_ns)
 
+    if len(etf_time_ns) == 1:
+        return etf_stack.reindex(time=daily_time_ns).transpose(*etf_stack.dims)
     etf_daily = etf_stack.interp(time=daily_time_dt, method="linear")
 
     obs = np.array(etf_time_ns, dtype="datetime64[ns]")
     daily = np.array(daily_time_ns, dtype="datetime64[ns]")
     idx = np.searchsorted(obs, daily, side="right")
-    prev = np.where(idx > 0, obs[idx - 1], np.datetime64("NaT"))
+    prev = np.where(idx > 0, obs[idx - 1], np.datetime64("NaT", "ns"))
     idx_next = np.clip(idx, 0, len(obs) - 1)
-    next_ = np.where(idx < len(obs), obs[idx_next], np.datetime64("NaT"))
+    next_ = np.where(idx < len(obs), obs[idx_next], np.datetime64("NaT", "ns"))
     gap = (next_ - prev).astype("timedelta64[D]").astype("int64")
     gap[np.isnat(prev) | np.isnat(next_)] = max_gap_days + 1
 
     mask = xr.DataArray(
-        gap <= max_gap_days,
+        (gap <= max_gap_days) | np.isin(daily, obs),
         coords={"time": daily_time_dt.values},
         dims=("time",),
     )
     etf_daily = etf_daily.where(mask)
+    # A measured date is valid independently of the neighbouring interpolation gap.
+    observed = xr.DataArray(np.isin(daily, obs), dims="time", coords={"time":daily_time_ns})
+    etf_daily = etf_daily.where(~observed, etf_stack.reindex(time=daily_time_ns))
     etf_daily = etf_daily.transpose(*etf_stack.dims)
     etf_daily = assign_dim_coords_from_reference(etf_daily, etf_stack, exclude_dims=("time",))
     return etf_daily

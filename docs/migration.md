@@ -32,3 +32,5 @@ Historical solver explanations already moved into `pysweb.swb.solver` remain the
 - Old cached model outputs without a matching manifest are rejected by `skip_existing`. Rerun without that option to regenerate a product from verified inputs.
 
 The update adds packaging, MIT licensing, CI and examples. It does not publish to PyPI or establish a new scientifically validated model release.
+
+SSEBop interpolation now retains actual observation dates, including the last scene and a single-scene input. The maximum-gap rule applies to interpolated dates. Previously the last measured day, or a measured day preceding a long gap, could be masked despite having an observation. Dates outside the observed interval remain missing.

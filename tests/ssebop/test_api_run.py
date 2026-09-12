@@ -8,12 +8,13 @@ Last updated: 2026-09-12
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: pytest tests/ssebop/test_api_run.py
-Dependencies: numpy, pytest, rioxarray, xarray
+Dependencies: numpy, pandas, pytest, rioxarray, xarray
 """
 from pathlib import Path
 import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
@@ -393,3 +394,19 @@ def test_gapfill_etf_savgol_falls_back_when_fork_unavailable(monkeypatch):
 
     assert executor_calls["mp_context"] is None
     assert filled.shape == etf_stack.shape
+
+
+@pytest.mark.parametrize("max_gap, middle", [(2, 0.5), (1, np.nan)])
+def test_interpolation_retains_observations_and_limits_only_gaps(max_gap, middle):
+    scenes = xr.DataArray([0.4, 0.6], dims="time", coords={"time": pd.to_datetime(["2024-01-01", "2024-01-03"])})
+    daily = xr.DataArray(pd.date_range("2023-12-31", periods=5), dims="time")
+    actual = ssebop_api.interpolate_etf_daily(scenes, daily, max_gap)
+    np.testing.assert_allclose(actual.values, [np.nan, 0.4, middle, 0.6, np.nan], equal_nan=True)
+
+
+@pytest.mark.parametrize("values", [[0.6], [np.nan, 0.6]])
+def test_interpolation_preserves_last_measurement_with_sparse_observations(values):
+    scenes = xr.DataArray(values, dims="time", coords={"time": pd.date_range("2024-01-01", periods=len(values))})
+    daily = xr.DataArray(pd.date_range("2024-01-01", periods=len(values)+1), dims="time")
+    actual = ssebop_api.interpolate_etf_daily(scenes, daily, 32)
+    np.testing.assert_allclose(actual.values, values + [np.nan], equal_nan=True)
