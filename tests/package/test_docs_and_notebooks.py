@@ -4,7 +4,7 @@ Script: test_docs_and_notebooks.py
 Objective: Verify the run notebook and README files document the canonical package-backed notebook workflow.
 Author: Yi Yu
 Created: 2026-04-19
-Last updated: 2026-05-15
+Last updated: 2026-05-18
 Inputs: Repository README files and the notebooks/01_run_pysweb.ipynb notebook.
 Outputs: Pytest assertions.
 Usage: python -m pytest tests/package/test_docs_and_notebooks.py -q
@@ -89,6 +89,7 @@ def test_run_notebook_puts_execution_toggles_before_paths():
     _, code_text = _read_notebook_sections("notebooks/01_run_pysweb.ipynb")
 
     expected_order = [
+        "import sys",
         "RUN_PREPARE_INPUTS =",
         "RUN_SSEBOP =",
         "RUN_SWB_PREPROCESS =",
@@ -99,6 +100,35 @@ def test_run_notebook_puts_execution_toggles_before_paths():
     positions = [code_text.index(text) for text in expected_order]
 
     assert positions == sorted(positions)
+
+
+def test_run_notebook_front_loads_imports_and_path_setup_for_pbs_exports():
+    _, code_text = _read_notebook_sections("notebooks/01_run_pysweb.ipynb")
+
+    assert code_text.index("from pathlib import Path") < code_text.index("PROJECT_DIR =")
+    assert code_text.index("import pandas as pd") < code_text.index("PROJECT_DIR =")
+    assert code_text.index("import xarray as xr") < code_text.index("PROJECT_DIR =")
+    assert code_text.index("sys.path.insert(0, str(PROJECT_DIR))") < code_text.index("import pysweb")
+    assert code_text.index("import pysweb") < code_text.index("if RUN_PREPARE_INPUTS:")
+    assert code_text.index("RUN_DIAGNOSTIC_PLOTS =") < code_text.index("PROJECT_DIR =")
+    assert "if RUN_DIAGNOSTIC_PLOTS:" in code_text
+    assert code_text.index("import matplotlib.pyplot as plt") > code_text.index("if RUN_DIAGNOSTIC_PLOTS:")
+    assert code_text.index("from IPython.display import display") > code_text.index("if RUN_DIAGNOSTIC_PLOTS:")
+
+
+def test_run_notebook_only_requires_gee_project_for_gee_dependent_steps():
+    _, code_text = _read_notebook_sections("notebooks/01_run_pysweb.ipynb")
+
+    assert 'SWB_SOIL_SOURCE = "openlandmap"' in code_text
+    assert "GEE_REQUIRED = (" in code_text
+    assert "RUN_PREPARE_INPUTS" in code_text
+    assert 'SWB_SOIL_SOURCE == "openlandmap"' in code_text
+    assert "RUN_SWB_CALIBRATE" in code_text
+    assert "if GEE_REQUIRED and not GEE_PROJECT.strip():" in code_text
+    assert "GEE_PROJECT is required only when a GEE-dependent step is enabled." in code_text
+    assert "if GEE_REQUIRED:\n    print(f\"GEE project: {GEE_PROJECT}\")" in code_text
+    assert "else:\n    print(\"GEE project: not required for the selected offline-only steps.\")" in code_text
+    assert "soil_source = SWB_SOIL_SOURCE" in code_text
 
 
 def test_readmes_list_actual_notebook_files():
