@@ -4,7 +4,7 @@ Script: test_api_run.py
 Objective: Verify SSEBop dispatch, process fallbacks and preservation of observations during interpolation.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_api_run.py
@@ -318,7 +318,10 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
     monkeypatch.setattr(ssebop_api, "compute_dt_daily", lambda *args, **kwargs: met)
     monkeypatch.setattr(ssebop_api, "build_doy_climatology", lambda daily: dt_clim)
     monkeypatch.setattr(ssebop_api, "process_landsat_scene", fake_process_landsat_scene)
-    monkeypatch.setattr(ssebop_api, "load_output_stack", lambda *args, **kwargs: stack)
+    ndvi_stack = stack.copy(deep=True)
+    ndvi_stack.values[:] = [[-0.2, 0.5], [1.2, np.nan]]
+    monkeypatch.setattr(ssebop_api, "load_output_stack",
+                        lambda paths, name, **kwargs: ndvi_stack if name == "ndvi" else stack)
 
     # Provenance is exercised separately with real rasters; this test isolates executor selection.
     import pysweb.io.provenance as provenance
@@ -342,6 +345,28 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
     assert executor_calls["initializer"] is ssebop_api._init_scene_worker_context
     assert scene_calls
     assert scene_calls[0]["dt_clim"] is dt_clim
+
+    # Validate the written contract, including clipped fractions and missing pixels.
+    output = tmp_path / "out/et_daily_ssebop_2024-01-01_2024-01-02.nc"
+    with xr.open_dataset(output) as result:
+        assert set(result.data_vars) == {"ET", "E_s", "E_t", "f_t", "etf_interp", "ndvi_interp"}
+        assert result.attrs["component_schema"] == "sweb-components-v2"
+        fraction = (1.26 * result.ndvi_interp - 0.18).clip(0.0, 1.0)
+        np.testing.assert_equal(result.f_t.values, fraction.values)
+        np.testing.assert_equal(result.E_t.values, (result.ET * fraction).values)
+        np.testing.assert_equal(result.E_s.values, (result.ET - result.E_t).values)
+        valid = np.isfinite(result.E_s.values) & np.isfinite(result.E_t.values)
+        np.testing.assert_allclose((result.E_s + result.E_t).values[valid], result.ET.values[valid])
+        assert np.isnan(result.E_s.values[:, 1, 1]).all()
+        assert result.f_t.attrs["units"] == "1"
+        assert result.f_t.attrs["long_name"] == "Transpiration fraction"
+        assert result.f_t.attrs["formula"] == "f_t = clip(1.26 * NDVI - 0.18, 0, 1)"
+        for name, label, formula in [("E_s", "Soil evaporation", "E_s = ET_a - E_t"),
+                                     ("E_t", "Plant transpiration", "E_t = f_t * ET_a")]:
+            assert result[name].attrs["long_name"] == label
+            assert result[name].attrs["units"] == "mm/day"
+            assert result[name].attrs["formula"] == formula
+            assert "before soil-water limitation" in result[name].attrs["description"]
 
 
 def test_gapfill_etf_savgol_falls_back_when_fork_unavailable(monkeypatch):

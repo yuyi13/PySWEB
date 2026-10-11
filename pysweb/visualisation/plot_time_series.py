@@ -4,7 +4,7 @@ Script: plot_time_series.py
 Objective: Extract and plot SSEBop and SWEB time series for point-based or domain-mean analysis.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-20
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: SSEBop/SWEB NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved time-series figure and optional CSV containing extracted values.
 Usage: pysweb time-series --help
@@ -186,8 +186,12 @@ def _detect_spatial_dims(da: xr.DataArray) -> Tuple[Optional[str], Optional[str]
 
 
 def _format_var_label(name: str) -> str:
-    if name in {"ET", "E", "T", "Tc"}:
-        return name
+    labels = {"ET": r"$ET_a$", "et": r"$ET_a$", "actual_et": r"$ET_a$",
+              "E_s": r"$E_s$", "E_t": r"$E_t$", "f_t": r"$f_t$",
+              "E": r"$E_s$", "e": r"$E_s$", "T": r"$E_t$",
+              "t": r"$E_t$", "Tc": r"$f_t$"}
+    if name in labels:
+        return labels[name]
     if name == "etf_interp":
         return "ETF"
     if name == "ndvi_interp":
@@ -203,7 +207,11 @@ def _format_var_label(name: str) -> str:
 def _default_variables(ds: xr.Dataset, product: str) -> List[str]:
     available = list(ds.data_vars)
     if product == "ssebop":
-        preferred = [name for name in ("ET", "E", "T") if name in ds.data_vars]
+        from pysweb.components import COMPONENT_ALIASES, component_variable
+        preferred = ["ET"] if "ET" in ds.data_vars else []
+        for canonical in ("E_s", "E_t"):
+            if any(name in ds for name in (canonical, *COMPONENT_ALIASES[canonical])):
+                preferred.append(component_variable(ds, canonical))
         return preferred or available
 
     layer_vars = sorted(
@@ -221,6 +229,14 @@ def _resolve_variables(ds: xr.Dataset, requested: Optional[Sequence[str]], produ
     if not requested:
         return _default_variables(ds, product)
 
+    if product == "ssebop":
+        from pysweb.components import COMPONENT_ALIASES, component_variable
+        requested = list(requested)
+        for idx, name in enumerate(requested):
+            for canonical, aliases in COMPONENT_ALIASES.items():
+                if name in (canonical, *aliases):
+                    requested[idx] = component_variable(ds, canonical, name)
+                    break
     missing = [name for name in requested if name not in ds.data_vars]
     if missing:
         available = ", ".join(ds.data_vars)
@@ -325,7 +341,8 @@ def _plot_ssebop(ax: plt.Axes, data: pd.DataFrame):
     for column in data.columns:
         ax.plot(data.index, data[column], linewidth=1.8, alpha=0.9, label=_format_var_label(column))
     ax.set_title("SSEBop time series")
-    ax.set_ylabel("Flux / index")
+    flux_names = {"ET", "E_s", "E_t", "E", "e", "T", "t"}
+    ax.set_ylabel(r"Flux (mm day$^{-1}$)" if set(data.columns) <= flux_names else "Flux / index")
     ax.grid(alpha=0.3)
     ax.legend(loc="upper right", ncol=2, fontsize=9)
 
@@ -450,7 +467,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--ssebop-root", default=str(DEFAULT_SSEBOP_ROOT), help="Default SSEBop root directory.")
     parser.add_argument("--sweb-root", default=str(DEFAULT_SWEB_ROOT), help="Default SWEB root directory.")
 
-    parser.add_argument("--ssebop-vars", nargs="+", help="SSEBop variables to plot (default: ET E T).")
+    parser.add_argument("--ssebop-vars", nargs="+", help="SSEBop variables to plot (default: ET E_s E_t).")
     parser.add_argument(
         "--sweb-vars",
         nargs="+",

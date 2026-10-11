@@ -56,7 +56,7 @@ The five stages share one implementation in `pysweb.workflow`:
 | Stage | Role | Inputs / requirements |
 |---|---|---|
 | `prepare` | Download Landsat, ERA5-Land and NASADEM; stack meteorology | Earth Engine authentication and your project |
-| `ssebop` | Estimate daily ET and partition E/T | Prepared satellite, meteorology and DEM files |
+| `ssebop` | Estimate daily ET and partition E_s/E_t | Prepared satellite, meteorology and DEM files |
 | `preprocess` | Align forcing and soil properties; calculate effective rain | Full calendar-month rain; local or online soil inputs |
 | `calibrate` | Fit four domain parameters to reference surface soil moisture | Enabled explicitly; local reference or configured Earth Engine asset |
 | `run` | Simulate independent soil columns | Prepared forcing and hydraulic properties |
@@ -119,3 +119,5 @@ https://github.com/yuyi13/PySWEB [include the commit used].
 ```
 
 The code is distributed under the [MIT licence](LICENSE). Dataset licences remain those of their providers. For development checks and contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+
+Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` (transpiration fraction). See the [notation migration and legacy-input policy](docs/migration.md#component-notation-migration-11-october-2026).

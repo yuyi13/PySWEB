@@ -3,7 +3,7 @@ Script: solver.py
 Objective: Solve daily soil-water balances and vertical redistribution for a layered soil column.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Daily forcing, per-layer hydraulic properties, initial states and solver settings.
 Outputs: Layer moisture and final states, hydraulic coefficients, water-budget terms and quality flags.
 Usage: import pysweb.swb.solver
@@ -521,6 +521,13 @@ def soil_water_balance_1d(
     transpiration_data=None,
     state_timing="start",
 ):
+    """Advance layered soil moisture using ET_a and optional E_t forcing.
+
+    E_s = ET_a - E_t. Requested surface uptake is E_s plus the surface
+    root fraction of E_t; deeper uptake follows the E_t root fractions.
+    The returned actual_et budget sums water-limited layer extraction.
+    Separate actual E_s/E_t budgets are not diagnosed.
+    """
     if isinstance(precip_data, pd.DataFrame):
         precip_values = precip_data.iloc[:, 0].values
     elif isinstance(precip_data, pd.Series):
@@ -603,31 +610,33 @@ def soil_water_balance_1d(
 
     for t_idx in range(num_times):
         eff_precip_t = precip_values[t_idx]
-        et_t = et_values[t_idx]
-        transp_t_in = transp_values[t_idx] if transp_values is not None else np.nan
+        evapotranspiration_daily = et_values[t_idx]
+        transpiration_input_daily = transp_values[t_idx] if transp_values is not None else np.nan
 
         soil_moisture_array[t_idx, :] = current_soil_moisture
-        if not (np.isfinite(eff_precip_t) and np.isfinite(et_t) and
-                (transp_values is None or np.isfinite(transp_t_in))):
+        if not (np.isfinite(eff_precip_t) and np.isfinite(evapotranspiration_daily) and
+                (transp_values is None or np.isfinite(transpiration_input_daily))):
             # Retain the state but leave fluxes missing and expose an explicit QC flag.
             continue
         forcing_valid[t_idx] = True
         storage_before = float(np.sum(current_soil_moisture * soil_props["layer_thickness"]))
 
         eff_precip_t = max(0.0, float(eff_precip_t))
-        et_t = max(0.0, float(et_t))
+        evapotranspiration_daily = max(0.0, float(evapotranspiration_daily))
         if transp_values is not None:
-            transp_t = float(np.clip(transp_t_in, 0.0, et_t))
-            evap_t = et_t - transp_t
+            transpiration_daily = float(np.clip(transpiration_input_daily, 0.0, evapotranspiration_daily))
+            soil_evaporation_daily = evapotranspiration_daily - transpiration_daily
         else:
             evap_frac = 0.3 if evap_fraction is None else float(evap_fraction)
             evap_frac = min(max(evap_frac, 0.0), 1.0)
-            evap_t = et_t * evap_frac
-            transp_t = et_t - evap_t
+            soil_evaporation_daily = evapotranspiration_daily * evap_frac
+            transpiration_daily = evapotranspiration_daily - soil_evaporation_daily
 
+        # Requested layer sinks: E_s + root_fraction[0] * E_t at the surface,
+        # root_fraction[i] * E_t below. Only total water-limited actual_et is diagnosed.
         et_by_layer = np.zeros(num_layers)
-        et_by_layer[0] = evap_t
-        transp_by_layer = transp_t * root_distribution
+        et_by_layer[0] = soil_evaporation_daily
+        transp_by_layer = transpiration_daily * root_distribution
         et_by_layer += transp_by_layer
 
         sm_min_relax_tau_days = float(soil_props.get("sm_min_relax_tau_days", 3.0))

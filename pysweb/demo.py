@@ -3,7 +3,7 @@ Script: demo.py
 Objective: Run a small offline custom-soil demonstration with synthetic forcing.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Output directory and worker count; all scientific inputs are synthetic.
 Outputs: Synthetic input NetCDFs, aligned forcing, soil states and budget diagnostics.
 Usage: pysweb demo --help
@@ -47,7 +47,7 @@ def prepare_demo(directory):
 
     daily(rainfall, "precipitation").to_dataset().to_netcdf(directory / "rain.nc")
     xr.Dataset(
-        {"ET": daily(np.full(shape, 2.0), "ET"), "T": daily(np.full(shape, 1.3), "T")}
+        {"ET": daily(np.full(shape, 2.0), "ET"), "E_t": daily(np.full(shape, 1.3), "E_t")}
     ).to_netcdf(directory / "et.nc")
     soil = {}
     for name, value, unit in [
@@ -84,7 +84,7 @@ def run_demo(output_dir="examples/outputs/demo", workers=1):
         rain_var="precipitation",
         et_file=str(base / "source/et.nc"),
         et_var="ET",
-        t_var="T",
+        transpiration_var="E_t",
         soil_source="custom",
         soil_file=str(base / "source/custom_soil.nc"),
         skip_reference_ssm=True,
@@ -96,7 +96,7 @@ def run_demo(output_dir="examples/outputs/demo", workers=1):
         precip=str(inputs / f"rain_daily_{tag}.nc"),
         effective_precip=str(inputs / f"effective_precip_daily_{tag}.nc"),
         et=str(inputs / f"et_daily_{tag}.nc"),
-        t=str(inputs / f"t_daily_{tag}.nc"),
+        transpiration=str(inputs / f"transpiration_daily_{tag}.nc"),
         soil_dir=str(inputs),
         output_dir=str(base / "results"),
         start_date="2024-01-01",

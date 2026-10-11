@@ -4,7 +4,7 @@ Script: calibrate.py
 Objective: Calibrate domain SWB parameters against reference surface soil moisture.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
 Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
 Usage: pysweb swb-calibrate --help
@@ -26,6 +26,11 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from pysweb.components import (
+    ComponentArgumentParser, ComponentArgument, normalise_component_arguments,
+    component_variable, resolve_prepared_component_path,
+)
+
 from pysweb.swb.solver import soil_water_balance_1d
 from pysweb.swb.core import ensure_matching_grid, infer_layer_bottoms
 from pysweb.contracts import geographic_weights, layer_bottoms
@@ -42,8 +47,10 @@ SOIL_FILE_STEMS = {
 DEFAULT_LAYER_BOTTOMS_MM: Sequence[float] = (50.0, 150.0, 300.0, 600.0, 1000.0)
 
 
-def _load_single_variable(path: Path, var: Optional[str] = None) -> xr.DataArray:
+def _load_single_variable(path: Path, var: Optional[str] = None, *, component: Optional[str] = None) -> xr.DataArray:
     with xr.open_dataset(path, decode_coords="all") as ds:
+        if component is not None:
+            var = component_variable(ds, component, var)
         if var is not None:
             if var not in ds:
                 raise KeyError(f"Variable '{var}' not found in {path}")
@@ -196,7 +203,7 @@ def _compute_rmse(
     params: Sequence[float],
     effective_precip_vals: np.ndarray,
     et_vals: np.ndarray,
-    t_vals: np.ndarray,
+    transpiration_vals: np.ndarray,
     reference_vals: np.ndarray,
     time_index: pd.DatetimeIndex,
     soil_values: Dict[str, np.ndarray],
@@ -215,7 +222,7 @@ def _compute_rmse(
     diff_factor, sm_max_factor, sm_min_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
 
-    complete_forcing = np.all(np.isfinite(effective_precip_vals) & np.isfinite(et_vals) & np.isfinite(t_vals), axis=0)
+    complete_forcing = np.all(np.isfinite(effective_precip_vals) & np.isfinite(et_vals) & np.isfinite(transpiration_vals), axis=0)
     obs_mask = np.isfinite(reference_vals) & soil_valid[None, :, :] & complete_forcing[None, :, :]
     obs_mask[:spinup_days] = False
     weights = np.ones(soil_valid.shape) if cell_weights is None else np.asarray(cell_weights, dtype=float)
@@ -268,7 +275,7 @@ def _compute_rmse(
                     time_step=1.0,
                     initial_soil_moisture=None,
                     diff_factor=diff_factor,
-                    transpiration_data=t_vals[:, lat_idx, lon_idx],
+                    transpiration_data=transpiration_vals[:, lat_idx, lon_idx],
                     state_timing=state_timing,
                 )
             except (ValueError, FloatingPointError, ArithmeticError):
@@ -301,7 +308,7 @@ def _objective_function(
     params: Sequence[float],
     effective_precip_vals: np.ndarray,
     et_vals: np.ndarray,
-    t_vals: np.ndarray,
+    transpiration_vals: np.ndarray,
     reference_vals: np.ndarray,
     time_index: pd.DatetimeIndex,
     soil_values: Dict[str, np.ndarray],
@@ -321,7 +328,7 @@ def _objective_function(
         params,
         effective_precip_vals,
         et_vals,
-        t_vals,
+        transpiration_vals,
         reference_vals,
         time_index,
         soil_values,
@@ -341,7 +348,7 @@ def _objective_function(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Domain-wide calibration using reference SSM.")
+    parser = ComponentArgumentParser(description="Domain-wide calibration using reference SSM.")
     parser.add_argument("--effective-precip", required=True, help="NetCDF file with effective precipitation (mm day-1).")
     parser.add_argument(
         "--effective-precip-var",
@@ -350,8 +357,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--et", required=True, help="NetCDF file with evapotranspiration (mm day-1).")
     parser.add_argument("--et-var", default="et", help="Variable name for evapotranspiration.")
-    parser.add_argument("--t", required=True, help="NetCDF file with transpiration (mm day-1).")
-    parser.add_argument("--t-var", default="t", help="Variable name for transpiration.")
+    parser.add_argument("--transpiration", "--t", action=ComponentArgument, required=True, help="NetCDF file with transpiration (mm day-1).")
+    parser.add_argument("--transpiration-var", "--t-var", action=ComponentArgument, default="E_t", help="Variable name for transpiration.")
     parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
     parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
     parser.add_argument(
@@ -461,6 +468,7 @@ def _coarsen_to_target(
 
 
 def _namespace_from_kwargs(kwargs: Dict[str, object]) -> argparse.Namespace:
+    kwargs = normalise_component_arguments(kwargs)
     parser = build_parser()
     namespace = argparse.Namespace()
     valid_names = set()
@@ -513,7 +521,9 @@ def calibrate_domain(**kwargs) -> None:
     print("Loading forcing data...", flush=True)
     effective_precip = _load_single_variable(Path(args.effective_precip), args.effective_precip_var)
     et = _load_single_variable(Path(args.et), args.et_var)
-    t = _load_single_variable(Path(args.t), args.t_var)
+    args.transpiration = resolve_prepared_component_path(args.transpiration)
+    transpiration = _load_single_variable(Path(args.transpiration), args.transpiration_var, component="E_t")
+    args.transpiration_var = transpiration.name or args.transpiration_var
     reference_ssm = _load_single_variable(Path(args.reference_ssm), args.reference_var)
     ndvi = None
     if args.use_ndvi_root_depth and args.ndvi:
@@ -523,7 +533,7 @@ def calibrate_domain(**kwargs) -> None:
         raise ValueError("Effective precipitation data must include a 'time' coordinate.")
     if "time" not in et.coords:
         raise ValueError("ET data must include a 'time' coordinate.")
-    if "time" not in t.coords:
+    if "time" not in transpiration.coords:
         raise ValueError("Transpiration data must include a 'time' coordinate.")
     if "time" not in reference_ssm.coords:
         raise ValueError("Reference SSM data must include a 'time' coordinate.")
@@ -540,7 +550,7 @@ def calibrate_domain(**kwargs) -> None:
         empty_message = "No effective precipitation timesteps overlap requested calibration date range.",
     )
     et = _select_daily_timesteps(et, expected_dates, "ET")
-    t = _select_daily_timesteps(t, expected_dates, "Transpiration")
+    transpiration = _select_daily_timesteps(transpiration, expected_dates, "Transpiration")
     reference_ssm = _select_daily_timesteps(reference_ssm, expected_dates, "Reference SSM")
     if ndvi is not None:
         ndvi = _select_daily_timesteps(ndvi, expected_dates, "NDVI")
@@ -553,14 +563,14 @@ def calibrate_domain(**kwargs) -> None:
         raise ValueError("Time coordinate length mismatch in effective precipitation data.")
     if effective_precip.sizes.get("time") != et.sizes.get("time"):
         raise ValueError("Effective precipitation and ET time dimensions do not align.")
-    if effective_precip.sizes.get("time") != t.sizes.get("time"):
+    if effective_precip.sizes.get("time") != transpiration.sizes.get("time"):
         raise ValueError("Effective precipitation and transpiration time dimensions do not align.")
     if effective_precip.sizes.get("time") != reference_ssm.sizes.get("time"):
         raise ValueError("Reference SSM and forcing time dimensions do not align.")
 
     effective_precip = effective_precip.transpose("time", lat_dim, lon_dim)
     et = et.transpose("time", lat_dim, lon_dim)
-    t = t.transpose("time", lat_dim, lon_dim)
+    transpiration = transpiration.transpose("time", lat_dim, lon_dim)
     reference_ssm = reference_ssm.transpose("time", lat_dim, lon_dim)
     if ndvi is not None:
         ndvi = ndvi.transpose("time", lat_dim, lon_dim)
@@ -568,23 +578,23 @@ def calibrate_domain(**kwargs) -> None:
     if args.sm_res:
         effective_precip = _coarsen_to_target(effective_precip, lat_dim, lon_dim, args.sm_res)
         et = _coarsen_to_target(et, lat_dim, lon_dim, args.sm_res)
-        t = _coarsen_to_target(t, lat_dim, lon_dim, args.sm_res)
+        transpiration = _coarsen_to_target(transpiration, lat_dim, lon_dim, args.sm_res)
         reference_ssm = _coarsen_to_target(reference_ssm, lat_dim, lon_dim, args.sm_res)
         if ndvi is not None:
             ndvi = _coarsen_to_target(ndvi, lat_dim, lon_dim, args.sm_res)
-            effective_precip, et, t, reference_ssm, ndvi = xr.align(
+            effective_precip, et, transpiration, reference_ssm, ndvi = xr.align(
                 effective_precip,
                 et,
-                t,
+                transpiration,
                 reference_ssm,
                 ndvi,
                 join="exact",
             )
         else:
-            effective_precip, et, t, reference_ssm = xr.align(
+            effective_precip, et, transpiration, reference_ssm = xr.align(
                 effective_precip,
                 et,
-                t,
+                transpiration,
                 reference_ssm,
                 join="exact",
             )
@@ -598,7 +608,7 @@ def calibrate_domain(**kwargs) -> None:
             for key, da in soil_arrays.items()
         }
 
-    forcing = {"et":et,"transpiration":t,"reference_ssm":reference_ssm}
+    forcing = {"et":et,"transpiration":transpiration,"reference_ssm":reference_ssm}
     if ndvi is not None:
         forcing["ndvi"] = ndvi
     ensure_matching_grid(effective_precip, forcing, lat_dim, lon_dim)
@@ -614,7 +624,7 @@ def calibrate_domain(**kwargs) -> None:
     soil_valid = _soil_valid_mask(soil_arrays)
     effective_precip_vals = effective_precip.values.astype(float, copy=False)
     et_vals = et.values.astype(float, copy=False)
-    t_vals = t.values.astype(float, copy=False)
+    transpiration_vals = transpiration.values.astype(float, copy=False)
     reference_vals = reference_ssm.values.astype(float, copy=False)
     ndvi_mean_vals: Optional[np.ndarray] = None
     if ndvi is not None:
@@ -632,7 +642,7 @@ def calibrate_domain(**kwargs) -> None:
         flush=True,
     )
     print(f"  et: {Path(args.et).expanduser().resolve()} (var={args.et_var})", flush=True)
-    print(f"  t: {Path(args.t).expanduser().resolve()} (var={args.t_var})", flush=True)
+    print(f"  transpiration: {Path(args.transpiration).expanduser().resolve()} (var={args.transpiration_var})", flush=True)
     if args.use_ndvi_root_depth and args.ndvi:
         print(
             f"  ndvi: {Path(args.ndvi).expanduser().resolve()} (var={args.ndvi_var}; "
@@ -728,7 +738,7 @@ def calibrate_domain(**kwargs) -> None:
         args=(
             effective_precip_vals,
             et_vals,
-            t_vals,
+            transpiration_vals,
             reference_vals,
             time_index,
             soil_values,
@@ -766,7 +776,7 @@ def calibrate_domain(**kwargs) -> None:
         best_params,
         effective_precip_vals,
         et_vals,
-        t_vals,
+        transpiration_vals,
         reference_vals,
         time_index,
         soil_values,
@@ -803,7 +813,7 @@ def calibrate_domain(**kwargs) -> None:
             ]
         )
 
-    paths = [args.effective_precip,args.et,args.t,args.reference_ssm]
+    paths = [args.effective_precip,args.et,args.transpiration,args.reference_ssm]
     paths += [str(soil_dir / name) for name in SOIL_FILE_STEMS.values()]
     if args.ndvi:
         paths.append(args.ndvi)

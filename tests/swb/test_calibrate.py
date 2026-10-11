@@ -4,7 +4,7 @@ Script: test_calibrate.py
 Objective: Verify calibration argument validation, daily time alignment and rejection of invalid fit metrics.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Package calibration parser construction and CLI argument parsing under pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_calibrate.py
@@ -122,7 +122,7 @@ def test_calibrate_domain_rejects_requested_window_with_no_overlapping_timesteps
         "conductivity_sat": _soil_cube("conductivity_sat", 8.0),
     }
 
-    monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None: data_by_path[path.name])
+    monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None, **kwargs: data_by_path[path.name])
     monkeypatch.setattr(calibrate_module, "_load_soil_arrays", lambda soil_dir: soil_arrays)
     monkeypatch.setattr(
         calibrate_module,
@@ -160,7 +160,7 @@ def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_pat
         "conductivity_sat": _soil_cube("conductivity_sat", 8.0),
     }
 
-    monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None: data_by_path[path.name])
+    monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None, **kwargs: data_by_path[path.name])
     monkeypatch.setattr(calibrate_module, "_load_soil_arrays", lambda soil_dir: soil_arrays)
     monkeypatch.setattr(
         calibrate_module,
@@ -207,7 +207,7 @@ def test_calibrate_domain_rejects_invalid_rmse_outputs(monkeypatch, tmp_path: Pa
         "conductivity_sat": _soil_cube("conductivity_sat", 8.0),
     }
 
-    monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None: data_by_path[path.name])
+    monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None, **kwargs: data_by_path[path.name])
     monkeypatch.setattr(calibrate_module, "_load_soil_arrays", lambda soil_dir: soil_arrays)
     monkeypatch.setattr(
         calibrate_module,

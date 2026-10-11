@@ -3,7 +3,7 @@ Script: test_shared_config.py
 Objective: Verify one shared configuration controls calibration and simulation paths.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Example workflow TOML, temporary configurations and monkeypatched package APIs.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/workflows/test_shared_config.py
@@ -36,10 +36,17 @@ def test_shared_windows_reference_and_calibration_parameters(monkeypatch, tmp_pa
     run_config(config, stages=["preprocess", "calibrate", "run"])
     preps = [kw for name, kw in calls if name == "preprocess"]
     assert len(preps) == 2
+    for prep in preps:
+        assert prep["transpiration_var"] == "E_t"
+        assert prep["soil_evaporation_var"] == "E_s"
+        assert "t_var" not in prep and "e_var" not in prep
     assert preps[0]["skip_reference_ssm"] is True
     assert preps[1]["skip_reference_ssm"] is False
     calibration = next(kw for name, kw in calls if name == "calibrate")
     model = next(kw for name, kw in calls if name == "run")
+    assert calibration["transpiration"].endswith("transpiration_daily_20231201_20231231.nc")
+    assert model["transpiration"].endswith("transpiration_daily_20240101_20240131.nc")
+    assert "t" not in calibration and "t" not in model
     assert calibration["date_range"] == ["2023-12-01", "2023-12-31"]
     assert calibration["state_timing"] == model["state_timing"] == "end"
     assert calibration["drainage_slope"] == model["drainage_slope"] == 0.2

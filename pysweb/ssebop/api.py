@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: import pysweb.ssebop.api
@@ -884,35 +884,39 @@ def run_ssebop_workflow(
     eto = eto.sel(time=daily_index.values)
     et_daily = (etf_daily * eto).rename("ET")
     del eto
-    tc_daily = (1.26 * ndvi_daily - 0.18).clip(0.0, 1.0).rename("Tc")
-    t_daily = (et_daily * tc_daily).rename("T")
-    e_daily = (et_daily - t_daily).rename("E")
+    transpiration_fraction_daily = (1.26 * ndvi_daily - 0.18).clip(0.0, 1.0).rename("f_t")
+    transpiration_daily = (et_daily * transpiration_fraction_daily).rename("E_t")
+    soil_evaporation_daily = (et_daily - transpiration_daily).rename("E_s")
 
-    tc_daily.attrs.update(
+    transpiration_fraction_daily.attrs.update(
         {
-            "long_name": "Transpiration coefficient",
-            "description": "Tc equals fractional green cover (fc) derived from NDVI",
-            "formula": "fc = 1.26 * NDVI - 0.18; Tc = clip(fc, 0, 1)",
+            "long_name": "Transpiration fraction",
+            "description": "f_t equals fractional green cover (fc) derived from NDVI",
+            "formula": "f_t = clip(1.26 * NDVI - 0.18, 0, 1)",
             "units": "1",
             "source_variable": "ndvi_interp",
         }
     )
     et_daily.attrs.update({"long_name": "Actual evapotranspiration", "units": "mm/day"})
-    t_daily.attrs.update({"long_name": "Plant transpiration", "units": "mm/day", "formula": "T = ET * Tc"})
-    e_daily.attrs.update({"long_name": "Soil evaporation", "units": "mm/day", "formula": "E = ET - T"})
+    transpiration_daily.attrs.update({"long_name": "Plant transpiration", "units": "mm/day", "formula": "E_t = f_t * ET_a"})
+    soil_evaporation_daily.attrs.update({"long_name": "Soil evaporation", "units": "mm/day", "formula": "E_s = ET_a - E_t"})
     etf_daily.attrs.update({"long_name": "Interpolated SSEBop ET fraction", "units": "1"})
     ndvi_daily.attrs.update({"long_name": "Interpolated NDVI", "units": "1"})
 
     result = xr.Dataset(
         {
             "ET": et_daily,
-            "E": e_daily,
-            "T": t_daily,
+            "E_s": soil_evaporation_daily,
+            "E_t": transpiration_daily,
             "etf_interp": etf_daily,
             "ndvi_interp": ndvi_daily,
-            "Tc": tc_daily,
+            "f_t": transpiration_fraction_daily,
         }
     )
+    from pysweb.components import COMPONENT_SCHEMA
+    result.attrs["component_schema"] = COMPONENT_SCHEMA
+    for name in ("E_s", "E_t"):
+        result[name].attrs["description"] = "SEB forcing component before soil-water limitation"
     result.attrs.update({"input_fingerprint": manifest["fingerprint"],
                          "software_code_sha256": manifest["software"]["code_sha256"]})
     result_path = os.path.join(output_dir, f"et_daily_ssebop{suffix}.nc")

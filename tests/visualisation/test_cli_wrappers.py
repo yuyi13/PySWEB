@@ -4,7 +4,7 @@ Script: test_cli_wrappers.py
 Objective: Verify the package visualisation modules import and expose help cleanly.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-05-03
+Last updated: 2026-10-11
 Inputs: Module imports and subprocess CLI help invocations.
 Outputs: Test assertions.
 Usage: python -m pytest tests/visualisation/test_cli_wrappers.py
@@ -105,3 +105,21 @@ def test_visualisation_entrypoints_exit_cleanly_for_help(command):
     assert result.returncode == 0
     assert "usage:" in result.stdout.lower()
     assert result.stderr == ""
+
+
+def test_component_selection_and_labels_follow_notation():
+    import xarray as xr
+    module = import_module("pysweb.visualisation.plot_time_series")
+    da = xr.DataArray([1.0, 2.0], dims="time", attrs={"units": "mm/day"})
+    ds = xr.Dataset({"ET": da, "E_s": da, "E_t": da, "E": da, "T": da})
+    assert module._default_variables(ds, "ssebop") == ["ET", "E_s", "E_t"]
+    assert module._format_var_label("ET") == r"$ET_a$"
+    assert module._format_var_label("E_s") == r"$E_s$"
+    assert module._format_var_label("T") == module._format_var_label("E_t")
+    assert module._format_var_label("Tc") == module._format_var_label("f_t")
+    legacy = ds.drop_vars(["E_s", "E_t"])
+    with pytest.warns(FutureWarning):
+        assert module._resolve_variables(legacy, ["E_s", "E_t"], "ssebop") == ["E", "T"]
+    ds["T"] = ds["T"] * 2
+    with pytest.raises(ValueError, match="Conflicting component"):
+        module._default_variables(ds, "ssebop")

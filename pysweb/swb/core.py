@@ -3,7 +3,7 @@ Script: core.py
 Objective: Provide reusable SWB forcing and soil-input helpers for package-owned run and calibration workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: NetCDF forcing paths, soil-property NetCDF paths, and layer metadata or user-supplied layer depths.
 Outputs: Loaded xarray DataArrays, resolved soil-path mappings, numpy soil-property grids, and validation errors.
 Usage: import pysweb.swb.core
@@ -225,9 +225,14 @@ def load_forcing(
     variable: str,
     start: str | None = None,
     end: str | None = None,
+    *,
+    component: str | None = None,
 ) -> xr.DataArray:
     dataset_path = Path(path).expanduser().resolve()
     with xr.open_dataset(dataset_path, decode_coords="all") as ds:
+        if component is not None:
+            from pysweb.components import component_variable
+            variable = component_variable(ds, component, variable)
         if variable not in ds:
             raise KeyError(f"Variable '{variable}' not found in {dataset_path}")
         da = ds[variable]

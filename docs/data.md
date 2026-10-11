@@ -24,3 +24,5 @@ ERA5-Land daily flow variables are provided as daily sums; state variables use d
 Prepared precipitation includes full calendar months, even for a shorter requested run. Raw input files remain external; preprocessing and output manifests record checksums of local files and identifiers of remote assets. Remote asset identifiers alone cannot freeze an upstream asset that changes in place: retain the downloaded/prepared inputs with your study archive.
 
 No DOI is asserted for the software or its default user-hosted reference asset. A future release should archive a versioned package, configuration, provenance manifests and legally redistributable validation fixtures under a permanent identifier.
+
+Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` (transpiration fraction). See the [notation migration and legacy-input policy](migration.md#component-notation-migration-11-october-2026).

@@ -4,7 +4,7 @@ Script: preprocess.py
 Objective: Align forcing, selected soil data and optional reference SSM on the SWB model grid.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Dates, extent, forcing files, soil-source settings, optional reference SSM and output paths.
 Outputs: Aligned forcing, soil-property and optional reference SSM NetCDFs with provenance manifests.
 Usage: pysweb swb-preprocess --help
@@ -31,6 +31,11 @@ import pandas as pd
 import requests
 import rioxarray
 import xarray as xr
+
+from pysweb.components import (
+    ComponentArgumentParser, ComponentArgument, normalise_component_arguments,
+    component_variable,
+)
 import pysweb.soil.api as soil_api
 from pyproj import Transformer
 from rasterio.enums import Resampling
@@ -631,7 +636,7 @@ def _prepare_et_file_component(
 
     result = xr.concat(layers, dim = "time")
     result.name = out_name
-    result.attrs.update({"long_name": long_name, "units": units})
+    result.attrs.update({"long_name": long_name, "units": units, "source_variable": var_name})
     return result
 
 
@@ -797,30 +802,28 @@ def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.
 
 
 def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Timestamp]) -> Dict[str, xr.DataArray]:
+    args = argparse.Namespace(**normalise_component_arguments(vars(args)))
     if args.et_file:
         path = Path(args.et_file).expanduser().resolve()
         if not path.exists():
             raise FileNotFoundError(f"ET file not found: {path}")
 
         extent = tuple(args.extent) if args.extent else None
-        tasks = [(args.t_var, "t", "Daily plant transpiration", "mm day-1")]
-        if args.e_var:
-            tasks.append((args.e_var, "e", "Daily soil evaporation", "mm day-1"))
-        else:
-            tasks.append((args.et_var, "et", "Daily evapotranspiration", "mm day-1"))
-        tasks.append((args.ndvi_var, "ndvi", "Daily NDVI", "1"))
-
         components: Dict[str, xr.DataArray] = {}
-        with xr.open_dataset(path) as ds:
-            if args.t_var not in ds:
-                raise KeyError(
-                    f"Variable '{args.t_var}' not found in ET dataset: {path}. "
-                    "Provide a transpiration variable generated from SSEBop (e.g., T)."
-                )
-            if args.e_var and args.e_var not in ds:
-                raise KeyError(f"Variable '{args.e_var}' not found in ET dataset: {path}")
-            if not args.e_var and args.et_var not in ds:
-                raise KeyError(f"Variable '{args.et_var}' not found in ET dataset: {path}")
+        with xr.open_dataset(path, decode_coords="all") as ds:
+            transpiration_var = component_variable(ds, "E_t", args.transpiration_var)
+            tasks = [(transpiration_var, "E_t", "Daily plant transpiration", "mm day-1")]
+            if args.soil_evaporation_var:
+                evaporation_var = component_variable(ds, "E_s", args.soil_evaporation_var)
+                tasks.append((evaporation_var, "E_s", "Daily soil evaporation", "mm day-1"))
+            else:
+                if args.et_var not in ds:
+                    raise KeyError(f"Variable '{args.et_var}' not found in ET dataset: {path}")
+                tasks.append((args.et_var, "et", "Daily evapotranspiration", "mm day-1"))
+            # Validate optional fraction aliases without adding a new forcing output.
+            if "f_t" in ds or "Tc" in ds:
+                component_variable(ds, "f_t")
+            tasks.append((args.ndvi_var, "ndvi", "Daily NDVI", "1"))
             has_ndvi = args.ndvi_var in ds
 
         active_tasks = [task for task in tasks if task[1] != "ndvi" or has_ndvi]
@@ -846,11 +849,15 @@ def process_et(args: argparse.Namespace, grid: TargetGrid, dates: Sequence[pd.Ti
                 dtype = args.dtype,
             )
 
-        if "e" in components:
-            et = (components["e"] + components["t"]).astype(args.dtype)
+        if "E_s" in components:
+            et = (components["E_s"] + components["E_t"]).astype(args.dtype)
             et.name = "et"
-            et.attrs.update({"long_name": "Daily evapotranspiration", "units": "mm day-1", "formula": "et = e + t"})
+            et.attrs.update({"long_name": "Daily evapotranspiration", "units": "mm day-1", "formula": "ET_a = E_s + E_t"})
             components["et"] = et
+        for name in ("E_s", "E_t"):
+            if name in components:
+                components[name].attrs["description"] = "SEB forcing component before soil-water limitation"
+                components[name].attrs["formula"] = {"E_s": "E_s = ET_a - E_t", "E_t": "E_t = f_t * ET_a"}[name]
         return components
 
     et_root = Path(args.et_root).expanduser().resolve()
@@ -1080,7 +1087,7 @@ def _write_preprocess_outputs(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description = "Preprocess spatial datasets into aligned SWB NetCDF files.")
+    parser = ComponentArgumentParser(description = "Preprocess spatial datasets into aligned SWB NetCDF files.")
     parser.add_argument("--start-date", type = str, help = "Simulation start date (YYYY-MM-DD).")
     parser.add_argument("--end-date", type = str, help = "Simulation end date (YYYY-MM-DD).")
     parser.add_argument("--date-range", nargs = 2, metavar = ("START", "END"), help = "Shortcut for start/end date.")
@@ -1113,18 +1120,18 @@ def build_parser() -> argparse.ArgumentParser:
         default = None,
         help = "Directory containing daily ET GeoTIFFs.",
     )
-    parser.add_argument("--e-var", help = "Variable name for daily soil evaporation in --et-file NetCDF.")
+    parser.add_argument("--soil-evaporation-var", "--e-var", action=ComponentArgument, help = "Variable name for daily soil evaporation in --et-file NetCDF.")
     parser.add_argument("--et-var", default = "Evap_tavg", help = "Band or variable name for evapotranspiration.")
-    parser.add_argument("--t-var", default = "T", help = "Variable name for daily transpiration in --et-file NetCDF.")
+    parser.add_argument("--transpiration-var", "--t-var", action=ComponentArgument, default = "E_t", help = "Variable name for daily transpiration in --et-file NetCDF.")
     parser.add_argument(
         "--ndvi-var",
         default = "ndvi_interp",
         help = "Variable name for daily NDVI in --et-file NetCDF.",
     )
     parser.add_argument(
-        "--tc-var",
-        default = "Tc",
-        help = "Deprecated compatibility argument; transpiration coefficient is no longer generated.",
+        "--transpiration-fraction-var", "--tc-var", action=ComponentArgument,
+        default = "f_t",
+        help = "Reserved compatibility option (unused); preprocessing does not generate a transpiration fraction.",
     )
     parser.add_argument("--et-filename-pattern", help = "ET filename pattern with {year}, {month}, {day} placeholders.")
 
@@ -1164,6 +1171,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _build_args(kwargs: Dict[str, object]) -> argparse.Namespace:
+    kwargs = normalise_component_arguments(kwargs)
     parser = build_parser()
     defaults: Dict[str, object] = {}
     valid_names = set()
@@ -1222,10 +1230,10 @@ def preprocess_inputs(**kwargs):
         f"effective_precip_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc": effective_precip,
         f"et_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc": et_components["et"],
     }
-    if "t" in et_components:
-        outputs[f"t_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["t"]
-    if "e" in et_components:
-        outputs[f"e_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["e"]
+    if "E_t" in et_components:
+        outputs[f"transpiration_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["E_t"]
+    if "E_s" in et_components:
+        outputs[f"soil_evaporation_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["E_s"]
     if "ndvi" in et_components:
         outputs[f"ndvi_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["ndvi"]
     if not args.skip_reference_ssm and args.reference_file:

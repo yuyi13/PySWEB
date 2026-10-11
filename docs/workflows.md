@@ -41,7 +41,7 @@ pysweb.swb.preprocess(
     start_date="2024-01-01", end_date="2024-01-14",
     extent=[148.0, -35.02, 148.02, -35.0], sm_res=0.01,
     rain_file="examples/outputs/demo/source/rain.nc", rain_var="precipitation",
-    et_file="examples/outputs/demo/source/et.nc", et_var="ET", t_var="T",
+    et_file="examples/outputs/demo/source/et.nc", et_var="ET", transpiration_var="E_t",
     soil_source="custom", soil_file="examples/outputs/demo/source/custom_soil.nc",
     skip_reference_ssm=True, output_dir="examples/outputs/custom-prepared",
 )
@@ -58,3 +58,5 @@ The workflow automatically supplies the calibrated CSV to the run. Its checksum 
 NetCDF products are written to temporary files, read back and atomically promoted. Run manifests validate code, configuration and source checksums before reuse. Earth Engine downloads use checksums and readable raster/CRS checks before reuse; incomplete downloads fail the stage. Multi-collection same-day collisions retain the first successful collection in configured order, recorded in the download manifest.
 
 The grid solver loads forcing arrays in memory and distributes rows over processes. Memory demand grows with dates × cells × layers, plus budget outputs. Begin with a small extent and one worker before larger runs. The API's `time_step` must be one day for gridded workflows; direct solver calls additionally check timestamp cadence.
+
+Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` (transpiration fraction). See the [notation migration and legacy-input policy](migration.md#component-notation-migration-11-october-2026).

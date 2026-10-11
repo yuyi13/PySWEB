@@ -3,7 +3,7 @@ Script: provenance.py
 Objective: Record input and software identities and validate atomic output writes and cache reuse.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Input files, workflow settings, package source files and output datasets.
 Outputs: SHA-256 manifests, atomic JSON/NetCDF files and cache-validation results.
 Usage: from pysweb.io.provenance import input_manifest, atomic_netcdf, validate_existing_output
@@ -21,6 +21,7 @@ from pathlib import Path
 from importlib.metadata import version, PackageNotFoundError
 import numpy as np
 import xarray as xr
+from pysweb.components import COMPONENT_SCHEMA
 
 
 def sha256(path):
@@ -117,6 +118,7 @@ def input_manifest(config, paths):
         not in {"skip_existing", "workers", "output", "output_dir", "output_file"}
     }
     identity = {
+        "component_schema": COMPONENT_SCHEMA,
         "config": effective_config,
         "inputs": inputs,
         "code_sha256": code_hash,
@@ -127,6 +129,7 @@ def input_manifest(config, paths):
     ).hexdigest()
     return {
         "schema_version": 1,
+        "component_schema": COMPONENT_SCHEMA,
         "fingerprint": fingerprint,
         "config": dict(config),
         "inputs": inputs,
@@ -173,6 +176,8 @@ def validate_existing_output(path, manifest):
             f"Existing output has no provenance manifest: {path}; rerun without --skip-existing."
         )
     saved = json.loads(sidecar.read_text())
+    if saved.get("component_schema") != COMPONENT_SCHEMA:
+        raise ValueError(f"Existing output uses an unsupported component schema: {path}; rerun without --skip-existing.")
     if saved.get("fingerprint") != manifest["fingerprint"] or saved.get(
         "output", {}
     ).get("sha256") != sha256(path):

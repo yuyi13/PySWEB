@@ -3,7 +3,7 @@ Script: run.py
 Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
 Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
 Usage: pysweb swb-run --help
@@ -22,6 +22,11 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+from pysweb.components import (
+    ComponentArgumentParser, ComponentArgument, normalise_component_arguments,
+    resolve_prepared_component_path,
+)
 
 from pysweb.swb.core import (
     ensure_matching_grid,
@@ -42,7 +47,7 @@ _PROCESS_RUN_STATE: Dict[str, object] = {}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Spatial soil water balance driver.")
+    parser = ComponentArgumentParser(description="Spatial soil water balance driver.")
     parser.add_argument("--precip", required=True, help="NetCDF file with raw precipitation (mm day-1).")
     parser.add_argument("--precip-var", default="precipitation", help="Variable name for precipitation.")
     parser.add_argument("--effective-precip", required=True, help="NetCDF file with effective precipitation (mm day-1).")
@@ -53,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--et", required=True, help="NetCDF file with evapotranspiration (mm day-1).")
     parser.add_argument("--et-var", default="et", help="Variable name for evapotranspiration.")
-    parser.add_argument("--t", required=True, help="NetCDF file with transpiration (mm day-1).")
-    parser.add_argument("--t-var", default="t", help="Variable name for transpiration.")
+    parser.add_argument("--transpiration", "--t", action=ComponentArgument, required=True, help="NetCDF file with transpiration (mm day-1).")
+    parser.add_argument("--transpiration-var", "--t-var", action=ComponentArgument, default="E_t", help="Variable name for transpiration.")
     parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
     parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
     parser.add_argument(
@@ -144,6 +149,7 @@ def _parser_defaults() -> Dict[str, object]:
 
 
 def _build_run_args(workflow_kwargs: Dict[str, object]) -> argparse.Namespace:
+    workflow_kwargs = normalise_component_arguments(workflow_kwargs)
     defaults = _parser_defaults()
     unknown_args = sorted(set(workflow_kwargs) - set(defaults))
     if unknown_args:
@@ -161,7 +167,7 @@ def _build_run_args(workflow_kwargs: Dict[str, object]) -> argparse.Namespace:
             raise ValueError("--date-range must contain START and END values.")
         args.start_date, args.end_date = args.date_range
 
-    required_fields = ("precip", "effective_precip", "et", "t", "output_dir")
+    required_fields = ("precip", "effective_precip", "et", "transpiration", "output_dir")
     missing = [name for name in required_fields if getattr(args, name) in (None, "")]
     if missing:
         missing_text = ", ".join(missing)
@@ -227,7 +233,7 @@ def _compute_row_soil_moisture(
     n_lon: int,
     effective_precip_values: np.ndarray,
     et_values: np.ndarray,
-    t_values: np.ndarray,
+    transpiration_values: np.ndarray,
     ndvi_mean_values: Optional[np.ndarray],
     soil_grids: Dict[str, np.ndarray],
     param_values: Optional[Dict[str, np.ndarray]],
@@ -248,12 +254,12 @@ def _compute_row_soil_moisture(
     for lon_idx in range(n_lon):
         effective_precip_series = effective_precip_values[:, lat_idx, lon_idx]
         et_series = et_values[:, lat_idx, lon_idx]
-        t_series = t_values[:, lat_idx, lon_idx]
+        transpiration_series = transpiration_values[:, lat_idx, lon_idx]
 
         if (
             np.all(np.isnan(effective_precip_series))
             and np.all(np.isnan(et_series))
-            and np.all(np.isnan(t_series))
+            and np.all(np.isnan(transpiration_series))
         ):
             continue
 
@@ -283,7 +289,7 @@ def _compute_row_soil_moisture(
                 time_step = time_step,
                 initial_soil_moisture = None,
                 diff_factor = diff_factor,
-                transpiration_data = t_series,
+                transpiration_data = transpiration_series,
                 state_timing = state_timing,
             )
         except Exception as exc:  # pragma: no cover - diagnostic output
@@ -306,7 +312,7 @@ def _compute_row_soil_moisture(
 def _init_process_run_worker(
     effective_precip_values: np.ndarray,
     et_values: np.ndarray,
-    t_values: np.ndarray,
+    transpiration_values: np.ndarray,
     ndvi_mean_values: Optional[np.ndarray],
     soil_grids: Dict[str, np.ndarray],
     param_values: Optional[Dict[str, np.ndarray]],
@@ -320,7 +326,7 @@ def _init_process_run_worker(
     _PROCESS_RUN_STATE = {
         "effective_precip_values": effective_precip_values,
         "et_values": et_values,
-        "t_values": t_values,
+        "transpiration_values": transpiration_values,
         "ndvi_mean_values": ndvi_mean_values,
         "soil_grids": soil_grids,
         "param_values": param_values,
@@ -336,7 +342,7 @@ def _run_model_for_lat_process(lat_idx: int) -> tuple[int, np.ndarray]:
     state = _PROCESS_RUN_STATE
     effective_precip_values = state["effective_precip_values"]
     et_values = state["et_values"]
-    t_values = state["t_values"]
+    transpiration_values = state["transpiration_values"]
     ndvi_mean_values = state["ndvi_mean_values"]
     soil_grids = state["soil_grids"]
     param_values = state["param_values"]
@@ -351,7 +357,7 @@ def _run_model_for_lat_process(lat_idx: int) -> tuple[int, np.ndarray]:
         n_lon = n_lon,
         effective_precip_values = effective_precip_values,
         et_values = et_values,
-        t_values = t_values,
+        transpiration_values = transpiration_values,
         ndvi_mean_values = ndvi_mean_values,
         soil_grids = soil_grids,
         param_values = param_values,
@@ -393,7 +399,9 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         args.end_date,
     )
     et = load_forcing(args.et, args.et_var, args.start_date, args.end_date)
-    t = load_forcing(args.t, args.t_var, args.start_date, args.end_date)
+    args.transpiration = resolve_prepared_component_path(args.transpiration)
+    transpiration = load_forcing(args.transpiration, args.transpiration_var, args.start_date, args.end_date, component="E_t")
+    args.transpiration_var = transpiration.name or args.transpiration_var
     ndvi = None
     if args.use_ndvi_root_depth and args.ndvi:
         ndvi = load_forcing(args.ndvi, args.ndvi_var, args.start_date, args.end_date)
@@ -410,7 +418,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
             flush=True,
         )
 
-    inputs = [precip, effective_precip, et, t] + ([ndvi] if ndvi is not None else [])
+    inputs = [precip, effective_precip, et, transpiration] + ([ndvi] if ndvi is not None else [])
     first = args.start_date or str(pd.Timestamp(effective_precip.time.values[0]).date())
     last = args.end_date or str(pd.Timestamp(effective_precip.time.values[-1]).date())
     validated = [daily_data(da, first, last, label) for da, label in zip(
@@ -419,13 +427,13 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         aligned = xr.align(*validated, join="exact")
     except ValueError as exc:
         raise ValueError("Forcing grids must match exactly; preprocess onto one grid first.") from exc
-    precip, effective_precip, et, t = aligned[:4]
+    precip, effective_precip, et, transpiration = aligned[:4]
     ndvi = aligned[4] if ndvi is not None else None
 
     precip = precip.transpose("time", args.lat_dim, args.lon_dim)
     effective_precip = effective_precip.transpose("time", args.lat_dim, args.lon_dim)
     et = et.transpose("time", args.lat_dim, args.lon_dim)
-    t = t.transpose("time", args.lat_dim, args.lon_dim)
+    transpiration = transpiration.transpose("time", args.lat_dim, args.lon_dim)
     if ndvi is not None:
         ndvi = ndvi.transpose("time", args.lat_dim, args.lon_dim)
 
@@ -476,7 +484,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
 
     effective_precip_values = effective_precip.values.astype(float, copy=False)
     et_values = et.values.astype(float, copy=False)
-    t_values = t.values.astype(float, copy=False)
+    transpiration_values = transpiration.values.astype(float, copy=False)
     ndvi_mean_values: Optional[np.ndarray] = None
     if ndvi is not None:
         ndvi_values = ndvi.values.astype(float, copy=False)
@@ -488,7 +496,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     if args.nan_to_zero:
         effective_precip_values = np.nan_to_num(effective_precip_values, nan=0.0)
         et_values = np.nan_to_num(et_values, nan=0.0)
-        t_values = np.nan_to_num(t_values, nan=0.0)
+        transpiration_values = np.nan_to_num(transpiration_values, nan=0.0)
 
     n_time, n_lat, n_lon = effective_precip_values.shape
     n_layers = soil_grids["layer_depth"].size
@@ -508,7 +516,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    source_paths = [args.precip, args.effective_precip, args.et, args.t, *soil_paths.values()]
+    source_paths = [args.precip, args.effective_precip, args.et, args.transpiration, *soil_paths.values()]
     source_paths += [p for p in [args.ndvi, args.param_grid, args.calibration_file] if p]
     manifest = input_manifest(vars(args), source_paths)
     if args.skip_existing and output_path.exists():
@@ -531,7 +539,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 n_lon = n_lon,
                 effective_precip_values = effective_precip_values,
                 et_values = et_values,
-                t_values = t_values,
+                transpiration_values = transpiration_values,
                 ndvi_mean_values = ndvi_mean_values,
                 soil_grids = soil_grids,
                 param_values = param_values,
@@ -564,7 +572,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
             initargs = (
                 effective_precip_values,
                 et_values,
-                t_values,
+                transpiration_values,
                 ndvi_mean_values,
                 soil_grids,
                 param_values,

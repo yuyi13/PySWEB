@@ -3,7 +3,7 @@ Script: api.py
 Objective: Dispatch public SWB preprocessing, calibration and simulation calls to package workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-04-19
+Last updated: 2026-10-11
 Inputs: Keyword arguments describing workflow inputs, outputs and model settings.
 Outputs: Preprocessing results, calibration parameters or the simulation output path.
 Usage: import pysweb.swb.api
@@ -21,6 +21,7 @@ _RUN_ENTRY_INPUT_KEYS = {
     "effective_precip",
     "et",
     "t",
+    "transpiration",
     "ndvi",
     "soil_dir",
     "soil_porosity",

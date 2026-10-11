@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11
+
+- Align component notation with the manuscript: `E_s`, `E_t`, `f_t`; use descriptive CLI/API options and prepared filenames.
+- Validate legacy input aliases and provenance, reject conflicting duplicates, and preserve numerical model behaviour.
+
 ## 0.1.0 — 2026-09-12
 
 - Aligned GitHub, local and Gadi development histories from the Gadi notebook improvements.

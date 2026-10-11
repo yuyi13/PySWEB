@@ -4,7 +4,7 @@ Script: test_preprocess.py
 Objective: Verify SWB preprocess helpers and package-owned preprocessing orchestration for forcing, soil dispatch, and reference SSM outputs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Pytest fixtures, temporary directories, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_preprocess.py
@@ -520,8 +520,8 @@ def test_process_et_from_netcdf_avoids_full_time_stack_load(monkeypatch, tmp_pat
 
     result = process_et(args, grid, dates)
 
-    assert set(result) == {"e", "t", "et"}
-    np.testing.assert_allclose(result["et"].values, result["e"].values + result["t"].values)
+    assert set(result) == {"E_s", "E_t", "et"}
+    np.testing.assert_allclose(result["et"].values, result["E_s"].values + result["E_t"].values)
 
 
 def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
@@ -570,7 +570,7 @@ def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         preprocess_module,
         "process_et",
-        lambda args, grid, dates: {"et": et, "t": t},
+        lambda args, grid, dates: {"et": et, "E_t": t.rename("E_t")},
     )
     monkeypatch.setattr(
         preprocess_module.soil_api,
@@ -606,7 +606,7 @@ def test_preprocess_inputs_writes_expected_outputs(monkeypatch, tmp_path: Path):
         "rain_daily_20240101_20240102.nc": "precipitation",
         "effective_precip_daily_20240101_20240102.nc": "effective_precipitation",
         "et_daily_20240101_20240102.nc": "et",
-        "t_daily_20240101_20240102.nc": "t",
+        "transpiration_daily_20240101_20240102.nc": "E_t",
         "reference_ssm_daily_20240101_20240102.nc": "reference_ssm",
         "soil_porosity.nc": "porosity",
         "soil_wilting_point.nc": "wilting_point",

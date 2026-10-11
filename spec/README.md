@@ -9,3 +9,5 @@
 Use `--help` for complete arguments. Preprocessing also requires full-month rainfall, ET/T inputs, dates, extent and output path. To remain offline, skip the reference with `--skip-reference-ssm` or supply `--reference-file`.
 
 See [the soil schema](../docs/soil-inputs.md), [custom configuration](../examples/custom-soil.toml) and [migration notes](../docs/migration.md). Historical duplicated code remains in Git history. New scientific changes belong in the package and need regression tests across soil backends.
+
+Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` (transpiration fraction). See the [notation migration and legacy-input policy](../docs/migration.md#component-notation-migration-11-october-2026).

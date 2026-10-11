@@ -34,3 +34,27 @@ Historical solver explanations already moved into `pysweb.swb.solver` remain the
 The update adds packaging, MIT licensing, CI and examples. It does not publish to PyPI or establish a new scientifically validated model release.
 
 SSEBop interpolation now retains actual observation dates, including the last scene and a single-scene input. The maximum-gap rule applies to interpolated dates. Previously the last measured day, or a measured day preceding a long gap, could be masked despite having an observation. Dates outside the observed interval remain missing.
+
+## Component notation migration (11 October 2026)
+
+New SSEBop files write `ET`, `E_s`, `E_t` and `f_t`, alongside the existing interpolation fields. `E_s` and `E_t` use mm/day and describe requested SEB forcing; `f_t` is dimensionless. Total `ET`/`et`, the water-limited `actual_et` budget, temperature identifiers (including `tcold_k`), drainage and time indices retain their existing meanings. Numerical equations, masks, calendars and state timing are unchanged.
+
+| Previous contract | Canonical contract |
+|---|---|
+| `E` / `e` | `E_s` (soil evaporation) |
+| `T` / `t` | `E_t` (plant transpiration) |
+| `Tc` | `f_t` (transpiration fraction) |
+| `--t`, Python `t=` | `--transpiration`, Python `transpiration=` |
+| `--t-var`, Python `t_var=` | `--transpiration-var`, Python `transpiration_var=` (default `E_t`) |
+| `--e-var`, Python `e_var=` | `--soil-evaporation-var`, Python `soil_evaporation_var=` |
+| `--tc-var`, Python `tc_var=` | `--transpiration-fraction-var`, Python `transpiration_fraction_var=` (default `f_t`; reserved, unused by preprocessing) |
+| `t_daily_<dates>.nc` containing `t` | `transpiration_daily_<dates>.nc` containing `E_t` |
+| `e_daily_<dates>.nc` containing `e` | `soil_evaporation_daily_<dates>.nc` containing `E_s` |
+
+Preprocessing accepts total ET plus `E_t` (`et_var="ET", transpiration_var="E_t"`) or `E_s` plus `E_t` (`soil_evaporation_var="E_s", transpiration_var="E_t"`). The latter reconstructs total `et` as `E_s + E_t`. Date tags and total-ET filenames are preserved. The shared workflow applies these settings to both simulation and calibration windows.
+
+Legacy variable names and argument spellings remain accepted during the current 0.1.x migration period and emit `FutureWarning` deprecation notices. Explicit variable selections take precedence. Automatic fallback checks only the listed component aliases; temperature fields cannot supply transpiration. Coexisting canonical and legacy variables must have matching dimensions, coordinates, masks, values and equivalent units. Conflicting variables or duplicate old/new arguments raise an error. New files contain only canonical component fields.
+
+Simulation and calibration can resolve a missing `transpiration_daily_<dates>.nc` to an existing `t_daily_<dates>.nc` when the old preprocessing manifest has supported schema version 1, its recorded output checksum matches, and its component fields validate. The shared resolver also supports the equivalent soil-evaporation filename mapping. Missing or conflicting provenance requires rerunning preprocessing. Explicit legacy source paths remain accepted and are hashed as inputs. Source files are preserved; resolved paths are recorded in new manifests.
+
+New manifests carry `component_schema="sweb-components-v2"` in both metadata and configuration identity, and record regenerated output hashes. Existing final simulation outputs from an older schema fail `--skip-existing` validation and must be regenerated. A matching filename alone does not permit cache reuse.

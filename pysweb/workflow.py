@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-09-12
+Last updated: 2026-10-11
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -227,8 +227,8 @@ def run_config(config, stages=STAGES, *, dry_run=False):
                 rain_var="precipitation",
                 et_file=str(ssebop_out / f"et_daily_ssebop_{start}_{end}.nc"),
                 et_var="ET",
-                e_var="E",
-                t_var="T",
+                soil_evaporation_var="E_s",
+                transpiration_var="E_t",
                 output_dir=str(swb_in),
                 skip_reference_ssm=not (enabled and (start, end) == calib_window),
                 **common,
@@ -240,7 +240,7 @@ def run_config(config, stages=STAGES, *, dry_run=False):
         return {
             "effective_precip": str(swb_in / f"effective_precip_daily_{tag}.nc"),
             "et": str(swb_in / f"et_daily_{tag}.nc"),
-            "t": str(swb_in / f"t_daily_{tag}.nc"),
+            "transpiration": str(swb_in / f"transpiration_daily_{tag}.nc"),
             "soil_dir": str(swb_in),
             "date_range": list(window),
             "state_timing": run["state_timing"],

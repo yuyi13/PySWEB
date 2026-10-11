@@ -4,7 +4,7 @@ Script: test_5_sweb_run_model.py
 Objective: Verify the Workflow 5 CLI wrapper stays thin while exposing the package-owned SWB run parser and dispatcher.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-04-17
+Last updated: 2026-10-11
 Inputs: Workflow module imports and CLI-like argv lists supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/workflows/test_5_sweb_run_model.py
@@ -86,7 +86,7 @@ def test_workflow_main_forwards_parsed_args_to_package_run(monkeypatch):
     assert recorded["precip"] == "/tmp/precip.nc"
     assert recorded["effective_precip"] == "/tmp/effective_precip.nc"
     assert recorded["et"] == "/tmp/et.nc"
-    assert recorded["t"] == "/tmp/t.nc"
+    assert recorded["transpiration"] == "/tmp/t.nc"
     assert recorded["soil_dir"] == "/tmp/soil"
     assert recorded["output_dir"] == "/tmp/out"
     assert recorded["workers"] == 3
