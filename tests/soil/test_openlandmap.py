@@ -4,7 +4,7 @@ Script: test_openlandmap.py
 Objective: Verify the OpenLandMap soil backend owns depth mapping, predictor loading, and hydraulic derivation behavior.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-05-02
+Last updated: 2026-10-16
 Inputs: Soil backend helpers, fake Earth Engine objects, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/soil/test_openlandmap.py
@@ -266,3 +266,27 @@ def test_load_soil_properties_returns_soil_outputs(monkeypatch):
         "soil_predictors": {"clay": "clay", "sand": "sand", "soc": "soc"},
         "reproject_to_template": _passthrough_reproject,
     }
+
+
+@pytest.mark.parametrize(
+    'sand,clay,wp,fc,sat,ks_hour',
+    [(88., 5., .05, .10, .46, 108.1),
+     (40., 20., .14, .28, .46, 15.5),
+     (30., 35., .22, .36, .48, 4.3)],
+)
+def test_hydraulics_match_published_saxton_rawls_table3(sand, clay, wp, fc, sat, ks_hour):
+    """Independent rounded benchmarks at 2.5 mass-percent OM, Table 3 (2006)."""
+    openlandmap = import_module('pysweb.soil.openlandmap')
+    predictors = {
+        key: xr.DataArray(np.full((5, 2, 2), value), dims=('band', 'lat', 'lon'))
+        for key, value in [('sand', sand), ('clay', clay), ('soc', 2.5 / 1.72 * 10 / 5)]
+    }
+    arrays = openlandmap.process_soil_properties_from_openlandmap(
+        Namespace(dtype='float64'), _grid(), predictors,
+        reproject_to_template=_passthrough_reproject,
+    )
+    np.testing.assert_allclose(arrays['wilting_point'], wp, atol=.006)
+    np.testing.assert_allclose(arrays['wilting_point'] + arrays['available_water_capacity'], fc, atol=.006)
+    np.testing.assert_allclose(arrays['porosity'], sat, atol=.006)
+    np.testing.assert_allclose(arrays['conductivity_sat'] / 24, ks_hour, atol=.15)
+    assert arrays['porosity'].attrs['pedotransfer_organic_matter_units'] == 'mass percent'

@@ -35,3 +35,21 @@ The MLConstraints adapter produces the same `SoilOutputs` contract as OpenLandMa
 ## Reference surface moisture
 
 A local reference NetCDF uses `soil.reference_file` / `soil.reference_var` in a configured workflow, or `reference_file` / `reference_var` in preprocessing. Supply daily volumetric moisture in `m3 m-3` with a CRS and timestamps covering the calibration interval. Select a surface depth and state timing appropriate to the observation. Calibration fits a domain-mean objective and does not establish spatial or depth-specific predictive accuracy.
+
+## OpenLandMap organic-matter convention
+
+OpenLandMap v02 SOC is stored in units of 5 g/kg. Its Saxton–Rawls
+pedotransfer input is **organic matter mass percent**, computed as
+`OM = 1.72 * (raw_SOC * 5) / 10`; sand and clay remain fractions.
+This convention reproduces the rounded sand, loam and clay-loam examples
+at 2.5% OM in Table 3 of
+[Saxton and Rawls (2006)](https://doi.org/10.2136/sssaj2005.0117).
+The earlier `/1000` conversion supplied a fraction and understated the
+organic-matter term by 100. Recreate OpenLandMap hydraulics and all dependent
+calibrations/simulations after this correction; old results are not interchangeable.
+Output attributes record the corrected conversion. The existing missing-SOC
+fallback remains explicit in `openlandmap_missing_soc_g_per_kg`; studies must
+record its spatial/depth extent and assess that assumption. The original
+regressions excluded OM above 8%, so high-carbon soils need a separate
+applicability assessment. Point predictions at 0/10/30/60/100 cm still represent
+layers ending at 50/150/300/600/1000 mm; this mapping is an approximation.

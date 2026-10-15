@@ -4,7 +4,7 @@ Script: openlandmap.py
 Objective: Implement the OpenLandMap soil backend behind the package-level soil dispatcher.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-05-02
+Last updated: 2026-10-16
 Inputs: Soil backend arguments, target grid metadata, and a reprojection callback.
 Outputs: SoilOutputs dataclass instances with OpenLandMap-derived hydraulic property arrays.
 Usage: import pysweb.soil.openlandmap
@@ -183,7 +183,10 @@ def process_soil_properties_from_openlandmap(
             np.maximum(soc, 0.0) * OPENLANDMAP_SOC_SCALE,
             missing_soc_g_per_kg,
         )
-        om = 1.72 * soc_g_per_kg / 1000.0
+        # Saxton & Rawls (2006), Tables 1 and 3: texture inputs are
+        # fractions, but OM is mass percent. 10 g/kg equals 1 percent.
+        # Using /1000 here underestimated the OM term by a factor of 100.
+        om = 1.72 * soc_g_per_kg / 10.0
 
         theta_33t = (
             -0.251 * sand
@@ -250,6 +253,9 @@ def process_soil_properties_from_openlandmap(
                 "layer_bottoms_mm": layer_depth_mm_arr.tolist(),
                 "soil_source": "OpenLandMap via Google Earth Engine",
                 "openlandmap_missing_soc_g_per_kg": missing_soc_g_per_kg,
+                "pedotransfer_method": "Saxton and Rawls 2006, doi:10.2136/sssaj2005.0117",
+                "pedotransfer_organic_matter_units": "mass percent",
+                "pedotransfer_organic_matter_conversion": "1.72 * SOC_g_per_kg / 10",
             },
         )
 
