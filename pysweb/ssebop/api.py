@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-11
+Last updated: 2026-10-16
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: import pysweb.ssebop.api
@@ -44,6 +44,7 @@ from pysweb.ssebop.core import (
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
 from pysweb.ssebop import landsat
+from pysweb.ssebop.quality import landsat_c2_qa_mask
 from pysweb.ssebop.landcover import (
     load_worldcover_landcover,
     worldcover_masks,
@@ -202,6 +203,11 @@ def read_geotiff_bands(path: str) -> Dict[str, xr.DataArray]:
     bands = {}
     for index, name in enumerate(descriptions, start=1):
         bands[name] = da.sel(band=index).rename(name)
+        if name in {"QA_PIXEL", "QA_RADSAT"}:
+            # GeoTIFF nodata=0 may apply to every band, but zero QA is valid.
+            # Read the raw flags; optical/thermal nodata still excludes pixels.
+            with rasterio.open(path) as src:
+                bands[name] = bands[name].copy(data=src.read(index, masked=False))
 
     return bands
 
@@ -502,6 +508,7 @@ def _process_landsat_scene_worker(tif_path: str) -> Tuple[np.datetime64, str, st
         template_crs = _SCENE_WORKER_CONTEXT["template_crs"],  # type: ignore[arg-type]
         etf_dir = str(_SCENE_WORKER_CONTEXT["etf_dir"]),
         ndvi_dir = str(_SCENE_WORKER_CONTEXT["ndvi_dir"]),
+        landsat_qa = str(_SCENE_WORKER_CONTEXT["landsat_qa"]),
     )
 
 
@@ -518,6 +525,7 @@ def process_landsat_scene(
     etf_dir: str,
     ndvi_dir: str,
     tcold_config: LocalFanoConfig | None = None,
+    landsat_qa: str = "required",
 ) -> Tuple[np.datetime64, str, str]:
     date_str = parse_date_from_filename(tif_path)
     doy = datetime.fromisoformat(date_str).timetuple().tm_yday
@@ -525,16 +533,31 @@ def process_landsat_scene(
 
     if lst_band not in bands:
         raise ValueError(f"LST band '{lst_band}' not found in {tif_path}")
-    lst = scale_landsat_st(bands[lst_band])
+    if landsat_qa not in {"required", "pre_masked"}:
+        raise ValueError("landsat_qa must be 'required' or 'pre_masked'.")
+    valid = np.isfinite(bands[lst_band]) & (bands[lst_band] > 0)
+    if landsat_qa == "required":
+        missing = {"QA_PIXEL", "QA_RADSAT"} - set(bands)
+        if missing:
+            raise ValueError(
+                f"Missing Landsat QA bands {sorted(missing)} in {tif_path}. "
+                "Download QA-bearing inputs or explicitly use landsat_qa='pre_masked' "
+                "only for independently screened inputs."
+            )
+        valid = valid & valid.copy(data=landsat_c2_qa_mask(bands["QA_PIXEL"], bands["QA_RADSAT"]))
+    lst = scale_landsat_st(bands[lst_band]).where(valid)
 
     if ndvi_band in bands:
-        ndvi = bands[ndvi_band]
+        ndvi = bands[ndvi_band].where(valid)
     else:
         if red_band not in bands or nir_band not in bands:
             raise ValueError(f"NDVI or red/nir bands missing in {tif_path}")
-        red = scale_landsat_sr(bands[red_band])
-        nir = scale_landsat_sr(bands[nir_band])
-        ndvi = (nir - red) / (nir + red)
+        valid = valid & (bands[red_band] > 0) & (bands[nir_band] > 0)
+        red = scale_landsat_sr(bands[red_band]).where(valid)
+        nir = scale_landsat_sr(bands[nir_band]).where(valid)
+        ndvi = ((nir - red) / (nir + red).where(np.abs(nir + red) > 1e-8)).where(valid)
+    ndvi = ndvi.where((ndvi >= -1) & (ndvi <= 1))
+    lst = lst.where(np.isfinite(ndvi))
 
     if apply_water_mask and water_mask is not None:
         lst = lst.where(water_mask == 0)
@@ -556,14 +579,16 @@ def process_landsat_scene(
             ndvi_out = ndvi_out.drop_vars(coord)
 
     out_etf = os.path.join(etf_dir, f"etf_{date_str}.tif")
-    etf_single = etf.squeeze("time", drop=True)
+    etf_single = etf.squeeze("time", drop=True).astype("float32").rio.write_nodata(np.nan, encoded=True)
     etf_single.attrs["long_name"] = "ET fraction"
+    etf_single.attrs["landsat_qa"] = landsat_qa
     etf_single.rio.write_crs(template_crs, inplace=True)
     etf_single.rio.to_raster(out_etf)
 
     out_ndvi = os.path.join(ndvi_dir, f"ndvi_{date_str}.tif")
-    ndvi_single = ndvi_out.squeeze("time", drop=True)
+    ndvi_single = ndvi_out.squeeze("time", drop=True).astype("float32").rio.write_nodata(np.nan, encoded=True)
     ndvi_single.attrs["long_name"] = "NDVI"
+    ndvi_single.attrs["landsat_qa"] = landsat_qa
     ndvi_single.rio.write_crs(template_crs, inplace=True)
     ndvi_single.rio.to_raster(out_ndvi)
 
@@ -641,6 +666,9 @@ def run_ssebop_workflow(
     output_dir = _cfg_value(cfg, args, "output_dir")
     max_gap_days = int(_cfg_value(cfg, args, "max_gap_days", default=32))
     apply_water_mask = bool(_cfg_value(cfg, args, "apply_water_mask", default=False))
+    landsat_qa = _cfg_value(cfg, args, "landsat_qa", default="required")
+    if landsat_qa not in {"required", "pre_masked"}:
+        raise ValueError("landsat_qa must be 'required' or 'pre_masked'.")
     met_temp_units = _cfg_value(
         cfg,
         args,
@@ -803,6 +831,7 @@ def run_ssebop_workflow(
                     template_crs = template_crs,
                     etf_dir = etf_dir,
                     ndvi_dir = ndvi_dir,
+                    landsat_qa = landsat_qa,
                 )
             )
     else:
@@ -818,6 +847,7 @@ def run_ssebop_workflow(
             "template_crs": template_crs,
             "etf_dir": etf_dir,
             "ndvi_dir": ndvi_dir,
+            "landsat_qa": landsat_qa,
         }
 
         global _SCENE_WORKER_CONTEXT
@@ -915,6 +945,7 @@ def run_ssebop_workflow(
     )
     from pysweb.components import COMPONENT_SCHEMA
     result.attrs["component_schema"] = COMPONENT_SCHEMA
+    result.attrs["landsat_qa"] = landsat_qa
     for name in ("E_s", "E_t"):
         result[name].attrs["description"] = "SEB forcing component before soil-water limitation"
     result.attrs.update({"input_fingerprint": manifest["fingerprint"],

@@ -4,7 +4,7 @@ Script: cli_run.py
 Objective: Provide a thin CLI wrapper around the package-owned SSEBop run API.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-09-12
+Last updated: 2026-10-16
 Inputs: YAML config/CLI options, Landsat GeoTIFFs, meteorology NetCDF files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: pysweb ssebop-run --help
@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ndvi-band", default="ndvi")
     parser.add_argument("--red-band", default="red")
     parser.add_argument("--nir-band", default="nir")
+    parser.add_argument("--landsat-qa", choices=["required", "pre_masked"], default="required",
+                        help="Require C2 QA bands, or explicitly declare independently screened legacy inputs.")
     parser.add_argument("--et-short-crop", default=None)
     parser.add_argument("--et-short-crop-var", default=None)
     parser.add_argument("--tmax", default=None)

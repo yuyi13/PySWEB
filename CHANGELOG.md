@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-16
+
+- Preserve Landsat QA in default downloads, enable pixel cloud masking and avoid median compositing of bitfields.
+- Require QA during SSEBop scene processing, retain valid zero saturation flags and reject missing requested bands; explicitly support independently pre-masked legacy inputs.
+- Add a reusable Collection 2 QA decoder for study adapters and record the QA mode in scene and daily outputs.
+- Correct the OpenLandMap organic-matter input to mass percent in the Saxton–Rawls pedotransfer equations (from the AU-Ync pilot).
+
 ## 2026-10-11
 
 - Align component notation with the manuscript: `E_s`, `E_t`, `f_t`; use descriptive CLI/API options and prepared filenames.

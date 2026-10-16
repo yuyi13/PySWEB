@@ -4,7 +4,7 @@ Script: landsat.py
 Objective: Provide the canonical Landsat preparation helpers used by package-backed SSEBop workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
-Last updated: 2026-04-20
+Last updated: 2026-10-16
 Inputs: Date ranges, extents, Earth Engine project names, and optional Landsat download config templates.
 Outputs: Materialized Landsat download configs and prepared Landsat GeoTIFF inputs.
 Usage: import pysweb.ssebop.landsat
@@ -13,6 +13,7 @@ Dependencies: PyYAML for YAML templates; pysweb; authenticated Earth Engine proj
 from __future__ import annotations
 
 import json
+import copy
 import re
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +30,18 @@ __all__ = [
 
 _DEFAULT_LANDSAT_GEE_CFG = {
     "collection": "LANDSAT/LC08/C02/T1_L2",
-    "bands": ["ST_B10", "SR_B4", "SR_B5"],
+    "bands": ["ST_B10", "SR_B4", "SR_B5", "QA_PIXEL", "QA_RADSAT"],
+    "daily_strategy": "first",
+    "cloud_mask": {
+        "enabled": True,
+        "band": "QA_PIXEL",
+        "type": "bits_any",
+        "bits": [0, 1, 2, 3, 4, 5, 7],
+        "keep": False,
+    },
+    # Zero denotes an unsaturated pixel in QA_RADSAT. Preserve raw flags;
+    # the scene processor handles fill and positive optical/thermal DNs.
+    "postprocess": {"maskval_to_na": False},
     "scale": 30,
     "out_format": "tif",
     "auth_mode": "browser",
@@ -90,6 +102,7 @@ def _write_gee_config(
     out_dir: str,
     gee_project: str,
 ) -> str:
+    cfg = copy.deepcopy(cfg)
     gee_project = _validate_gee_project(gee_project)
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     if "coords" not in cfg or cfg["coords"] is None:

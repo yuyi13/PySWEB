@@ -26,6 +26,7 @@ sm_min_factor = 1.0
 root_beta = 0.96
 
 [ssebop]
+landsat_qa = "required"
 lst_band = "ST_B10"
 red_band = "SR_B4"
 nir_band = "SR_B5"

@@ -65,6 +65,8 @@ Select stages with `--stages preprocess,calibrate,run`. Calibration is skipped w
 
 Every configured run writes `resolved-config.json`. Model output manifests record input SHA-256 checksums, configuration, code identity and output checksums. `skip_existing` validates the model output against this identity before reuse. Unmanifested older outputs require regeneration. Generated data and environments stay outside version control.
 
+Default Landsat preparation retains QA and applies pixel cloud masking. SSEBop requires `QA_PIXEL` and `QA_RADSAT`; independently masked legacy files need the explicit `landsat_qa = "pre_masked"` option. See [Landsat quality and pilot reuse](docs/landsat-quality.md) for the mask, zero-valued flags and migration contract.
+
 ## Using your own soil data
 
 **Local soil data are a maintained pathway.** `spec/` provides compatibility entrypoints and guidance for the MLConstraints and custom-soil workflows; their implementations live in `pysweb.soil` and use the shared SWB solver.

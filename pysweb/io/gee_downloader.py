@@ -4,7 +4,7 @@ Script: gee_downloader.py
 Objective: Download and post-process Google Earth Engine composites used by PySWEB preprocessing workflows, including tiled fallback for oversized requests.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-09-12
+Last updated: 2026-10-16
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
 Usage: python -m pysweb.io.gee_downloader config.yaml
@@ -187,10 +187,6 @@ def build_mask_condition(img: ee.Image, cfg: dict) -> ee.Image:
     ctype = (cm.get("type") or "").lower()
     keep = bool(cm.get("keep", False))
 
-    # If band does not exist, return a pass-through mask of ones.
-    # We use a server-side conditional to avoid client-side queries.
-    band_exists = img.bandNames().contains(ee.String(band))
-
     def _mask_from_band():
         bimg = img.select([band])
         if ctype in ("equals", "not_equals"):
@@ -216,7 +212,8 @@ def build_mask_condition(img: ee.Image, cfg: dict) -> ee.Image:
 
         return ee.Image(1).updateMask(cond).unmask(0).gt(0)
 
-    return ee.Image(ee.Algorithms.If(band_exists, _mask_from_band(), ee.Image(1)))
+    # A missing requested QA band must fail evaluation, not silently disable QA.
+    return _mask_from_band()
 
 
 
@@ -351,6 +348,13 @@ class GEEDownloader:
         if daily_strategy not in {"median", "first"}:
             raise ValueError("daily_strategy must be one of: median, first.")
         self.cfg["daily_strategy"] = daily_strategy
+        if daily_strategy == "median" and any(
+            name in self.cfg["bands"] for name in ("QA_PIXEL", "QA_RADSAT")
+        ):
+            raise ValueError("QA bitfields cannot be median-composited; use daily_strategy='first'.")
+        if any(name in self.cfg["bands"] for name in ("QA_PIXEL", "QA_RADSAT")):
+            if (self.cfg.get("postprocess") or {}).get("maskval_to_na", True):
+                raise ValueError("QA zeros are valid; set postprocess.maskval_to_na=false.")
         self.cfg.setdefault("crs", "EPSG:4326")
         self.cfg.setdefault("max_images", None)
         self.cfg.setdefault("tiling", {})
@@ -479,10 +483,10 @@ class GEEDownloader:
         if not bands:
             return img
         avail = img.bandNames().getInfo()
-        keep = [b for b in bands if b in avail]
-        if not keep:
-            raise RuntimeError(f"None of requested bands exist. Requested={bands}, Available={avail}")
-        return img.select(keep)
+        missing = [b for b in bands if b not in avail]
+        if missing:
+            raise RuntimeError(f"Requested bands are missing: {missing}. Available={avail}")
+        return img.select(bands)
 
     def _get_download_url(self, img: ee.Image, region_json=None) -> str:
         params = {

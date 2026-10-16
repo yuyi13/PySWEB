@@ -4,7 +4,7 @@ Script: test_api_run.py
 Objective: Verify SSEBop dispatch, process fallbacks and preservation of observations during interpolation.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-11
+Last updated: 2026-10-16
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_api_run.py
@@ -204,6 +204,8 @@ def test_process_landsat_scene_uses_nonprojected_tcold_fallback(monkeypatch, tmp
         "ST_B10": raster("ST_B10", 45000.0),
         "SR_B4": raster("SR_B4", 10000.0),
         "SR_B5": raster("SR_B5", 12000.0),
+        "QA_PIXEL": raster("QA_PIXEL", 64.0),
+        "QA_RADSAT": raster("QA_RADSAT", 0.0),
     }
     dt_clim = raster("dt", 8.0).expand_dims(dayofyear=[4])
     calls = []

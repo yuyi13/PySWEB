@@ -4,7 +4,7 @@ Script: test_landsat.py
 Objective: Verify the canonical SSEBop Landsat helper module and its compatibility shim preserve config semantics.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
-Last updated: 2026-04-20
+Last updated: 2026-10-16
 Inputs: Temporary config templates and package imports supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_landsat.py
@@ -382,7 +382,10 @@ def test_prepare_landsat_inputs_writes_valid_default_config(monkeypatch, tmp_pat
     payload = _load_config_payload(Path(cfg_path))
     assert payload["collection"] == "LANDSAT/LC08/C02/T1_L2"
     assert payload["auth_mode"] == "browser"
-    assert payload["bands"] == ["ST_B10", "SR_B4", "SR_B5"]
+    assert payload["bands"] == ["ST_B10", "SR_B4", "SR_B5", "QA_PIXEL", "QA_RADSAT"]
+    assert payload["daily_strategy"] == "first"
+    assert payload["cloud_mask"]["enabled"] is True
+    assert payload["postprocess"]["maskval_to_na"] is False
     assert payload["scale"] == 30
     assert payload["out_format"] == "tif"
     assert payload["filename_prefix"] == "Landsat"
