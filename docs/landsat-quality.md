@@ -45,3 +45,21 @@ Use shared QA and scale helpers in study adapters. Preserve code and input
 identities when moving operations into the package. Replaying QA against
 retained scenes verifies mask equivalence; it is not a new calibration or
 an observed-accuracy claim.
+
+The sensor argument to `landsat_c2_qa_mask` now supports `LT05`, `LE07`,
+`LC08` (default) and `LC09`. `landsat_c2_l2_bands` returns the corresponding
+thermal/red/NIR mapping. Landsat 5/7 uses ST_B6, SR_B3 and SR_B4; QA_PIXEL
+bit 2 is unused. Requiring QA_RADSAT zero excludes Landsat 7 dropped pixels.
+The scene API recognises ST_B6 as the older-sensor QA convention. These rules
+retain missing SLC/thermal support and do not perform cross-sensor spectral
+harmonisation. See the official [Landsat 5 catalogue](https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LT05_C02_T1_L2)
+and [Landsat 7 catalogue](https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LE07_C02_T1_L2).
+
+`pysweb.io.ee_export.download_geotiff` downloads one explicit image using
+an explicit region/CRS and scale or affine grid, preserving supplied band
+identities and raw QA zero. It returns grid, source and checksum metadata
+and atomically replaces the target only after raster validation. It does not
+select a daily composite, persist signed URLs or silently retry authentication.
+Use bounded requests within Earth Engine's direct-download limits; callers
+remain responsible for immutable scene selection, tiling, cached provenance
+and inspecting cross-sensor support.

@@ -4,7 +4,7 @@ Script: gee_downloader.py
 Objective: Download and post-process Google Earth Engine composites used by PySWEB preprocessing workflows, including tiled fallback for oversized requests.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: YAML configuration file, Earth Engine authentication, date/extent/collection settings.
 Outputs: Downloaded GeoTIFF composites with standardized band metadata and post-processing updates.
 Usage: python -m pysweb.io.gee_downloader config.yaml
@@ -52,7 +52,7 @@ def _retry_download(url, out_path, max_retries=5, backoff=2.0, chunk=1024 * 1024
             if attempt > max_retries:
                 raise
             sleep_s = backoff ** attempt
-            print(f"[retry] {attempt}/{max_retries} after error: {e}. Sleeping {sleep_s:.1f}s")
+            print(f"[retry] {attempt}/{max_retries} after error type: {type(e).__name__}. Sleeping {sleep_s:.1f}s")
             time.sleep(sleep_s)
 
 

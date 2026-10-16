@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: import pysweb.ssebop.api
@@ -544,7 +544,7 @@ def process_landsat_scene(
                 "Download QA-bearing inputs or explicitly use landsat_qa='pre_masked' "
                 "only for independently screened inputs."
             )
-        valid = valid & valid.copy(data=landsat_c2_qa_mask(bands["QA_PIXEL"], bands["QA_RADSAT"]))
+        valid = valid & valid.copy(data=landsat_c2_qa_mask(bands["QA_PIXEL"], bands["QA_RADSAT"], sensor="LE07" if lst_band == "ST_B6" else "LC08"))
     lst = scale_landsat_st(bands[lst_band]).where(valid)
 
     if ndvi_band in bands:
