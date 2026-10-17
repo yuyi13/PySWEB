@@ -254,10 +254,14 @@ def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
     # Supplying encoding replaces xarray's per-variable encoding; preserve the
     # CF grid-mapping link written by rioxarray for every spatial auxiliary.
     encoding = {}
+    from pysweb.io.netcdf_stream import stream_chunks
     for name, field in result.data_vars.items():
         encoding[name] = {key: value for key, value in field.encoding.items()
                           if key in ('grid_mapping', '_FillValue')}
         encoding[name].update(zlib=True, complevel=3)
+        chunks = stream_chunks(field.dims, field.shape)
+        if chunks is not None:
+            encoding[name]['chunksizes'] = chunks
         if field.dtype.kind == 'f':
             encoding[name]['dtype'] = 'float32'
         else:

@@ -15,6 +15,7 @@ import uuid
 import netCDF4
 import numpy as np
 import pandas as pd
+from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
 
 
 
@@ -98,16 +99,18 @@ def reindex_netcdf_time(source, destination, dates, source_indices, *,
                 options = {}
                 if timed:
                     options = dict(zlib=True, complevel=3,
-                        chunksizes=(min(chunk_days,len(dates)),)+tuple(variable.shape[1:]))
+                        chunksizes=stream_chunks(variable.dimensions,
+                            (len(dates),)+variable.shape[1:], block_dim=time_dim, block_size=chunk_days))
                 target = dst.createVariable(name, variable.dtype, variable.dimensions, fill_value=fill, **options)
                 target.setncatts(attrs)
                 target.set_auto_maskandscale(False)
                 if not timed:
                     target[...] = variable[...]
                     continue
-                for start in range(0, len(index), chunk_days):
-                    selected = index[start:start+chunk_days]
-                    block = _indexed_block(variable, selected, fill)
-                    target[start:start+len(selected), ...] = block
+                with sequential_read_cache(variable, time_dim):
+                    for start in range(0, len(index), chunk_days):
+                        selected = index[start:start+chunk_days]
+                        block = _indexed_block(variable, selected, fill)
+                        target[start:start+len(selected), ...] = block
     temporary.replace(destination)
     return destination

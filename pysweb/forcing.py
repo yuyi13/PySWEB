@@ -195,7 +195,9 @@ def write_seasonal_seb(source, destination, *, development_start, development_en
     from pathlib import Path
     import json
     import netCDF4 as nc
+    from contextlib import ExitStack
     from pysweb.io.provenance import input_manifest, save_output_manifest
+    from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
     if block_rows < 1:
         raise ValueError('Positive control block size required')
     destination = Path(destination)
@@ -210,16 +212,30 @@ def write_seasonal_seb(source, destination, *, development_start, development_en
         template = ds[['ET','E_t','E_s','ndvi_interp','f_t','etf_interp','reference_et']]
         # Preserve native coordinates/CRS without first allocating the full cube.
         skeleton = template.isel(time=slice(0,0))
-        skeleton.to_netcdf(temporary,unlimited_dims=['time'])
-        with nc.Dataset(source) as raw, nc.Dataset(temporary,'a') as output:
+        encoding = {}
+        for name in skeleton.data_vars:
+            if template[name].dims != ('time', 'y', 'x'):
+                raise ValueError('Seasonal SEB fields must have time/y/x dimensions')
+            # An explicit encoding avoids xarray dropping chunks because this
+            # empty skeleton differs from the source's original_shape metadata.
+            encoding[name] = {key:value for key,value in template[name].encoding.items()
+                if key in ('dtype', '_FillValue', 'grid_mapping', 'scale_factor', 'add_offset')}
+            encoding[name].update(zlib=True, complevel=3,
+                chunksizes=stream_chunks(template[name].dims, template[name].shape,
+                    block_dim='y', block_size=block_rows))
+        skeleton.to_netcdf(temporary,unlimited_dims=['time'],encoding=encoding)
+        with nc.Dataset(source) as raw, nc.Dataset(temporary,'a') as output, ExitStack() as caches:
+            source_fields = ('etf_interp', 'ndvi_interp', 'reference_et', 'f_t')
+            for name in source_fields:
+                caches.enter_context(sequential_read_cache(raw[name], 'y'))
             output.variables['time'][:] = raw.variables['time'][:]
             for begin in range(0,ds.sizes['y'],block_rows):
                 rows = slice(begin,min(begin+block_rows,ds.sizes['y']))
-                block = template.isel(y=rows).load()
-                fraction = seasonal_fraction(block.etf_interp.values,dates,
+                block = {name:np.ma.filled(raw[name][:,rows,:], np.nan) for name in source_fields}
+                fraction = seasonal_fraction(block['etf_interp'],dates,
                     development_start,development_end,dates,half_window=half_window,minimum_years=minimum_years)
-                values = dict(etf_interp=fraction,ndvi_interp=block.ndvi_interp.values,
-                    reference_et=block.reference_et.values,f_t=block.f_t.values)
+                values = dict(etf_interp=fraction,ndvi_interp=block['ndvi_interp'],
+                    reference_et=block['reference_et'],f_t=block['f_t'])
                 values['ET'] = fraction*values['reference_et']
                 values['E_t'] = values['ET']*values['f_t']
                 values['E_s'] = values['ET']*(1-values['f_t'])

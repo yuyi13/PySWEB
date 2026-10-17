@@ -399,16 +399,27 @@ def test_seasonal_fraction_support_and_holdout_isolation(tmp_path):
     result=seasonal_fraction(missing,dates,'2018-01-01','2019-12-31',dates)
     assert np.isnan(result[:,0,0]).all()
     grid=raster(np.ones((2,2)),Affine(30,0,500000,0,-30,6100000))
-    fraction=grid.expand_dims(time=dates).copy(data=values)
+    fraction=grid.expand_dims(time=dates).copy(data=missing)
     ds=xr.Dataset(dict(ET=fraction*5,E_t=fraction*3,E_s=fraction*2,
         ndvi_interp=xr.ones_like(fraction)*.65,f_t=xr.ones_like(fraction)*.6,
         etf_interp=fraction,reference_et=xr.ones_like(fraction)*5))
     source=tmp_path/'source.nc';destination=tmp_path/'seasonal.nc'
-    ds.to_netcdf(source)
+    ds.reference_et[0,0,1]=np.nan
+    ds.to_netcdf(source,encoding={'etf_interp':{'_FillValue':-9999.,'grid_mapping':'spatial_ref'},
+                                 'reference_et':{'_FillValue':-9999.,'grid_mapping':'spatial_ref'}})
+    with xr.open_dataset(source,decode_coords='all') as encoded:
+        assert encoded.rio.crs==grid.rio.crs
     write_seasonal_seb(source,destination,development_start='2018-01-01',development_end='2019-12-31',block_rows=1)
     with xr.open_dataset(destination,decode_coords='all') as control:
         assert control.rio.crs==grid.rio.crs
-        np.testing.assert_allclose(control.ET,1.)
-        np.testing.assert_allclose(control.E_t,.6)
+        expected=np.ones_like(values)
+        expected[:,0,0]=np.nan
+        expected[0,0,1]=np.nan
+        np.testing.assert_allclose(control.ET,expected)
+        np.testing.assert_allclose(control.E_t,expected*.6)
         np.testing.assert_allclose(control.ET,control.E_t+control.E_s)
         np.testing.assert_array_equal(control.ndvi_interp,ds.ndvi_interp)
+    import netCDF4 as nc
+    with nc.Dataset(destination) as control:
+        assert control['ET'].chunking()[0]<=32
+        assert control['ET'].chunking()[1]==1

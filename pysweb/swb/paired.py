@@ -18,6 +18,7 @@ from pysweb.io.provenance import input_manifest, save_output_manifest
 from pysweb.swb.run import run_swb_workflow
 from pysweb.swb.core import SOIL_FILE_STEMS
 from pysweb.io.products import assert_identical_grids
+from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
 
 
 def _copy_variable(destination, variable, name=None, time_indices=None):
@@ -31,6 +32,10 @@ def _copy_variable(destination, variable, name=None, time_indices=None):
             raise ValueError(f"Auxiliary {name} has incompatible {dim} dimension")
     fill = variable.getncattr('_FillValue') if '_FillValue' in variable.ncattrs() else None
     options = {'zlib': True, 'complevel': 3} if variable.ndim else {}
+    chunks = stream_chunks(variable.dimensions,
+        tuple(len(destination.dimensions[d]) for d in variable.dimensions))
+    if chunks is not None:
+        options['chunksizes'] = chunks
     target = destination.createVariable(name, variable.datatype, variable.dimensions, fill_value=fill, **options)
     target.setncatts({k:variable.getncattr(k) for k in variable.ncattrs() if k != '_FillValue'})
     if 'time' not in variable.dimensions:
@@ -38,12 +43,16 @@ def _copy_variable(destination, variable, name=None, time_indices=None):
     else:
         axis = variable.dimensions.index('time')
         count = len(destination.dimensions['time'])
-        for begin in range(0, count, 32):
-            source_index = [slice(None)]*variable.ndim
-            target_index = [slice(None)]*variable.ndim
-            target_index[axis] = slice(begin, min(begin+32, count))
-            source_index[axis] = target_index[axis] if time_indices is None else time_indices[begin:begin+32]
-            target[tuple(target_index)] = variable[tuple(source_index)]
+        with sequential_read_cache(variable):
+            for begin in range(0, count, 32):
+                source_index = [slice(None)]*variable.ndim
+                target_index = [slice(None)]*variable.ndim
+                target_index[axis] = slice(begin, min(begin+32, count))
+                selected = target_index[axis] if time_indices is None else time_indices[begin:begin+32]
+                if not isinstance(selected, slice) and len(selected) and np.all(np.diff(selected) == 1):
+                    selected = slice(int(selected[0]), int(selected[-1])+1)
+                source_index[axis] = selected
+                target[tuple(target_index)] = variable[tuple(source_index)]
     return target
 
 
