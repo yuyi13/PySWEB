@@ -4,7 +4,7 @@ Script: landsat.py
 Objective: Provide the canonical Landsat preparation helpers used by package-backed SSEBop workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: Date ranges, extents, Earth Engine project names, and optional Landsat download config templates.
 Outputs: Materialized Landsat download configs and prepared Landsat GeoTIFF inputs.
 Usage: import pysweb.ssebop.landsat
@@ -42,7 +42,7 @@ _DEFAULT_LANDSAT_GEE_CFG = {
     # Zero denotes an unsaturated pixel in QA_RADSAT. Preserve raw flags;
     # the scene processor handles fill and positive optical/thermal DNs.
     "postprocess": {"maskval_to_na": False},
-    "scale": 30,
+    "preserve_native_grid": True,
     "out_format": "tif",
     "auth_mode": "browser",
     "filename_prefix": "Landsat",
@@ -158,6 +158,7 @@ def prepare_landsat_inputs(
     out_dir: str,
     gee_project: str,
     gee_config_template: str | None = None,
+    sensors: tuple[str, ...] | list[str] = ("LC08", "LC09"),
 ) -> str:
     gee_project = _validate_gee_project(gee_project)
     start_date, end_date = parse_date_range(date_range)
@@ -171,14 +172,22 @@ def prepare_landsat_inputs(
             out_dir,
             gee_project=gee_project,
         )
+        GEEDownloader(cfg_path).run()
     else:
-        cfg_path = write_gee_config_from_cfg(
-            _DEFAULT_LANDSAT_GEE_CFG,
-            start_date,
-            end_date,
-            extent,
-            out_dir,
-            gee_project=gee_project,
-        )
-    GEEDownloader(cfg_path).run()
+        allowed = {"LT05", "LE07", "LC08", "LC09"}
+        if not sensors or len(set(sensors)) != len(sensors) or set(sensors)-allowed:
+            raise ValueError("sensors must be a nonempty unique selection of LT05, LE07, LC08, LC09")
+        from pysweb.ssebop.quality import landsat_c2_l2_bands
+        for sensor in sensors:
+            cfg = copy.deepcopy(_DEFAULT_LANDSAT_GEE_CFG)
+            cfg["collection"] = f"LANDSAT/{sensor}/C02/T1_L2"
+            cfg["bands"] = list(landsat_c2_l2_bands(sensor))+["QA_PIXEL", "QA_RADSAT"]
+            cfg["filename_prefix"] = f"Landsat_{sensor}"
+            if sensor in {"LT05", "LE07"}:
+                cfg["cloud_mask"]["bits"] = [0, 1, 3, 4, 5, 7]
+            cfg_path = write_gee_config_from_cfg(cfg, start_date, end_date, extent, out_dir, gee_project)
+            sensor_path = Path(cfg_path).with_name(f"gee_config_{sensor}_{start_date}_{end_date}.yaml")
+            Path(cfg_path).replace(sensor_path)
+            cfg_path = str(sensor_path)
+            GEEDownloader(cfg_path).run()
     return cfg_path

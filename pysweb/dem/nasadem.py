@@ -4,7 +4,7 @@ Script: nasadem.py
 Objective: Prepare NASADEM elevation rasters for SSEBop inputs via Earth Engine download requests.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
-Last updated: 2026-04-20
+Last updated: 2026-10-17
 Inputs: Earth Engine project name, geographic extent, and a local GeoTIFF output path.
 Outputs: A non-empty NASADEM GeoTIFF on disk at the requested output path.
 Usage: import pysweb.dem.nasadem
@@ -16,10 +16,7 @@ from pathlib import Path
 
 import rasterio
 import requests
-from pysweb.met.era5land.download import (
-    ERA5LAND_EXPORT_CRS,
-    ERA5LAND_EXPORT_SCALE_METERS,
-)
+from pysweb.io.native_grid import native_projection, export_parameters, verify_native_grid
 
 try:
     import ee
@@ -81,13 +78,12 @@ def prepare_dem(*, gee_project: str, extent: list[float], output_path: str) -> s
         ) from exc
 
     region = ee_module.Geometry.Rectangle(extent, proj = "EPSG:4326", geodesic = False)
-    image = ee_module.Image(NASADEM_IMAGE_ID).select(NASADEM_BAND).clip(region)
+    image = ee_module.Image(NASADEM_IMAGE_ID).select(NASADEM_BAND)
+    projection = native_projection(image, [NASADEM_BAND])
     url = image.getDownloadURL(
         {
             "name": "nasadem",
-            "region": region,
-            "crs": ERA5LAND_EXPORT_CRS,
-            "scale": ERA5LAND_EXPORT_SCALE_METERS,
+            **export_parameters(projection, extent),
             "format": "GEO_TIFF",
             "filePerBand": False,
         }
@@ -107,5 +103,12 @@ def prepare_dem(*, gee_project: str, extent: list[float], output_path: str) -> s
     if output_file.stat().st_size == 0:
         raise RuntimeError("Earth Engine NASADEM download wrote an empty output.")
     _validate_downloaded_raster(output_file)
+    from pysweb.io.provenance import atomic_json, sha256
+    with rasterio.open(output_file) as dataset:
+        grid = verify_native_grid(dataset, projection)
+    atomic_json(str(output_file)+".native-grid.json", {
+        "source": NASADEM_IMAGE_ID, "native_projection": projection,
+        "downloaded_grid": grid, "sha256": sha256(output_file),
+    })
 
     return str(output_file)

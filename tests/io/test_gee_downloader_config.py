@@ -4,7 +4,7 @@ Script: test_gee_downloader_config.py
 Objective: Verify GEEDownloader validates daily_strategy and selects daily composites correctly.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-05-03
+Last updated: 2026-10-17
 Inputs: Temporary YAML configs written during pytest execution.
 Outputs: Test assertions.
 Usage: python -m pytest tests/io/test_gee_downloader_config.py
@@ -71,39 +71,6 @@ def _install_dependency_shims(monkeypatch):
     ee.ServiceAccountCredentials = type("ServiceAccountCredentials", (), {})
     monkeypatch.setitem(sys.modules, "ee", ee)
 
-    numpy_mod = types.ModuleType("numpy")
-    numpy_mod.linspace = lambda start, stop, num: [start, stop]
-    numpy_mod.cos = lambda value: 1.0
-    numpy_mod.radians = lambda value: value
-    numpy_mod.ceil = lambda value: value
-    numpy_mod.floor = lambda value: value
-    numpy_mod.float32 = float
-    numpy_mod.nan = float("nan")
-    numpy_mod.array = lambda value, **kwargs: value
-    monkeypatch.setitem(sys.modules, "numpy", numpy_mod)
-
-    rasterio_mod = types.ModuleType("rasterio")
-    rasterio_mod.Env = type("Env", (), {"__enter__": lambda self: self, "__exit__": lambda self, exc_type, exc, tb: False})
-    rasterio_mod.open = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("rasterio open shim should not be used"))
-    monkeypatch.setitem(sys.modules, "rasterio", rasterio_mod)
-
-    rasterio_merge_mod = types.ModuleType("rasterio.merge")
-    rasterio_merge_mod.merge = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("rasterio merge shim should not be used"))
-    monkeypatch.setitem(sys.modules, "rasterio.merge", rasterio_merge_mod)
-
-    requests_mod = types.ModuleType("requests")
-    requests_mod.get = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("requests shim should not be used"))
-    monkeypatch.setitem(sys.modules, "requests", requests_mod)
-
-    yaml_mod = types.ModuleType("yaml")
-    yaml_mod.safe_load = _safe_load_config
-    monkeypatch.setitem(sys.modules, "yaml", yaml_mod)
-
-    dateutil_mod = types.ModuleType("dateutil")
-    relativedelta_mod = types.ModuleType("dateutil.relativedelta")
-    relativedelta_mod.relativedelta = lambda **kwargs: timedelta(days=kwargs.get("days", 0))
-    monkeypatch.setitem(sys.modules, "dateutil", dateutil_mod)
-    monkeypatch.setitem(sys.modules, "dateutil.relativedelta", relativedelta_mod)
 
 
 @pytest.fixture
@@ -159,7 +126,7 @@ def test_pysweb_gee_downloader_does_not_import_core_geedownloader(tmp_path, monk
     module = importlib.import_module("pysweb.io.gee")
     downloader = module.GEEDownloader(_write_config(tmp_path))
 
-    assert downloader.cfg["daily_strategy"] == "median"
+    assert downloader.cfg["daily_strategy"] == "first"
 
 
 class _FakeBandNames:
@@ -243,14 +210,14 @@ class _FakeEeString:
         return self.value.replace(pattern, replacement)
 
 
-def test_daily_strategy_defaults_to_median(tmp_path, gee_downloader_module):
+def test_daily_strategy_defaults_to_native_first(tmp_path, gee_downloader_module):
     downloader = gee_downloader_module.GEEDownloader(_write_config(tmp_path))
-    assert downloader.cfg["daily_strategy"] == "median"
+    assert downloader.cfg["daily_strategy"] == "first"
 
 
-def test_daily_strategy_explicit_median(tmp_path, gee_downloader_module):
-    downloader = gee_downloader_module.GEEDownloader(_write_config(tmp_path, daily_strategy="median"))
-    assert downloader.cfg["daily_strategy"] == "median"
+def test_daily_strategy_explicit_median_is_rejected(tmp_path, gee_downloader_module):
+    with pytest.raises(ValueError,match='Native downloads'):
+        gee_downloader_module.GEEDownloader(_write_config(tmp_path,daily_strategy='median'))
 
 
 @pytest.mark.parametrize("daily_strategy", ["FIRST"])
@@ -262,26 +229,6 @@ def test_daily_strategy_accepts_first(tmp_path, daily_strategy, gee_downloader_m
 def test_daily_strategy_rejects_invalid_value(tmp_path, gee_downloader_module):
     with pytest.raises(ValueError, match="daily_strategy"):
         gee_downloader_module.GEEDownloader(_write_config(tmp_path, daily_strategy="bogus"))
-
-
-def test_composite_for_day_median_reduces_and_renames(tmp_path, monkeypatch, gee_downloader_module):
-    downloader = gee_downloader_module.GEEDownloader(_write_config(tmp_path, daily_strategy="median"))
-    fake_image = _FakeImage(["band_1_median", "band_2_median"])
-    fake_collection = _FakeImageCollection([fake_image])
-
-    monkeypatch.setattr(downloader, "_is_globalish_extent", lambda: True)
-    monkeypatch.setattr(gee_downloader_module.ee, "ImageCollection", lambda collection: fake_collection)
-    monkeypatch.setattr(gee_downloader_module.ee, "Reducer", _FakeReducer)
-    monkeypatch.setattr(gee_downloader_module.ee, "Image", lambda image: image)
-    monkeypatch.setattr(gee_downloader_module.ee, "String", _FakeEeString)
-
-    result = downloader._composite_for_day("2020-01-01", downloader.cfg["collection"])
-
-    assert result is fake_image
-    assert ("reduce", "median-reducer") in fake_collection.calls
-    assert result.rename_args == ["band_1", "band_2"]
-    assert not any(call[0] == "sort" for call in fake_collection.calls)
-    assert ("first",) not in fake_collection.calls
 
 
 def test_composite_for_day_first_sorts_and_returns_first(tmp_path, monkeypatch, gee_downloader_module):

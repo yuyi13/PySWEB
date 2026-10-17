@@ -3,7 +3,7 @@ Script: test_shared_config.py
 Objective: Verify one shared configuration controls calibration and simulation paths.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Example workflow TOML, temporary configurations and monkeypatched package APIs.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/workflows/test_shared_config.py
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_shared_windows_reference_and_calibration_parameters(monkeypatch, tmp_path):
     import pysweb
     config = load_config(ROOT / "examples/workflow.toml")
-    config["run"].update(root=str(tmp_path), state_timing="end")
+    config["run"].update(root=str(tmp_path), state_timing="end", grid_mode="legacy", resolution=0.00025)
     config["calibration"].update(enabled=True, start="2023-12-01", end="2023-12-31")
     config["model"].update(drainage_slope=0.2, use_ndvi_root_depth=True)
     calls = []
@@ -49,6 +49,7 @@ def test_shared_windows_reference_and_calibration_parameters(monkeypatch, tmp_pa
     assert "t" not in calibration and "t" not in model
     assert calibration["date_range"] == ["2023-12-01", "2023-12-31"]
     assert calibration["state_timing"] == model["state_timing"] == "end"
+    assert calibration["objective"] == "domain_mean"
     assert calibration["drainage_slope"] == model["drainage_slope"] == 0.2
     assert model["calibration_file"] == calibration["output"]
     assert calibration["ndvi"].endswith("ndvi_daily_20231201_20231231.nc")

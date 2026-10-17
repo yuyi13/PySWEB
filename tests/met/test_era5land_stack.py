@@ -4,7 +4,7 @@ Script: test_era5land_stack.py
 Objective: Verify the package ERA5-Land daily stacker writes the required NetCDF products from daily GeoTIFF inputs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-05-11
+Last updated: 2026-10-17
 Inputs: Synthetic daily GeoTIFFs, DEM rasters, and temporary output directories.
 Outputs: Test assertions.
 Usage: python -m pytest tests/met/test_era5land_stack.py
@@ -128,28 +128,29 @@ def test_stacker_writes_expected_daily_netcdfs(tmp_path):
     for path in expected_files.values():
         assert path.exists()
 
-    with xr.open_dataset(expected_files["precipitation"]) as ds_precip:
+    with xr.open_dataset(expected_files["precipitation"], decode_coords="all") as ds_precip:
         assert list(ds_precip.data_vars) == ["precipitation"]
+        assert ds_precip.rio.crs.to_epsg() == 4326
         assert ds_precip["precipitation"].sizes["time"] == 2
         np.testing.assert_allclose(ds_precip["precipitation"].values[:, 0, 0], [12.0, 12.0], atol=1e-6)
 
-    with xr.open_dataset(expected_files["tmax"]) as ds_tmax:
+    with xr.open_dataset(expected_files["tmax"], decode_coords="all") as ds_tmax:
         assert list(ds_tmax.data_vars) == ["tmax"]
         np.testing.assert_allclose(ds_tmax["tmax"].values[:, 0, 0], [31.0, 31.0], atol=1e-4)
 
-    with xr.open_dataset(expected_files["tmin"]) as ds_tmin:
+    with xr.open_dataset(expected_files["tmin"], decode_coords="all") as ds_tmin:
         assert list(ds_tmin.data_vars) == ["tmin"]
         np.testing.assert_allclose(ds_tmin["tmin"].values[:, 0, 0], [16.0, 16.0], atol=1e-4)
 
-    with xr.open_dataset(expected_files["rs"]) as ds_rs:
+    with xr.open_dataset(expected_files["rs"], decode_coords="all") as ds_rs:
         assert list(ds_rs.data_vars) == ["rs"]
         np.testing.assert_allclose(ds_rs["rs"].values[:, 0, 0], [24.0, 24.0], atol=1e-6)
 
-    with xr.open_dataset(expected_files["ea"]) as ds_ea:
+    with xr.open_dataset(expected_files["ea"], decode_coords="all") as ds_ea:
         assert list(ds_ea.data_vars) == ["ea"]
         np.testing.assert_allclose(ds_ea["ea"].values[:, 0, 0], [1.9, 1.9], atol=0.02)
 
-    with xr.open_dataset(expected_files["et_short_crop"]) as ds_eto:
+    with xr.open_dataset(expected_files["et_short_crop"], decode_coords="all") as ds_eto:
         assert list(ds_eto.data_vars) == ["et_short_crop"]
         eto_values = ds_eto["et_short_crop"].values[:, 0, 0]
         assert eto_values[0] == pytest.approx(6.0, abs=0.5)
@@ -176,6 +177,22 @@ def test_stacker_requires_complete_requested_date_range(tmp_path):
             end_date="2024-01-03",
             output_dir=out_dir,
         )
+
+
+def test_native_extent_and_incomplete_dem_footprint(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    _write_daily_geotiff(raw_dir / "ERA5LandDaily_2024-01-01.tif")
+    assert era5land_stack.native_download_extent(raw_dir, "2024-01-01", "2024-01-01") == [
+        147.0, -35.5, 148.0, -34.5
+    ]
+    dem = tmp_path / "partial_dem.tif"
+    with rasterio.open(dem, "w", driver="GTiff", height=1, width=1, count=1,
+                       dtype="float32", crs="EPSG:4326",
+                       transform=from_origin(147.25, -34.75, 0.5, 0.5)) as dst:
+        dst.write(np.array([[180]], dtype=np.float32), 1)
+    with pytest.raises(ValueError, match="complete native ERA5 pixel footprints"):
+        stack_era5land_daily_inputs(raw_dir, dem, "2024-01-01", "2024-01-01", tmp_path / "out")
 
 
 def test_write_netcdf_uses_scipy_netcdf3_backend(monkeypatch, tmp_path):

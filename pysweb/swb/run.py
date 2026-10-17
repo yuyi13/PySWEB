@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transpiration", "--t", action=ComponentArgument, required=True, help="NetCDF file with transpiration (mm day-1).")
     parser.add_argument("--transpiration-var", "--t-var", action=ComponentArgument, default="E_t", help="Variable name for transpiration.")
     parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
+    parser.add_argument("--ndvi-reference-end", help="Last day used for the optional fixed NDVI root-depth cap.")
     parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
     parser.add_argument(
         "--use-ndvi-root-depth",
@@ -498,7 +499,10 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     transpiration_values = transpiration.values.astype(float, copy=False)
     ndvi_mean_values: Optional[np.ndarray] = None
     if ndvi is not None:
-        ndvi_values = ndvi.values.astype(float, copy=False)
+        root_ndvi = ndvi.sel(time=slice(None,args.ndvi_reference_end)) if args.ndvi_reference_end else ndvi
+        if not root_ndvi.sizes['time']:
+            raise ValueError('NDVI root-depth reference period has no observations')
+        ndvi_values = root_ndvi.values.astype(float, copy=False)
         valid_counts = np.sum(np.isfinite(ndvi_values), axis=0)
         ndvi_sums = np.nansum(ndvi_values, axis=0)
         ndvi_mean_values = np.full(valid_counts.shape, np.nan, dtype=float)
@@ -768,6 +772,11 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     attrs["sm_max_factor"] = args.sm_max_factor
     attrs["sm_min_factor"] = args.sm_min_factor
     ds_rzsm.attrs.update(attrs)
+    if effective_precip.rio.crs is not None:
+        ds_rzsm = ds_rzsm.rio.set_spatial_dims(x_dim=args.lon_dim, y_dim=args.lat_dim)
+        ds_rzsm = ds_rzsm.rio.write_crs(effective_precip.rio.crs).rio.write_transform(effective_precip.rio.transform())
+        ds_rzsm = ds_rzsm.rio.write_coordinate_system()
+        ds_rzsm.attrs['Conventions'] = 'CF-1.8'
 
     encoding: Dict[str, Dict[str, object]] = {}
     for var_name in ds_rzsm.data_vars:
@@ -777,6 +786,8 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
             "zlib": True,
             "complevel": 4,
         }
+        if 'grid_mapping' in ds_rzsm[var_name].encoding:
+            encoding[var_name]['grid_mapping'] = ds_rzsm[var_name].encoding['grid_mapping']
         # Bound the compressed read unit for daily/monthly validation and
         # maps. Automatic time chunks can span years on long records and
         # repeatedly decompress the same data during short-window reads.

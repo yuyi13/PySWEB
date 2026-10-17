@@ -1,4 +1,18 @@
-# Validation of the September 2026 update
+# Validation
+
+## Native grids and paired products, 17 October 2026
+
+The revision was exercised on Gadi with the existing Python 3.12.12 geospatial runtime, under explicit PBS CPU, memory and storage allocations.
+
+- **355 tests passed.** New checks cover native CRS/affine preservation, integer-pixel export windows, mixed-band rejection, complete-footprint aggregation, cell–day errors that cannot cancel spatially, temporal holdout isolation and exact final SEB/SWB grid equality.
+- The offline integration prepares native GSSM and 30 m UTM grids, fits four domain scalars, runs both scenarios and writes both consolidated products with soil, forcing and budget auxiliaries. It checks a synthetic European UTM domain; the fixture's zero-iteration candidate tests orchestration, not optimizer convergence or predictive skill.
+- The source distribution and wheel built successfully using the installed `uv` and setuptools. The wheel was installed into an isolated job-local target, imported outside the checkout, and completed the two-worker offline demo with a maximum daily budget residual of **2.58 × 10⁻¹⁴ mm**. The shared runtime was unchanged.
+- Bounded live Earth Engine downloads passed native-grid verification for Landsat, ERA5-Land, NASADEM, OpenLandMap clay/sand/organic carbon and GSSM. The live OpenLandMap transform used 0.002083333° spacing, illustrating why source metadata must be read rather than inferred from a nominal metre scale.
+- Native NASADEM export was tested against its global source origin; explicit pixel dimensions avoid Earth Engine constructing an excessively wide crop. DEM preparation also requires complete native ERA5 pixel footprints.
+
+The live test checks acquisition and georegistration, not a complete regional calibration. A full native-grid Yanco/Narrabri rerun and independent field validation remain separate work. Native-grid calibration can reduce solver cost; these software checks do not establish improved accuracy, exact coarse-to-fine equivalence or a measured GPU speedup. NetCDF dependency, alias-deprecation and TIFF band warnings were recorded; successful numerical and file checks are the evidence reported here.
+
+## September 2026 update
 
 The modernization was checked locally with Python 3.12.12:
 

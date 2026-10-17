@@ -4,7 +4,7 @@ Script: test_openlandmap.py
 Objective: Verify the OpenLandMap soil backend owns depth mapping, predictor loading, and hydraulic derivation behavior.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: Soil backend helpers, fake Earth Engine objects, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/soil/test_openlandmap.py
@@ -234,7 +234,10 @@ def test_load_soil_properties_returns_soil_outputs(monkeypatch):
     }
     recorded = {}
 
-    def fake_load_predictors(extent, gee_project):
+    grid.crs = "EPSG:4326"
+    grid.template = xr.DataArray(np.zeros((2,2)),dims=("y","x"),coords={"y":grid.latitudes,"x":grid.longitudes}).rio.write_crs(grid.crs)
+
+    def fake_load_predictors(extent, gee_project, cache_dir=None):
         recorded["extent"] = extent
         recorded["gee_project"] = gee_project
         return {"clay": "clay", "sand": "sand", "soc": "soc"}
@@ -259,7 +262,7 @@ def test_load_soil_properties_returns_soil_outputs(monkeypatch):
     assert result.arrays is expected_arrays
     np.testing.assert_allclose(result.layer_bottoms_mm, openlandmap._build_layer_bottoms_mm())
     assert recorded == {
-        "extent": tuple(args.extent),
+        "extent": (grid.template.rio.bounds()[0]-.01,grid.template.rio.bounds()[1]-.01,grid.template.rio.bounds()[2]+.01,grid.template.rio.bounds()[3]+.01),
         "gee_project": "yiyu-research",
         "args": args,
         "grid": grid,

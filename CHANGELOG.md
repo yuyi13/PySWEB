@@ -1,5 +1,14 @@
 # Changelog
 
+## Native-grid workflow — 2026-10-17
+
+- Preserve Earth Engine source CRS and full affine alignment in downloaded products; retain native soil/reference inputs and grid provenance.
+- Default to Landsat 8/9, with Landsat 5/7 opt-in.
+- Prepare separate native GSSM calibration and Landsat 30 m UTM simulation grids. Fit area-weighted cell-day errors and transfer four scalar parameters.
+- Produce one auxiliary-rich SEB NetCDF and one default/calibrated SWB NetCDF on an automatically verified identical spatial grid.
+- Protect a configured holdout boundary in calibration, dT climatology, temporal reconstruction and optional NDVI root-depth statistics. Preserve explicit legacy grid workflows.
+
+
 ## 2026-10-17
 
 - Keep local FANO coarsening compatible with xarray 2026.9.0 while preserving NaN-aware averaging and padded-edge coordinates.

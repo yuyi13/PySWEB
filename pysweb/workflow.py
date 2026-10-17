@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -34,7 +34,7 @@ def load_config(path):
     required = {"name", "root", "start", "end", "extent"}
     if required - set(run):
         raise ValueError(f"Missing run configuration: {sorted(required - set(run))}")
-    allowed = required | {"resolution", "workers", "gee_project", "state_timing"}
+    allowed = required | {"resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start"}
     if set(run) - allowed:
         raise ValueError(f"Unknown run settings: {sorted(set(run) - allowed)}")
     if Path(run["name"]).name != run["name"] or run["name"] in {".", ".."}:
@@ -47,11 +47,20 @@ def load_config(path):
 
     run["extent"] = _validate_extent(run["extent"])
     run.setdefault("workers", 1)
-    run.setdefault("resolution", 0.00025)
+    run.setdefault("grid_mode", "legacy" if "resolution" in run else "native")
+    if run["grid_mode"] not in {"native", "legacy"}:
+        raise ValueError("run.grid_mode must be native or legacy")
+    if run["grid_mode"] == "native" and "resolution" in run:
+        raise ValueError("Native output uses Landsat's grid; remove run.resolution")
+    run.setdefault("sensors", ["LC08", "LC09"])
+    if not run['sensors'] or len(set(run['sensors'])) != len(run['sensors']) or set(run['sensors']) - {'LC08','LC09','LE07','LT05'}:
+        raise ValueError('Choose unique Landsat sensors from LC08, LC09, LE07, LT05')
+    if run['grid_mode'] == 'legacy':
+        run.setdefault("resolution", 0.00025)
     run.setdefault("state_timing", "start")
     if (
         run["workers"] < 1
-        or run["resolution"] <= 0
+        or run.get("resolution", 30) <= 0
         or run["state_timing"] not in {"start", "end"}
     ):
         raise ValueError("Invalid workers, resolution or state_timing.")
@@ -92,6 +101,7 @@ def load_config(path):
         "dtype",
         "skip_existing",
         "nan_to_zero",
+        "solver_backend",
     }
     allowed_calibration = {
         "enabled",
@@ -107,6 +117,10 @@ def load_config(path):
         "sm_max_bounds",
         "sm_min_bounds",
         "beta_bounds",
+        "objective",
+        "solver_backend",
+        "shared_workers",
+        "no_polish",
     }
     from pysweb.ssebop.cli_run import build_parser
 
@@ -136,6 +150,9 @@ def load_config(path):
         unknown = set(config.get(section, {})) - allowed_keys
         if unknown:
             raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
+    if run['grid_mode'] == 'native':
+        from pysweb.workflow_native import native_plan
+        native_plan(config, STAGES)
     return config
 
 
@@ -150,6 +167,9 @@ def run_config(config, stages=STAGES, *, dry_run=False):
     unknown = set(stages) - set(STAGES)
     if unknown:
         raise ValueError(f"Unknown stages: {sorted(unknown)}")
+    if run.get('grid_mode', 'legacy') == 'native':
+        from pysweb.workflow_native import run_native
+        return run_native(config, stages, dry_run=dry_run)
     base = Path(run["root"]) / run["name"]
     prepared, ssebop_out, swb_in, swb_out = [
         base / p for p in ("inputs", "ssebop", "swb_inputs", "swb")
@@ -253,6 +273,8 @@ def run_config(config, stages=STAGES, *, dry_run=False):
             for key, value in calibration.items()
             if key not in {"enabled", "start", "end"}
         }
+        # Explicit legacy configurations retain their original fitting target.
+        options.setdefault("objective", "domain_mean")
         # The calibration and final simulation must use the same process switches.
         for key in (
             "drainage_slope",

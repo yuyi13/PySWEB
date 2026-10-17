@@ -86,6 +86,19 @@ def _parse_date(value: str | date) -> date:
         raise ValueError(f"Invalid ISO date: {value!r}") from exc
 
 
+def native_download_extent(raw_dir, start_date, end_date) -> list[float]:
+    """Read the complete exported ERA5 pixel footprint for DEM acquisition."""
+    from rasterio.warp import transform_bounds
+
+    paths = _filter_date_range(
+        discover_daily_files(Path(raw_dir)), _parse_date(start_date), _parse_date(end_date)
+    )
+    with rasterio.open(paths[0]) as source:
+        if source.crs is None:
+            raise ValueError("ERA5 download has no CRS")
+        return list(transform_bounds(source.crs, "EPSG:4326", *source.bounds, densify_pts=21))
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Stack ERA5-Land DAILY_AGGR GeoTIFFs into daily NetCDF forcing files."
@@ -144,6 +157,7 @@ def _write_netcdf(
     longitudes: np.ndarray,
     units: str,
     long_name: str,
+    transform=None,
 ) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,6 +171,11 @@ def _write_netcdf(
         name=var_name,
         attrs={"long_name": long_name, "units": units},
     )
+    import rioxarray
+    data_array = data_array.rio.set_spatial_dims(x_dim='lon',y_dim='lat').rio.write_crs('EPSG:4326')
+    if transform is not None:
+        data_array = data_array.rio.write_transform(transform)
+    data_array = data_array.rio.write_coordinate_system()
     try:
         data_array.to_dataset(name=var_name).to_netcdf(
             tmp_path,
@@ -210,10 +229,38 @@ def stack_era5land_daily_inputs(
 
     daily_paths = _filter_date_range(discover_daily_files(raw_dir), start_dt, end_dt)
 
-    dem_array, latitudes, longitudes, dem_transform, dem_crs = _read_grid(dem)
-    if dem_array.ndim != 2:
-        raise ValueError("DEM must be a single-band two-dimensional raster.")
+    # Downloads retain native grids. Aggregate the native DEM explicitly here
+    # while the meteorological calculations stay on the original ERA5 grid.
+    from rasterio.warp import reproject, transform_bounds
+    from rasterio.enums import Resampling
+    _, latitudes, longitudes, dem_transform, dem_crs = _read_grid(daily_paths[0])
+    with rasterio.open(daily_paths[0]) as target, rasterio.open(dem) as source:
+        if target.crs is None or target.crs.to_epsg() != 4326:
+            raise ValueError("ERA5 meteorology requires its native geographic grid")
+        if source.crs is None:
+            raise ValueError("DEM has no CRS")
+        required = transform_bounds(target.crs, source.crs, *target.bounds, densify_pts=21)
+        tolerance = max(abs(source.transform.a), abs(source.transform.e)) * 1e-6
+        if (source.bounds.left > required[0] + tolerance
+                or source.bounds.bottom > required[1] + tolerance
+                or source.bounds.right < required[2] - tolerance
+                or source.bounds.top < required[3] - tolerance):
+            raise ValueError("DEM must cover complete native ERA5 pixel footprints")
+        elevation = source.read(1, masked=True).astype(float).filled(np.nan)
+        dem_array = np.full((target.height, target.width), np.nan)
+        reproject(source=elevation,
+                  destination=dem_array, src_transform=source.transform, src_crs=source.crs,
+                  src_nodata=np.nan, dst_transform=target.transform, dst_crs=target.crs,
+                  dst_nodata=np.nan, resampling=Resampling.average)
+        support = np.zeros_like(dem_array)
+        reproject(source=np.isfinite(elevation).astype(float), destination=support,
+                  src_transform=source.transform, src_crs=source.crs,
+                  dst_transform=target.transform, dst_crs=target.crs,
+                  resampling=Resampling.average)
+        dem_array[support < 1 - 1e-6] = np.nan
 
+    from functools import partial
+    write_stack = partial(_write_netcdf,transform=dem_transform)
     records = []
     for path in daily_paths:
         with rasterio.open(path) as src:
@@ -281,7 +328,7 @@ def stack_era5land_daily_inputs(
 
     start_label = start_dt.isoformat()
     end_label = end_dt.isoformat()
-    _write_netcdf(
+    write_stack(
         output_dir / f"precipitation_daily_{start_label}_{end_label}.nc",
         "precipitation",
         precipitation_mm_day,
@@ -291,7 +338,7 @@ def stack_era5land_daily_inputs(
         "mm day-1",
         "Daily precipitation",
     )
-    _write_netcdf(
+    write_stack(
         output_dir / f"tmax_daily_{start_label}_{end_label}.nc",
         "tmax",
         tmax_c,
@@ -301,7 +348,7 @@ def stack_era5land_daily_inputs(
         "degree_Celsius",
         "Daily maximum air temperature",
     )
-    _write_netcdf(
+    write_stack(
         output_dir / f"tmin_daily_{start_label}_{end_label}.nc",
         "tmin",
         tmin_c,
@@ -311,7 +358,7 @@ def stack_era5land_daily_inputs(
         "degree_Celsius",
         "Daily minimum air temperature",
     )
-    _write_netcdf(
+    write_stack(
         output_dir / f"rs_daily_{start_label}_{end_label}.nc",
         "rs",
         rs_mj_m2_day,
@@ -321,7 +368,7 @@ def stack_era5land_daily_inputs(
         "MJ m-2 day-1",
         "Daily incoming shortwave radiation",
     )
-    _write_netcdf(
+    write_stack(
         output_dir / f"ea_daily_{start_label}_{end_label}.nc",
         "ea",
         ea_kpa,
@@ -331,7 +378,7 @@ def stack_era5land_daily_inputs(
         "kPa",
         "Daily actual vapor pressure",
     )
-    _write_netcdf(
+    write_stack(
         output_dir / f"et_short_crop_daily_{start_label}_{end_label}.nc",
         "et_short_crop",
         et_short_crop,
@@ -342,7 +389,7 @@ def stack_era5land_daily_inputs(
         "Daily short-reference evapotranspiration",
     )
 
-    _write_netcdf(
+    write_stack(
         output_dir / f"et_tall_crop_daily_{start_label}_{end_label}.nc",
         "et_tall_crop", et_tall_crop, dates, latitudes, longitudes,
         "mm day-1", "Daily alfalfa-reference evapotranspiration",

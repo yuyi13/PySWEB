@@ -3,7 +3,7 @@ Script: test_component_notation.py
 Objective: Verify canonical component I/O, legacy conflicts and prepared-file provenance.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-11
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Synthetic component datasets, CLI/API arguments and temporary NetCDF files.
 Outputs: Regression assertions for the notation migration.
 Usage: python -m pytest tests/swb/test_component_notation.py
@@ -137,6 +137,9 @@ def test_preprocess_input_combinations_preserve_values_masks_and_dates(tmp_path,
     monkeypatch.setattr(module, "_reproject_to_template", lambda value, *a, **kw: value)
     result = module.process_et(args, grid, dates)
     assert set(result) == ({"et", "E_s", "E_t"} if use_components else {"et", "E_t"})
+    # This test isolates component notation by bypassing grid alignment.
+    from pysweb.io.grids import spatial
+    da = spatial(da)
     xr.testing.assert_equal(result["E_t"], da.rename("E_t"))
     xr.testing.assert_equal(result["et"], (da * 1.5).rename("et"))
     if use_components:

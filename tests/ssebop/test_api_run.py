@@ -301,6 +301,7 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
     def fake_process_landsat_scene(**kwargs):
         scene_calls.append(kwargs)
         date = Path(kwargs["tif_path"]).stem.replace("Landsat_", "")
+        xr.Dataset({'lst_K':spatial*300}).to_netcdf(Path(kwargs['etf_dir'])/f'auxiliary_{date}.nc')
         return (
             np.datetime64(date, "ns"),
             str(tmp_path / f"etf_{date}.tif"),
@@ -352,7 +353,7 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
     # Validate the written contract, including clipped fractions and missing pixels.
     output = tmp_path / "out/et_daily_ssebop_2024-01-01_2024-01-02.nc"
     with xr.open_dataset(output) as result:
-        assert set(result.data_vars) == {"ET", "E_s", "E_t", "f_t", "etf_interp", "ndvi_interp"}
+        assert {"ET", "E_s", "E_t", "f_t", "etf_interp", "ndvi_interp", "lst_K", "reference_et", "dt_climatology"} <= set(result.data_vars)
         assert result.attrs["component_schema"] == "sweb-components-v2"
         fraction = (1.26 * result.ndvi_interp - 0.18).clip(0.0, 1.0)
         np.testing.assert_equal(result.f_t.values, fraction.values)
@@ -438,3 +439,18 @@ def test_interpolation_preserves_last_measurement_with_sparse_observations(value
     daily = xr.DataArray(pd.date_range("2024-01-01", periods=len(values)+1), dims="time")
     actual = ssebop_api.interpolate_etf_daily(scenes, daily, 32)
     np.testing.assert_allclose(actual.values, values + [np.nan], equal_nan=True)
+
+
+@pytest.mark.parametrize('smooth',[False,True])
+def test_heldout_scenes_cannot_reconstruct_development_days(smooth):
+    dates = pd.date_range('2020-12-25','2021-01-06')
+    observations = pd.to_datetime(['2020-12-25','2020-12-28','2020-12-30','2021-01-02','2021-01-06'])
+    stack = xr.DataArray(np.asarray([.2,.4,.3,.5,.6])[:,None,None],dims=('time','y','x'),
+                         coords={'time':observations,'y':[0.0],'x':[0.0]})
+    changed = stack.copy(deep=True)
+    changed.loc[dict(time=slice('2021-01-01',None))] = 999.0
+    first = ssebop_api.reconstruct_scene_series(stack,dates,32,'2020-12-31',gapfill=smooth,min_samples=2)
+    second = ssebop_api.reconstruct_scene_series(changed,dates,32,'2020-12-31',gapfill=smooth,min_samples=2)
+    xr.testing.assert_equal(first.sel(time=slice(None,'2020-12-31')),second.sel(time=slice(None,'2020-12-31')))
+    assert np.isnan(first.sel(time='2020-12-31')).all()  # No cross-boundary interpolation.
+    assert float(first.sel(time='2021-01-02').item()) == pytest.approx(.5)
