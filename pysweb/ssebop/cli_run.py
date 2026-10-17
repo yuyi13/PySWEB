@@ -4,7 +4,7 @@ Script: cli_run.py
 Objective: Provide a thin CLI wrapper around the package-owned SSEBop run API.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: YAML config/CLI options, Landsat GeoTIFFs, meteorology NetCDF files, DEM, landcover raster.
 Outputs: Daily SSEBop ET NetCDF outputs and optional gap-filled ETf diagnostics in output directory.
 Usage: pysweb ssebop-run --help
@@ -37,6 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Require C2 QA bands, or explicitly declare independently screened legacy inputs.")
     parser.add_argument("--et-short-crop", default=None)
     parser.add_argument("--et-short-crop-var", default=None)
+    parser.add_argument("--reference-et", default=None, help="Reference ET NetCDF; native SSEBop fractions require alfalfa reference ET.")
+    parser.add_argument("--reference-et-var", default=None)
+    parser.add_argument("--et-reference-type", choices=["alfalfa", "grass"], default=argparse.SUPPRESS)
+    parser.add_argument("--allow-legacy-reference-mismatch", action="store_true", help="Explicitly reproduce historical alfalfa-ETf/grass-ETo multiplication with a warning.")
     parser.add_argument("--tmax", default=None)
     parser.add_argument("--tmax-var", default=None)
     parser.add_argument("--tmin", default=None)

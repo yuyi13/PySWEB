@@ -85,6 +85,8 @@ and `et_tall_crop` (alfalfa). For example, pass
 Python API or YAML run configuration. Historical short-reference multiplication
 requires `allow_legacy_reference_mismatch=True`; it warns and labels the ET
 output. It is retained for reproducibility of earlier results.
+The CLI exposes the same options as `--reference-et`, `--reference-et-var`,
+`--et-reference-type` and `--allow-legacy-reference-mismatch`.
 A grass conversion must use a justified ETr/ETo ratio; no fixed conversion is assumed.
 
 Sources: [OpenET model](https://github.com/Open-ET/openet-ssebop/blob/main/openet/ssebop/model.py),
