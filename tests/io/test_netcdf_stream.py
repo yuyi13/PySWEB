@@ -7,13 +7,68 @@ Last updated: 2026-10-17
 Inputs: Small numeric NetCDF fixtures and unpopulated long-calendar variable metadata.
 Outputs: Streaming memory/layout and value-preservation assertions.
 Usage: python -m pytest tests/io/test_netcdf_stream.py
-Dependencies: netCDF4, numpy, pytest, pysweb.
+Dependencies: netCDF4, numpy, pytest, xarray, pysweb.
 """
 import netCDF4 as nc
 import numpy as np
 import pytest
-from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
+import xarray as xr
+from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache, open_stream_dataset
 from pysweb.swb.paired import _copy_variable
+
+
+@pytest.mark.parametrize('format', ['NETCDF3_CLASSIC', 'NETCDF4'])
+@pytest.mark.parametrize('fail', [False, True])
+def test_stream_dataset_preserves_cf_decoding_and_closes_handle(tmp_path, monkeypatch, format, fail):
+    path = tmp_path/'packed.nc'
+    with nc.Dataset(path, 'w', format=format) as source:
+        source.createDimension('time', 3)
+        dates = source.createVariable('time', 'i4', ('time',))
+        dates.units = 'days since 2014-01-01'
+        dates[:] = [0, 1, 2]
+        variable = source.createVariable('ET', 'i2', ('time',), fill_value=-9999)
+        variable.scale_factor, variable.add_offset = 0.1, 1.
+        variable.units = 'mm day-1'
+        variable[:] = np.ma.array([1., 2., 3.], mask=[False, True, False])
+    with xr.open_dataset(path) as source:
+        expected = source.load()
+    handles = []
+    original = xr.backends.NetCDF4DataStore
+    def record_handle(source):
+        handles.append(source)
+        return original(source)
+    monkeypatch.setattr(xr.backends, 'NetCDF4DataStore', record_handle)
+    global_cache = nc.get_chunk_cache()
+    try:
+        with open_stream_dataset(path, ['ET']) as actual:
+            xr.testing.assert_identical(actual.load(), expected)
+            if fail:
+                raise RuntimeError('consumer failed')
+    except RuntimeError as error:
+        assert fail and str(error) == 'consumer failed'
+    assert len(handles) == 1 and not handles[0].isopen()
+    assert nc.get_chunk_cache() == global_cache
+
+
+def test_stream_dataset_changes_only_selected_variable_cache(tmp_path, monkeypatch):
+    path = tmp_path/'metadata.nc'
+    with nc.Dataset(path, 'w') as source:
+        for dim, size in [('time', 6000), ('y', 128), ('x', 128)]:
+            source.createDimension(dim, size)
+        for name in ['ET', 'unread']:
+            source.createVariable(name, 'f4', ('time', 'y', 'x'),
+                zlib=True, chunksizes=(1500, 32, 32))
+    handles = []
+    original = xr.backends.NetCDF4DataStore
+    def record_handle(source):
+        handles.append(source)
+        return original(source)
+    monkeypatch.setattr(xr.backends, 'NetCDF4DataStore', record_handle)
+    with open_stream_dataset(path, ['ET'], max_cache_bytes=128*1024**2) as dataset:
+        assert dataset.sizes['time'] == 6000
+        assert handles[0]['ET'].get_var_chunk_cache()[0] == 128*1024**2
+        assert handles[0]['unread'].get_var_chunk_cache()[0] == nc.get_chunk_cache()[0]
+    assert not handles[0].isopen()
 
 
 def test_long_calendar_chunks_follow_temporal_and_row_write_blocks():
