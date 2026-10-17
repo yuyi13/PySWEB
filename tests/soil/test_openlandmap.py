@@ -293,3 +293,17 @@ def test_hydraulics_match_published_saxton_rawls_table3(sand, clay, wp, fc, sat,
     np.testing.assert_allclose(arrays['porosity'], sat, atol=.006)
     np.testing.assert_allclose(arrays['conductivity_sat'] / 24, ks_hour, atol=.15)
     assert arrays['porosity'].attrs['pedotransfer_organic_matter_units'] == 'mass percent'
+
+
+def test_configured_organic_matter_applicability():
+    openlandmap = import_module('pysweb.soil.openlandmap')
+    predictors = {key: xr.DataArray(np.full((5,2,2),value), dims=('band','lat','lon'))
+                  for key,value in [('sand',40.),('clay',20.),('soc',2.)]}
+    predictors['soc'][:,0,0] = 10. / 1.72 * 10. / 5.
+    arrays = openlandmap.process_soil_properties_from_openlandmap(
+        Namespace(dtype='float64',openlandmap_maximum_om_percent=8.),_grid(),predictors,
+        reproject_to_template=_passthrough_reproject)
+    for array in arrays.values():
+        assert np.isnan(array.values[:,0,0]).all()
+        assert np.isfinite(array.values[:,1,1]).all()
+        assert array.attrs['maximum_organic_matter_percent']==8.

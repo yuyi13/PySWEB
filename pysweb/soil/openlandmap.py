@@ -188,6 +188,9 @@ def process_soil_properties_from_openlandmap(
     sand_da = reproject_to_template(soil_predictors["sand"], grid, resampling=Resampling.bilinear)
     soc_da = reproject_to_template(soil_predictors["soc"], grid, resampling=Resampling.bilinear)
     missing_soc_g_per_kg = _resolve_missing_soc_g_per_kg(args)
+    maximum_om = getattr(args, 'openlandmap_maximum_om_percent', None)
+    if maximum_om is not None and (not np.isfinite(maximum_om) or maximum_om <= 0):
+        raise ValueError('Organic-matter applicability limit must be finite and positive')
 
     porosity_layers = []
     wilting_layers = []
@@ -211,6 +214,8 @@ def process_soil_properties_from_openlandmap(
         # fractions, but OM is mass percent. 10 g/kg equals 1 percent.
         # Using /1000 here underestimated the OM term by a factor of 100.
         om = 1.72 * soc_g_per_kg / 10.0
+        if maximum_om is not None:
+            om = np.where(om <= maximum_om, om, np.nan)
 
         theta_33t = (
             -0.251 * sand
@@ -280,6 +285,7 @@ def process_soil_properties_from_openlandmap(
                 "pedotransfer_method": "Saxton and Rawls 2006, doi:10.2136/sssaj2005.0117",
                 "pedotransfer_organic_matter_units": "mass percent",
                 "pedotransfer_organic_matter_conversion": "1.72 * SOC_g_per_kg / 10",
+                "maximum_organic_matter_percent": maximum_om if maximum_om is not None else 'not configured',
             },
         )
 

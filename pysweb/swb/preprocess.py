@@ -1178,6 +1178,8 @@ def build_parser() -> argparse.ArgumentParser:
         help = "Default SOC value in g/kg for masked OpenLandMap SOC pixels where texture predictors are valid.",
     )
     parser.add_argument("--soil-file", help="Custom hydraulic properties in one NetCDF.")
+    parser.add_argument("--openlandmap-maximum-om-percent", type=float,
+        help="Optional upper organic-matter mass-percent applicability bound for pedotransfer.")
     parser.add_argument("--native-cache-dir", help="Persistent native OpenLandMap cache directory.")
     parser.add_argument("--soil-input-dir", help="Custom hydraulic NetCDF directory (soil_<property>.nc).")
     parser.add_argument("--soil-mlcons-dir", help="MLConstraints texture/SOC rasters or RDS directory.")
