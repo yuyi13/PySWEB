@@ -4,7 +4,7 @@ Script: test_core.py
 Objective: Verify extracted SSEBop package helpers preserve expected ET fraction, climatology, landcover, grid, and compatibility-shim behavior.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-10-17
 Inputs: In-memory xarray arrays, pandas timestamps, and temporary NetCDF files.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_core.py
@@ -20,6 +20,7 @@ import rioxarray  # noqa: F401
 from pysweb.met.silo.readers import open_silo_et_short_crop, open_silo_variable
 from pysweb.ssebop.core import (
     SsebopAuConfig,
+    _coarsen_mean_2d,
     build_doy_climatology,
     compute_dt_daily,
     daily_et_from_etf,
@@ -60,6 +61,37 @@ def _load_local_fano_core():
     from pysweb.ssebop.core import LocalFanoConfig, tcold_fano_local_xr
 
     return LocalFanoConfig, tcold_fano_local_xr
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_coarsen_mean_preserves_masked_and_padded_fano_cells(dtype):
+    data = _spatial_raster(
+        np.array(
+            [
+                [1, np.nan, 10, 14, np.nan],
+                [3, 5, 18, 22, np.nan],
+                [np.nan, np.nan, 30, np.nan, 50],
+                [np.nan, np.nan, 34, 38, 70],
+                [9, 11, np.nan, np.nan, 90],
+            ],
+            dtype=dtype,
+        ),
+        "anchor_tc",
+    )
+
+    result = _coarsen_mean_2d(data, 2, 2)
+
+    # Only valid cells contribute; empty blocks stay missing and edge padding
+    # contributes neither temperature nor coordinate values.
+    np.testing.assert_array_equal(
+        result.values, [[3, 16, np.nan], [np.nan, 34, 60], [10, np.nan, 90]]
+    )
+    np.testing.assert_array_equal(result.y.values, [120, 60, 15])
+    np.testing.assert_array_equal(result.x.values, [30, 90, 135])
+    assert result.dims == data.dims
+    assert result.dtype == data.dtype
+    assert result.name == data.name
+    assert result.rio.crs == data.rio.crs
 
 
 def test_tcold_fano_simple_xr_preserves_plain_array_compatibility():

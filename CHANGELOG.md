@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-17
+
+- Keep local FANO coarsening compatible with xarray 2026.9.0 while preserving NaN-aware averaging and padded-edge coordinates.
+
 ## 2026-10-16
 
 - Preserve Landsat QA in default downloads, enable pixel cloud masking and avoid median compositing of bitfields.

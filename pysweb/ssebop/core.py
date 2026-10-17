@@ -168,7 +168,9 @@ def _rolling_mean_2d(data: xr.DataArray, y_window: int, x_window: int) -> xr.Dat
 
 
 def _coarsen_mean_2d(data: xr.DataArray, y_window: int, x_window: int) -> xr.DataArray:
-    return data.coarsen(y=y_window, x=x_window, boundary="pad").mean(skipna=True)
+    # Floating FANO rasters skip NaNs by default, including padded edge cells.
+    # Omit the redundant keyword: xarray 2026.9.0 misroutes coarsen kwargs.
+    return data.coarsen(y=y_window, x=x_window, boundary="pad").mean()
 
 
 def _interp_like_2d(source: xr.DataArray, match: xr.DataArray) -> xr.DataArray:
