@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+speed = ["numba>=0.60"]
 plot = ["matplotlib>=3.8"]
 dev = ["pytest>=8", "build>=1.2", "matplotlib>=3.8"]
 

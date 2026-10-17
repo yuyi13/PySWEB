@@ -4,7 +4,7 @@ Script: test_calibrate.py
 Objective: Verify calibration argument validation, daily time alignment and rejection of invalid fit metrics.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Package calibration parser construction and CLI argument parsing under pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_calibrate.py
@@ -229,3 +229,32 @@ def test_calibrate_domain_rejects_invalid_rmse_outputs(monkeypatch, tmp_path: Pa
             output        = str(tmp_path / "calibration.csv"),
             sm_res        = None,
         )
+
+
+def test_cached_objective_and_numba_preserve_missing_reference_support():
+    pytest.importorskip("numba")
+    rng = np.random.default_rng(18)
+    times = pd.date_range("2010-01-01", periods=800)
+    rain = rng.exponential(5, (800, 1, 3))
+    et = rng.uniform(0, 6, rain.shape)
+    tr = et * .6
+    reference = rng.uniform(.1, .4, rain.shape)
+    reference[::7, 0, 0] = np.nan
+    reference[::9, 0, 1] = np.nan
+    rain[4, 0, 2] = np.nan
+    valid = np.ones((1,3), dtype=bool)
+    weights = np.array([[1.,2.,3.]])
+    soil = {name:np.full((5,1,3), value) for name,value in
+            [("porosity",.45),("wilting_point",.15),("available_water_capacity",.2),
+             ("b_coefficient",4.5),("conductivity_sat",8.)]}
+    args = (rain,et,tr,reference,times,soil,valid,None,[50,150,300,600,1000],0,.5,25.,0.,False,weights,"start",365)
+    params = [1000.,1.1,.9,.96]
+    expected = calibrate_module._compute_rmse(params,*args)
+    ctx = calibrate_module._prepare_observation_context(rain,et,tr,reference,valid,weights,365,"numba")
+    actual = calibrate_module._compute_rmse(params,*args,ctx)
+    assert actual[0] == pytest.approx(expected[0],abs=1e-12)
+    assert actual[1] == expected[1]
+    assert not ctx["obs_mask"][:365].any()
+    assert not ctx["obs_mask"][:,:,2].any()
+    assert not ctx["obs_mask"].flags.writeable
+    assert weights.flags.writeable

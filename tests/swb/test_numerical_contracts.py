@@ -3,7 +3,7 @@ Script: test_numerical_contracts.py
 Objective: Verify conservation, restart states, forcing calendars, calibration support and output identity.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-09-12
+Last updated: 2026-10-17
 Inputs: Synthetic soil profiles, daily forcing arrays, demo files and provenance manifests.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/swb/test_numerical_contracts.py
@@ -202,3 +202,26 @@ def test_offline_demo_and_provenance_integrity(tmp_path):
         stream.write(b"tampered")
     with pytest.raises(ValueError, match="does not match"):
         validate_existing_output(result, manifest)
+
+
+def test_accelerated_runner_serial_and_parallel_match_reference(tmp_path):
+    pytest.importorskip('numba')
+    runner = import_module('pysweb.swb.run')
+    base = tmp_path / 'reference'
+    reference = run_demo(base, workers=1)
+    inputs = base / 'prepared'
+    tag = '20240101_20240114'
+    for workers in [1, 2]:
+        path = runner.run_swb_workflow(
+            precip=str(inputs / f'rain_daily_{tag}.nc'),
+            effective_precip=str(inputs / f'effective_precip_daily_{tag}.nc'),
+            et=str(inputs / f'et_daily_{tag}.nc'),
+            transpiration=str(inputs / f'transpiration_daily_{tag}.nc'),
+            soil_dir=str(inputs), output_dir=str(tmp_path / f'fast_{workers}'),
+            start_date='2024-01-01', end_date='2024-01-14',
+            workers=workers, solver_backend='numba',
+        )
+        with xr.open_dataset(reference) as slow, xr.open_dataset(path) as fast:
+            assert fast.attrs['solver_backend'] == 'numba'
+            for name in slow.data_vars:
+                np.testing.assert_allclose(fast[name], slow[name], rtol=1e-6, atol=1e-7, equal_nan=True)

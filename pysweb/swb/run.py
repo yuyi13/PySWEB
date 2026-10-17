@@ -3,7 +3,7 @@ Script: run.py
 Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
 Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
 Usage: pysweb swb-run --help
@@ -132,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
+    parser.add_argument("--solver-backend", choices=["reference", "numba"], default="reference", help="Optional verified accelerator for the standard solver equations.")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for spatial SWEB simulation.")
     return parser
 
@@ -243,7 +244,13 @@ def _compute_row_soil_moisture(
     use_ndvi_root_depth: bool,
     emit_warnings: bool = True,
     state_timing: str = "start",
+    solver_backend: str = "reference",
 ) -> np.ndarray:
+    solver = soil_water_balance_1d
+    if solver_backend == "numba":
+        from pysweb.swb.accelerated import soil_water_balance_1d as solver
+    elif solver_backend != "reference":
+        raise ValueError("solver_backend must be reference or numba")
     n_time = effective_precip_values.shape[0]
     n_layers = int(np.asarray(soil_grids["layer_depth"]).size)
     row_soil_moisture = np.full((n_time, n_layers, n_lon), np.nan, dtype=float)
@@ -281,7 +288,7 @@ def _compute_row_soil_moisture(
             diff_factor = default_diff_factor
 
         try:
-            result = soil_water_balance_1d(
+            result = solver(
                 effective_precip_series,
                 et_series,
                 soil_props,
@@ -321,6 +328,7 @@ def _init_process_run_worker(
     default_diff_factor: float,
     use_ndvi_root_depth: bool,
     state_timing: str,
+    solver_backend: str = "reference",
 ) -> None:
     global _PROCESS_RUN_STATE
     _PROCESS_RUN_STATE = {
@@ -335,6 +343,7 @@ def _init_process_run_worker(
         "default_diff_factor": default_diff_factor,
         "use_ndvi_root_depth": bool(use_ndvi_root_depth),
         "state_timing": state_timing,
+        "solver_backend": solver_backend,
     }
 
 
@@ -367,6 +376,7 @@ def _run_model_for_lat_process(lat_idx: int) -> tuple[int, np.ndarray]:
         use_ndvi_root_depth = use_ndvi_root_depth,
         emit_warnings = True,
         state_timing = state["state_timing"],
+        solver_backend = state["solver_backend"],
     )
     return lat_idx, row_soil_moisture
 
@@ -548,6 +558,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 default_diff_factor = args.diff_factor,
                 use_ndvi_root_depth = args.use_ndvi_root_depth,
                 state_timing = args.state_timing,
+                solver_backend = args.solver_backend,
             )
             soil_moisture[:, :, lat_idx, :], final_soil_moisture[:, lat_idx, :], budget_values[:, :, lat_idx, :], forcing_valid[:, lat_idx, :] = row_soil_moisture
             processed_cells += n_lon
@@ -581,10 +592,12 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 args.diff_factor,
                 args.use_ndvi_root_depth,
                 args.state_timing,
+                args.solver_backend,
             ),
         ) as executor:
-            futures = [executor.submit(_run_model_for_lat_process, lat_idx) for lat_idx in range(n_lat)]
+            futures = {executor.submit(_run_model_for_lat_process, lat_idx) for lat_idx in range(n_lat)}
             for future in as_completed(futures):
+                futures.remove(future)
                 lat_idx, row_soil_moisture = future.result()
                 soil_moisture[:, :, lat_idx, :], final_soil_moisture[:, lat_idx, :], budget_values[:, :, lat_idx, :], forcing_valid[:, lat_idx, :] = row_soil_moisture
                 processed_cells += n_lon
@@ -732,7 +745,8 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         "missing_forcing_policy": "hold state; flag valid_forcing_fraction=0 and leave fluxes missing",
         "valid_cell_days": int(np.sum(forcing_valid)),
         "total_cell_days": int(forcing_valid.size),
-        "source": "pysweb.swb.solver soil_water_balance_1d",
+        "source": f"pysweb.swb.{('accelerated' if args.solver_backend == 'numba' else 'solver')} soil_water_balance_1d",
+        "solver_backend": args.solver_backend,
         "soil_property_source": str(soil_source_dir),
         "layer_bottoms_mm": np.asarray(soil_grids["layer_depth"], dtype=float).tolist(),
         "layer_thickness_mm": np.asarray(layer_thickness, dtype=float).tolist(),

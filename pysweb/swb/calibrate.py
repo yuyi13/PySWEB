@@ -4,7 +4,7 @@ Script: calibrate.py
 Objective: Calibrate domain SWB parameters against reference surface soil moisture.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
 Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
 Usage: pysweb swb-calibrate --help
@@ -199,6 +199,31 @@ def _select_daily_timesteps(
     return selected.assign_coords(time = selected_index)
 
 
+def _prepare_observation_context(effective_precip_vals, et_vals, transpiration_vals,
+                                 reference_vals, soil_valid, cell_weights=None, spinup_days=0,
+                                 solver_backend="reference"):
+    """Cache parameter-independent observation support once for shared workers."""
+    complete_forcing = np.all(np.isfinite(effective_precip_vals) & np.isfinite(et_vals) & np.isfinite(transpiration_vals), axis=0)
+    obs_mask = np.isfinite(reference_vals) & soil_valid[None, :, :] & complete_forcing[None, :, :]
+    obs_mask[:spinup_days] = False
+    weights = np.ones(soil_valid.shape) if cell_weights is None else np.array(cell_weights, dtype=float, copy=True)
+    if weights.shape != soil_valid.shape or np.any(~np.isfinite(weights)) or np.any(weights < 0):
+        raise ValueError("Cell weights must be finite, non-negative and match the calibration grid.")
+    obs_mask &= weights[None, :, :] > 0
+    obs_sum = np.where(obs_mask, reference_vals * weights[None, :, :], 0.0).sum(axis=(1, 2))
+    obs_count = np.where(obs_mask, weights[None, :, :], 0.0).sum(axis=(1, 2))
+    obs_mean = np.full_like(obs_sum, np.nan, dtype=float)
+    valid_obs = obs_count > 0
+    obs_mean[valid_obs] = obs_sum[valid_obs] / obs_count[valid_obs]
+
+    if solver_backend not in {"reference", "numba"}:
+        raise ValueError("solver_backend must be reference or numba")
+    for array in (obs_mask, weights, obs_sum, obs_count, obs_mean):
+        array.setflags(write=False)
+    return dict(obs_mask=obs_mask, weights=weights, obs_sum=obs_sum,
+                obs_count=obs_count, obs_mean=obs_mean, solver_backend=solver_backend)
+
+
 def _compute_rmse(
     params: Sequence[float],
     effective_precip_vals: np.ndarray,
@@ -218,22 +243,23 @@ def _compute_rmse(
     cell_weights=None,
     state_timing="start",
     spinup_days=0,
+    observation_context=None,
 ) -> Tuple[float, int]:
     diff_factor, sm_max_factor, sm_min_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
 
-    complete_forcing = np.all(np.isfinite(effective_precip_vals) & np.isfinite(et_vals) & np.isfinite(transpiration_vals), axis=0)
-    obs_mask = np.isfinite(reference_vals) & soil_valid[None, :, :] & complete_forcing[None, :, :]
-    obs_mask[:spinup_days] = False
-    weights = np.ones(soil_valid.shape) if cell_weights is None else np.asarray(cell_weights, dtype=float)
-    if weights.shape != soil_valid.shape or np.any(~np.isfinite(weights)) or np.any(weights < 0):
-        raise ValueError("Cell weights must be finite, non-negative and match the calibration grid.")
-    obs_mask &= weights[None, :, :] > 0
-    obs_sum = np.where(obs_mask, reference_vals * weights[None, :, :], 0.0).sum(axis=(1, 2))
-    obs_count = np.where(obs_mask, weights[None, :, :], 0.0).sum(axis=(1, 2))
-    obs_mean = np.full_like(obs_sum, np.nan, dtype=float)
-    valid_obs = obs_count > 0
-    obs_mean[valid_obs] = obs_sum[valid_obs] / obs_count[valid_obs]
+    if observation_context is None:
+        observation_context = _prepare_observation_context(
+            effective_precip_vals, et_vals, transpiration_vals, reference_vals,
+            soil_valid, cell_weights, spinup_days)
+    obs_mask = observation_context["obs_mask"]
+    weights = observation_context["weights"]
+    obs_sum = observation_context["obs_sum"]
+    obs_count = observation_context["obs_count"]
+    obs_mean = observation_context["obs_mean"]
+    solver = soil_water_balance_1d
+    if observation_context["solver_backend"] == "numba":
+        from pysweb.swb.accelerated import soil_water_balance_1d as solver
 
     sim_sum = np.zeros_like(obs_sum, dtype=float)
     sim_count = np.zeros_like(obs_count, dtype=float)
@@ -267,7 +293,7 @@ def _compute_rmse(
             )
 
             try:
-                simulated = soil_water_balance_1d(
+                simulated = solver(
                     effective_precip_vals[:, lat_idx, lon_idx],
                     et_vals[:, lat_idx, lon_idx],
                     soil_props,
@@ -323,6 +349,7 @@ def _objective_function(
     cell_weights=None,
     state_timing="start",
     spinup_days=0,
+    observation_context=None,
 ) -> float:
     rmse, _ = _compute_rmse(
         params,
@@ -343,6 +370,7 @@ def _objective_function(
         cell_weights,
         state_timing,
         spinup_days,
+        observation_context,
     )
     return rmse
 
@@ -393,6 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
+    parser.add_argument("--solver-backend", choices=["reference", "numba"], default="reference")
+    parser.add_argument("--shared-workers", action="store_true", help="Share immutable objective inputs using local fork workers.")
+    parser.add_argument("--no-polish", action="store_true", help="Save converged DE result for separately allocated serial polishing.")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for differential evolution objective evaluation.")
     parser.add_argument(
         "--diff-bounds",
@@ -516,6 +547,9 @@ def calibrate_domain(**kwargs) -> None:
         raise ValueError("workers must be >= 1")
 
     differential_evolution = _get_differential_evolution()
+    if args.shared_workers:
+        from pysweb.swb.calibration_runtime import shared_differential_evolution
+        differential_evolution = shared_differential_evolution
     start, end = _parse_dates(args)
 
     print("Loading forcing data...", flush=True)
@@ -732,6 +766,9 @@ def calibrate_domain(**kwargs) -> None:
     if "x0" in inspect.signature(differential_evolution).parameters:
         de_extra["x0"] = de_x0
 
+    observation_context = _prepare_observation_context(
+        effective_precip_vals, et_vals, transpiration_vals, reference_vals,
+        soil_valid, cell_weights, args.spinup_days, args.solver_backend)
     result = differential_evolution(
         _objective_function,
         bounds,
@@ -753,6 +790,7 @@ def calibrate_domain(**kwargs) -> None:
             cell_weights,
             args.state_timing,
             args.spinup_days,
+            observation_context,
         ),
         seed=args.seed,
         maxiter=args.max_iter,
@@ -764,6 +802,7 @@ def calibrate_domain(**kwargs) -> None:
         disp=False,
         workers=de_workers,
         updating="deferred" if de_workers > 1 else "immediate",
+        polish=not args.no_polish,
         **de_extra,
     )
 
@@ -791,6 +830,7 @@ def calibrate_domain(**kwargs) -> None:
         cell_weights,
         args.state_timing,
         args.spinup_days,
+        observation_context,
     )
     if n_obs == 0 or not np.isfinite(final_rmse):
         raise ValueError("Calibration produced no valid observations for RMSE computation.")
