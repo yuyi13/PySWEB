@@ -1,11 +1,11 @@
 """
 Script: refet.py
-Objective: Convert ERA5-Land meteorology and calculate daily short-reference evapotranspiration.
+Objective: Convert ERA5-Land meteorology and calculate daily grass/alfalfa reference evapotranspiration.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-04-16
+Last updated: 2026-10-17
 Inputs: Numeric daily meteorology, elevation, latitude and day-of-year values.
-Outputs: Converted meteorological quantities and short-reference ET in mm/day.
+Outputs: Converted meteorological quantities and reference ET in mm/day.
 Usage: import pysweb.met.era5land.refet
 Dependencies: numpy
 """
@@ -128,7 +128,7 @@ def _net_longwave_radiation_mj_m2_day(tmax_c, tmin_c, ea_kpa, rs_mj_m2_day, rso_
     )
 
 
-def compute_daily_eto_short(
+def compute_daily_reference_et(
     tmax_c,
     tmin_c,
     ea_kpa,
@@ -138,18 +138,23 @@ def compute_daily_eto_short(
     elev_m,
     lat_deg,
     doy,
+    *,
+    reference_type="grass",
 ):
     """
-    Compute daily short-reference ET using FAO56/RefET-style equations.
+    Compute daily standardized reference ET using RefET-style radiation.
 
     The implementation follows the standardized short crop form with:
-    - Cn = 900
-    - Cd = 0.34
+    - grass: Cn = 900, Cd = 0.34
+    - alfalfa: Cn = 1600, Cd = 0.38
     - elevation-derived air pressure
     - wind speed adjusted to 2 m
     - extraterrestrial radiation and clear-sky radiation
     - net shortwave and net longwave radiation
     """
+    if reference_type not in {"grass", "alfalfa"}:
+        raise ValueError("reference_type must be grass or alfalfa")
+    cn, cd = (CN_SHORT, CD_SHORT) if reference_type == "grass" else (1600.0, 0.38)
     tmax = _as_float_array(tmax_c)
     tmin = _as_float_array(tmin_c)
     ea = _as_float_array(ea_kpa)
@@ -177,7 +182,17 @@ def compute_daily_eto_short(
     rn_mj_m2_day = rns_mj_m2_day - rnl_mj_m2_day
 
     numerator = 0.408 * delta_kpa_c * rn_mj_m2_day + psy_kpa_c * (
-        CN_SHORT / (tmean + 273.0)
+        cn / (tmean + 273.0)
     ) * u2_m_s * vpd_kpa
-    denominator = delta_kpa_c + psy_kpa_c * (1.0 + CD_SHORT * u2_m_s)
+    denominator = delta_kpa_c + psy_kpa_c * (1.0 + cd * u2_m_s)
     return numerator / denominator
+
+
+def compute_daily_eto_short(tmax_c, tmin_c, ea_kpa, rs_mj_m2_day, uz_m_s, zw_m, elev_m, lat_deg, doy):
+    """Daily short-grass reference ET; preserves the existing numerical path."""
+    return compute_daily_reference_et(tmax_c, tmin_c, ea_kpa, rs_mj_m2_day, uz_m_s, zw_m, elev_m, lat_deg, doy, reference_type="grass")
+
+
+def compute_daily_etr_tall(tmax_c, tmin_c, ea_kpa, rs_mj_m2_day, uz_m_s, zw_m, elev_m, lat_deg, doy):
+    """Daily alfalfa reference ET for the native SSEBop alfalfa ET fraction."""
+    return compute_daily_reference_et(tmax_c, tmin_c, ea_kpa, rs_mj_m2_day, uz_m_s, zw_m, elev_m, lat_deg, doy, reference_type="alfalfa")

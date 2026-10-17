@@ -4,7 +4,7 @@ Script: core.py
 Objective: Provide package-native SSEBop physics helpers for dT, ET fraction, Tcold estimation, climatology, and daily ET calculations.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-10-17
 Inputs: xarray temperature and geospatial arrays plus pandas ET series.
 Outputs: SSEBop helper DataArray and Series results.
 Usage: import pysweb.ssebop.core
@@ -27,6 +27,7 @@ __all__ = [
     "build_doy_climatology",
     "compute_dt_daily",
     "daily_et_from_etf",
+    "et_from_fraction",
     "dt_fao56_xr",
     "et_fraction_xr",
     "tcold_fano_local_xr",
@@ -44,7 +45,7 @@ AU_SSEBOP_SOURCE_CANDIDATES: dict[str, dict[str, str]] = {
     "et_reference": {
         "local": "BoM SILO FAO56 ETo (et_short_crop) NetCDF",
         "silo_index": "https://s3-ap-southeast-2.amazonaws.com/silo-open-data/Official/annual/index.html",
-        "notes": "ETf from Landsat; ETa = ETf * ETo (short crop).",
+        "notes": "Native SSEBop ETf is alfalfa-based. Supply matching tall-reference ET, or explicitly convert the fraction before using grass ETo.",
     },
     # dT climatology: computed from daily SILO met (tmax/tmin/rs/ea) + DEM.
     "dt_climatology": {
@@ -269,10 +270,12 @@ def et_fraction_xr(
     clamp_max: float = 1.0,
     mask_max: float = 2.0,
 ) -> xr.DataArray:
-    """Compute SSEBop ET fraction from LST, Tcold, and dT."""
+    """Compute the alfalfa-based SSEBop ET fraction from LST, Tcold and dT."""
     etf = (tcold_k + dt_k - lst_k) / dt_k
     etf = etf.where(etf <= mask_max)
-    return etf.clip(0.0, clamp_max)
+    result = etf.clip(0.0, clamp_max)
+    result.attrs["et_fraction_type"] = "alfalfa"
+    return result
 
 
 def _tcold_fano_same_pixel_xr(
@@ -375,6 +378,21 @@ def compute_dt_daily(
         rs_mj_m2_day=rs_mj_m2_day,
         ea_kpa=ea_kpa,
     )
+
+
+def et_from_fraction(etf, reference_et, *, fraction_type, reference_type):
+    """Multiply only matching reference types; conversion must be explicit.
+
+    Native SSEBop fraction (clamped at 1) is alfalfa based. A grass reference
+    requires a separately converted grass fraction, which can exceed one.
+    This function preserves missing values and does not rescale or clamp data.
+    """
+    allowed = {"alfalfa", "grass"}
+    if fraction_type not in allowed or reference_type not in allowed:
+        raise ValueError("Reference types must be alfalfa or grass")
+    if fraction_type != reference_type:
+        raise ValueError("ET fraction and reference ET types differ; convert explicitly before multiplication")
+    return etf * reference_et
 
 
 def daily_et_from_etf(

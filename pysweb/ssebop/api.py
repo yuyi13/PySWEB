@@ -39,12 +39,13 @@ from pysweb.ssebop.core import (
     build_doy_climatology,
     compute_dt_daily,
     et_fraction_xr,
+    et_from_fraction,
     tcold_fano_local_xr,
     tcold_fano_simple_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
 from pysweb.ssebop import landsat
-from pysweb.ssebop.quality import landsat_c2_qa_mask
+from pysweb.ssebop.quality import landsat_c2_qa_mask, landsat_c2_l2_bands
 from pysweb.ssebop.landcover import (
     load_worldcover_landcover,
     worldcover_masks,
@@ -531,6 +532,11 @@ def process_landsat_scene(
     doy = datetime.fromisoformat(date_str).timetuple().tm_yday
     bands = read_geotiff_bands(tif_path)
 
+    if lst_band == "auto":
+        thermal = [name for name in ("ST_B6", "ST_B10") if name in bands]
+        if len(thermal) != 1:
+            raise ValueError("Automatic Landsat bands require exactly one C2 thermal band")
+        lst_band, red_band, nir_band = landsat_c2_l2_bands("LE07" if thermal[0] == "ST_B6" else "LC08")
     if lst_band not in bands:
         raise ValueError(f"LST band '{lst_band}' not found in {tif_path}")
     if landsat_qa not in {"required", "pre_masked"}:
@@ -651,6 +657,10 @@ def run_ssebop_workflow(
     ndvi_band = _cfg_value(cfg, args, "ndvi_band", default="ndvi")
     red_band = _cfg_value(cfg, args, "red_band", default="red")
     nir_band = _cfg_value(cfg, args, "nir_band", default="nir")
+    reference_et = _cfg_value(cfg, args, "reference_et")
+    reference_et_var = _cfg_value(cfg, args, "reference_et_var")
+    et_reference_type = _cfg_value(cfg, args, "et_reference_type", default="alfalfa" if reference_et else "grass")
+    allow_legacy_mismatch = bool(_cfg_value(cfg, args, "allow_legacy_reference_mismatch", default=False))
     et_short_crop = _cfg_value(cfg, args, "et_short_crop")
     et_short_crop_var = _cfg_value(cfg, args, "et_short_crop_var")
     tmax_path = _cfg_value(cfg, args, "tmax")
@@ -740,8 +750,12 @@ def run_ssebop_workflow(
     dem_da = rioxarray.open_rasterio(dem_path, masked=True).squeeze("band", drop=True)
     dem_da = reproject_match_crop_first(dem_da, template, resampling="bilinear", buffer=buffer).load()
 
+    if et_reference_type != "alfalfa" and not allow_legacy_mismatch:
+        raise ValueError("Native SSEBop ETf requires alfalfa reference ET. Supply reference_et and et_reference_type='alfalfa'; allow_legacy_reference_mismatch=True is only for reproducing historical outputs.")
+    if et_reference_type not in {"alfalfa", "grass"}:
+        raise ValueError("et_reference_type must be alfalfa or grass")
     met_paths = {
-        "et_short_crop": resolve_met_input_paths("et_short_crop", et_short_crop, met_dir, silo_dir, date_range),
+        "et_short_crop": reference_et or resolve_met_input_paths("et_short_crop", et_short_crop, met_dir, silo_dir, date_range),
         "tmax": resolve_met_input_paths("tmax", tmax_path, met_dir, silo_dir, date_range),
         "tmin": resolve_met_input_paths("tmin", tmin_path, met_dir, silo_dir, date_range),
         "rs": resolve_met_input_paths("rs", rs_path, met_dir, silo_dir, date_range),
@@ -805,7 +819,7 @@ def run_ssebop_workflow(
 
     eto = reproject_match_crop_first(
         _slice_to_date_range(
-            open_meteorology_da(et_short_crop, et_short_crop_var, default_var="et_short_crop"),
+            open_meteorology_da(et_short_crop, reference_et_var if reference_et else et_short_crop_var, default_var="et_tall_crop" if reference_et else "et_short_crop"),
             date_range,
         ),
         template,
@@ -912,7 +926,14 @@ def run_ssebop_workflow(
     del ndvi_stack
 
     eto = eto.sel(time=daily_index.values)
-    et_daily = (etf_daily * eto).rename("ET")
+    if allow_legacy_mismatch and et_reference_type != "alfalfa":
+        import warnings
+        warnings.warn("Reproducing historical alfalfa ETf / grass ETo mismatch; output is a legacy sensitivity", UserWarning)
+        et_daily = (etf_daily * eto).rename("ET")
+    else:
+        et_daily = et_from_fraction(etf_daily, eto, fraction_type="alfalfa", reference_type=et_reference_type).rename("ET")
+    et_daily.attrs.update(et_fraction_type="alfalfa", et_reference_type=et_reference_type,
+                          reference_type_match=int(et_reference_type == "alfalfa"))
     del eto
     transpiration_fraction_daily = (1.26 * ndvi_daily - 0.18).clip(0.0, 1.0).rename("f_t")
     transpiration_daily = (et_daily * transpiration_fraction_daily).rename("E_t")
@@ -986,6 +1007,7 @@ def run(
         "dem",
         "output_dir",
         "et_short_crop",
+        "reference_et",
         "tmax",
         "tmin",
         "rs",

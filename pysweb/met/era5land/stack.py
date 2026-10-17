@@ -4,9 +4,9 @@ Script: stack.py
 Objective: Stack ERA5-Land daily GeoTIFF downloads into NetCDF meteorology products.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-11
+Last updated: 2026-10-17
 Inputs: ERA5-Land daily GeoTIFFs, DEM GeoTIFF, date range, and output directory.
-Outputs: Daily NetCDF files for precipitation, air temperature, radiation, vapor pressure, and short-reference ET.
+Outputs: Daily NetCDF files for precipitation, air temperature, radiation, vapor pressure, and short/tall-reference ET.
 Usage: python -m pysweb.met.era5land.stack --help
 Dependencies: numpy, rasterio, scipy, xarray; pysweb
 """
@@ -28,6 +28,7 @@ from rasterio.transform import xy
 from pysweb.met.era5land.refet import (
     actual_vapor_pressure_from_dewpoint_c,
     compute_daily_eto_short,
+    compute_daily_etr_tall,
     j_per_m2_to_mj_per_m2_day,
     kelvin_to_celsius,
     meters_to_mm_day,
@@ -266,6 +267,18 @@ def stack_era5land_daily_inputs(
         doy = doy,
     )
 
+    et_tall_crop = compute_daily_etr_tall(
+        tmax_c = tmax_c,
+        tmin_c = tmin_c,
+        ea_kpa = ea_kpa,
+        rs_mj_m2_day = rs_mj_m2_day,
+        uz_m_s = wind_speed,
+        zw_m = 10.0,
+        elev_m = dem_array,
+        lat_deg = latitudes[:, None],
+        doy = doy,
+    )
+
     start_label = start_dt.isoformat()
     end_label = end_dt.isoformat()
     _write_netcdf(
@@ -327,6 +340,12 @@ def stack_era5land_daily_inputs(
         longitudes,
         "mm day-1",
         "Daily short-reference evapotranspiration",
+    )
+
+    _write_netcdf(
+        output_dir / f"et_tall_crop_daily_{start_label}_{end_label}.nc",
+        "et_tall_crop", et_tall_crop, dates, latitudes, longitudes,
+        "mm day-1", "Daily alfalfa-reference evapotranspiration",
     )
 
 

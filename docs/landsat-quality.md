@@ -63,3 +63,29 @@ select a daily composite, persist signed URLs or silently retry authentication.
 Use bounded requests within Earth Engine's direct-download limits; callers
 remain responsible for immutable scene selection, tiling, cached provenance
 and inspecting cross-sensor support.
+
+
+## Mixed sensors and reference ET
+
+OpenET SSEBop supports Landsat 5, 7, 8 and 9 Collection 2 Level 2.
+Its FANO coefficients are shared across sensors. PySWEB uses the same 0.125,
+0.9 and 0.4 defaults, with a local multiscale cold-boundary implementation.
+The local method has different land-cover conditioning, grid and smoothing
+behaviour from the full OpenET workflow. Band support and kernel agreement
+establish implementation checks; field validation remains necessary.
+Use `lst_band="auto"` to select ST_B6/SR_B3/SR_B4 or ST_B10/SR_B4/SR_B5
+from each raw C2 raster. Both thermal bands in one raster are ambiguous and rejected.
+Positive DN and QA masks apply before retrieval; Landsat 7 scan gaps remain missing.
+
+Native SSEBop ET fraction is **alfalfa referenced**. The workflow now requires
+matching reference ET. ERA5-Land stacking writes both `et_short_crop` (grass)
+and `et_tall_crop` (alfalfa). For example, pass
+`reference_et=".../et_tall_crop_daily_START_END.nc"`,
+`reference_et_var="et_tall_crop"`, `et_reference_type="alfalfa"` in the
+Python API or YAML run configuration. Historical short-reference multiplication
+requires `allow_legacy_reference_mismatch=True`; it warns and labels the ET
+output. It is retained for reproducibility of earlier results.
+A grass conversion must use a justified ETr/ETo ratio; no fixed conversion is assumed.
+
+Sources: [OpenET model](https://github.com/Open-ET/openet-ssebop/blob/main/openet/ssebop/model.py),
+[OpenET image processing](https://github.com/Open-ET/openet-ssebop/blob/main/openet/ssebop/image.py).

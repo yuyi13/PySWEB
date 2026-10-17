@@ -4,7 +4,7 @@ Script: test_era5land_refet.py
 Objective: Verify ERA5-Land reference ET math utilities and daily file discovery behave as expected.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-05-03
+Last updated: 2026-10-17
 Inputs: Pytest fixtures and synthetic temporary files.
 Outputs: Test assertions.
 Usage: python -m pytest tests/met/test_era5land_refet.py
@@ -97,3 +97,15 @@ def test_discover_daily_files_ignores_yaml_sidecars(tmp_path):
     files = discover_daily_files(raw_dir)
 
     assert files == [tif_path]
+
+
+def test_short_and_tall_reference_against_independent_pinned_refet_cases():
+    from pysweb.met.era5land.refet import compute_daily_reference_et
+    # Independent RefET 43ac6568, with its full clear-sky function and the
+    # FAO56 solar constant/declination used by the established PySWEB path.
+    args = dict(tmax_c=31.,tmin_c=16.,ea_kpa=1.9,rs_mj_m2_day=24.,
+                uz_m_s=3.2,zw_m=10.,elev_m=180.,lat_deg=-35.,doy=15)
+    assert compute_daily_reference_et(**args,reference_type="grass") == pytest.approx(5.597670123637882,abs=1e-10)
+    assert compute_daily_reference_et(**args,reference_type="alfalfa") == pytest.approx(7.037663293634768,abs=1e-10)
+    with pytest.raises(ValueError,match="reference_type"):
+        compute_daily_reference_et(**args,reference_type="unknown")

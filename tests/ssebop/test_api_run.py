@@ -4,7 +4,7 @@ Script: test_api_run.py
 Objective: Verify SSEBop dispatch, process fallbacks and preservation of observations during interpolation.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_api_run.py
@@ -334,7 +334,8 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
         landsat_dir=str(tmp_path),
         dem=str(tmp_path / "dem.tif"),
         output_dir=str(tmp_path / "out"),
-        et_short_crop=str(tmp_path / "eto.nc"),
+        reference_et=str(tmp_path / "etr.nc"),
+        et_reference_type="alfalfa",
         tmax=str(tmp_path / "tmax.nc"),
         tmin=str(tmp_path / "tmin.nc"),
         rs=str(tmp_path / "rs.nc"),
