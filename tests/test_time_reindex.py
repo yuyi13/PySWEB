@@ -63,3 +63,25 @@ def test_invalid_index_rejected_without_replacing_destination(tmp_path,indices):
     with pytest.raises(ValueError):
         reindex_netcdf_time(tmp_path/'source.nc',output,pd.date_range('1999-01-01',periods=2),np.asarray(indices))
     assert output.read_bytes()==b'preserve existing output'
+
+
+def test_wrapped_reads_use_consecutive_slices():
+    from pysweb.io.time_reindex import _indexed_block
+    values = np.arange(42, dtype='float32').reshape(7, 2, 3)
+    calls = []
+
+    class Source:
+        shape = values.shape
+        dtype = values.dtype
+
+        def __getitem__(self, key):
+            assert isinstance(key[0], slice), 'Wrapped source years must avoid per-date fancy I/O'
+            calls.append((key[0].start, key[0].stop))
+            return values[key]
+
+    index = np.asarray([5, 6, 0, 1, -1, 2, 3, 3, 4, 0])
+    result = _indexed_block(Source(), index, np.nan)
+    expected = np.full((10, 2, 3), np.nan, dtype='float32')
+    expected[index >= 0] = values[index[index >= 0]]
+    np.testing.assert_array_equal(result, expected)
+    assert len(calls) == 5

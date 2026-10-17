@@ -17,6 +17,25 @@ import numpy as np
 import pandas as pd
 
 
+
+def _indexed_block(variable, selected, fill):
+    """Read consecutive source runs as slices, preserving missing output rows.
+
+    netCDF4 fancy indexing of a wrapped source-year vector can issue one read
+    per date. Slice runs bound repeated decompression without changing values.
+    """
+    block = np.full((len(selected),)+variable.shape[1:], fill, dtype=variable.dtype)
+    positions = np.flatnonzero(selected >= 0)
+    if len(positions):
+        breaks = np.flatnonzero((np.diff(positions) != 1) |
+                               (np.diff(selected[positions]) != 1)) + 1
+        for run in np.split(positions, breaks):
+            first, last = int(run[0]), int(run[-1])
+            source_first, source_stop = int(selected[first]), int(selected[last])+1
+            block[first:last+1] = variable[source_first:source_stop, ...]
+    return block
+
+
 def reindex_netcdf_time(source, destination, dates, source_indices, *,
                         time_dim='time', chunk_days=32, attributes=None):
     """Copy values without interpolation, keeping one temporal block in memory.
@@ -88,10 +107,7 @@ def reindex_netcdf_time(source, destination, dates, source_indices, *,
                     continue
                 for start in range(0, len(index), chunk_days):
                     selected = index[start:start+chunk_days]
-                    block = np.full((len(selected),)+variable.shape[1:], fill, dtype=dtype)
-                    available = selected >= 0
-                    if available.any():
-                        block[available] = variable[selected[available], ...]
+                    block = _indexed_block(variable, selected, fill)
                     target[start:start+len(selected), ...] = block
     temporary.replace(destination)
     return destination
