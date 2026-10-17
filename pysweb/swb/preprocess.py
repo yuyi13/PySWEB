@@ -1285,6 +1285,7 @@ def preprocess_inputs(**kwargs):
         reproject_to_template = _reproject_to_template,
     )
     soil_arrays = {name:da.rio.write_crs(grid.crs).rio.set_spatial_dims(x_dim=grid.lon_dim,y_dim=grid.lat_dim)
+                      .rio.write_transform(grid.template.rio.transform())
                    for name,da in soil_outputs.arrays.items()}
     aoi = None
     if args.template_extent is not None:

@@ -17,7 +17,7 @@ import netCDF4 as nc
 from pysweb.io.provenance import input_manifest, save_output_manifest
 from pysweb.swb.run import run_swb_workflow
 from pysweb.swb.core import SOIL_FILE_STEMS
-from pysweb.io.products import assert_identical_grids
+from pysweb.io.products import assert_identical_grids, auxiliary_grid_contract
 from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
 
 
@@ -73,6 +73,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f'.{output.name}.{os.getpid()}.tmp')
     auxiliaries = auxiliaries or {}
+    auxiliary_grids = {}
     first_path = next(iter(scenarios.values()))
     for path in scenarios.values():
         assert_identical_grids(first_path,path)
@@ -95,7 +96,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
             depth[:] = [first[name].depth_bottom_mm for name in layers]
             depth.units = 'mm'
             result.setncatts({k:first.getncattr(k) for k in first.ncattrs()})
-            result.title = 'SWB default and calibrated soil moisture on the Landsat grid'
+            result.title = 'SWB default and calibrated soil moisture'
             result.scenarios = ','.join(scenarios)
             result.configuration_json = json.dumps(config or {}, default=str, sort_keys=True)
             for name in ('precipitation', 'effective_precipitation'):
@@ -125,7 +126,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
                         if key in source.ncattrs():
                             result.setncattr(f'{key}_{scenario}',source.getncattr(key))
             for name,(path,variable_name) in auxiliaries.items():
-                assert_identical_grids(first_path,path)
+                auxiliary_grids[name] = auxiliary_grid_contract(first_path,path)
                 with nc.Dataset(path) as source:
                     variable = source[variable_name]
                     for dim in variable.dimensions:
@@ -133,7 +134,9 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
                             if not np.array_equal(source[dim][:], result[dim][:]):
                                 raise ValueError(f'Auxiliary {name} is not on the output grid')
                     indices = _time_indices(source,result) if 'time' in variable.dimensions else None
-                    _copy_variable(result,variable,name,indices)
+                    copied = _copy_variable(result,variable,name,indices)
+                    copied.setncattr('grid_mapping', 'spatial_ref')
+            result.auxiliary_grid_metadata_json = json.dumps(auxiliary_grids, sort_keys=True)
             result.Conventions = 'CF-1.8'
         temporary.replace(output)
     finally:
@@ -141,6 +144,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
     paths = list(scenarios.values())+[path for path,_ in auxiliaries.values()]
     manifest = input_manifest(config or {}, paths)
     manifest['scenarios'] = {key:str(value) for key,value in scenarios.items()}
+    manifest['auxiliary_grids'] = auxiliary_grids
     save_output_manifest(output,manifest)
     return output
 

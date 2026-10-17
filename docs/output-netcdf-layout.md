@@ -17,6 +17,15 @@ Scene retrieval auxiliaries use `scene_time`; dT climatology uses `dayofyear`. T
 
 Intermediate single-scenario SWB files retain the component API's `rzsm_layer_*` variables under `products/intermediate/`. They support diagnosis and are not additional consolidated final products. Native calibration inputs remain separate under `calibration_inputs/`; they intentionally have a different spatial grid. See [the full native-grid contract](native-grids.md).
 
+Final grid checks compare the declared affine metadata and coordinate arrays exactly.
+Auxiliaries must have exactly equal pixel centres and CRS before copying. Affine
+differences confined to floating-point coordinate roundoff are recorded and
+normalised to the output grid mapping, without resampling or changing values.
+Larger affine differences, shifted coordinates and different CRS are rejected.
+The NetCDF attribute `auxiliary_grid_metadata_json` and its provenance manifest
+retain the source and output transforms and any adjustment. Newly prepared soil
+files preserve the selected template affine directly.
+
 ## Streaming large records
 
 Streamed daily and scene-dependent arrays use temporal chunks of at most
