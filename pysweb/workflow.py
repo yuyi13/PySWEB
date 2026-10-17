@@ -34,7 +34,7 @@ def load_config(path):
     required = {"name", "root", "start", "end", "extent"}
     if required - set(run):
         raise ValueError(f"Missing run configuration: {sorted(required - set(run))}")
-    allowed = required | {"resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start"}
+    allowed = required | {"resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start", "aoi_bounds", "aoi_crs"}
     if set(run) - allowed:
         raise ValueError(f"Unknown run settings: {sorted(set(run) - allowed)}")
     if Path(run["name"]).name != run["name"] or run["name"] in {".", ".."}:
@@ -52,6 +52,21 @@ def load_config(path):
         raise ValueError("run.grid_mode must be native or legacy")
     if run["grid_mode"] == "native" and "resolution" in run:
         raise ValueError("Native output uses Landsat's grid; remove run.resolution")
+    if ('aoi_bounds' in run) != ('aoi_crs' in run):
+        raise ValueError('Provide run.aoi_bounds and run.aoi_crs together')
+    if 'aoi_bounds' in run:
+        import numpy as np
+        from pyproj import CRS
+        from rasterio.warp import transform_bounds
+        bounds = np.asarray(run['aoi_bounds'],dtype=float)
+        if run['grid_mode'] != 'native' or bounds.shape != (4,) or not np.isfinite(bounds).all() or bounds[0] >= bounds[2] or bounds[1] >= bounds[3]:
+            raise ValueError('Native AOI requires four finite ordered bounds')
+        run['aoi_crs'] = CRS.from_user_input(run['aoi_crs']).to_string()
+        geographic = transform_bounds(run['aoi_crs'],'EPSG:4326',*bounds,densify_pts=65)
+        envelope = run['extent']
+        if geographic[0] < envelope[0]-1e-8 or geographic[1] < envelope[1]-1e-8 or geographic[2] > envelope[2]+1e-8 or geographic[3] > envelope[3]+1e-8:
+            raise ValueError('run.extent must contain the explicitly referenced AOI')
+        run['aoi_bounds'] = bounds.tolist()
     run.setdefault("sensors", ["LC08", "LC09"])
     if not run['sensors'] or len(set(run['sensors'])) != len(run['sensors']) or set(run['sensors']) - {'LC08','LC09','LE07','LT05'}:
         raise ValueError('Choose unique Landsat sensors from LC08, LC09, LE07, LT05')
