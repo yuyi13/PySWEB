@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Script: run.py
 Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
@@ -776,6 +777,14 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
             "zlib": True,
             "complevel": 4,
         }
+        # Bound the compressed read unit for daily/monthly validation and
+        # maps. Automatic time chunks can span years on long records and
+        # repeatedly decompress the same data during short-window reads.
+        if ds_rzsm[var_name].dims == ("time", args.lat_dim, args.lon_dim):
+            encoding[var_name]["chunksizes"] = tuple(
+                min(limit, ds_rzsm[var_name].sizes[dimension])
+                for dimension, limit in [("time", 32), (args.lat_dim, 64), (args.lon_dim, 64)]
+            )
     atomic_netcdf(ds_rzsm, output_path, encoding=encoding)
     save_output_manifest(output_path, manifest)
     print(f"Wrote {output_path}", flush=True)

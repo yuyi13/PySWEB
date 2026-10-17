@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Script: test_numerical_contracts.py
 Objective: Verify conservation, restart states, forcing calendars, calibration support and output identity.
@@ -7,7 +8,7 @@ Last updated: 2026-10-17
 Inputs: Synthetic soil profiles, daily forcing arrays, demo files and provenance manifests.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/swb/test_numerical_contracts.py
-Dependencies: numpy, pandas, pytest, xarray; pysweb
+Dependencies: numpy, pandas, pytest, xarray, netCDF4; pysweb
 """
 
 from importlib import import_module
@@ -225,3 +226,35 @@ def test_accelerated_runner_serial_and_parallel_match_reference(tmp_path):
             assert fast.attrs['solver_backend'] == 'numba'
             for name in slow.data_vars:
                 np.testing.assert_allclose(fast[name], slow[name], rtol=1e-6, atol=1e-7, equal_nan=True)
+
+
+def test_long_output_chunks_preserve_overlapping_values(tmp_path):
+    from netCDF4 import Dataset
+    runner = import_module("pysweb.swb.run")
+    base = tmp_path / "short"
+    reference = run_demo(base, workers=1)
+    prepared = base / "prepared"
+    tag = "20240101_20240114"
+    dates = pd.date_range("2024-01-01", periods=70)
+    paths = []
+    for stem in ["rain", "effective_precip", "et", "transpiration"]:
+        with xr.open_dataset(prepared / f"{stem}_daily_{tag}.nc") as ds:
+            extended = ds.isel(time=np.arange(len(dates)) % 14).assign_coords(time=dates).load()
+        path = tmp_path / f"{stem}_long.nc"
+        extended.to_netcdf(path)
+        paths.append(str(path))
+    result = runner.run_swb_workflow(
+        precip=paths[0], effective_precip=paths[1], et=paths[2], transpiration=paths[3],
+        soil_dir=str(prepared), output_dir=str(tmp_path / "long"),
+        start_date=str(dates[0].date()), end_date=str(dates[-1].date()), workers=1,
+    )
+    with xr.open_dataset(reference) as short, xr.open_dataset(result) as long:
+        assert long.sizes["time"] == 70
+        for name in short.data_vars:
+            if "time" in short[name].dims:
+                np.testing.assert_array_equal(long[name].isel(time=slice(0, 14)).values, short[name].values)
+    with Dataset(result) as ds:
+        for variable in ds.variables.values():
+            if variable.dimensions == ("time", "lat", "lon"):
+                chunks = variable.chunking()
+                assert chunks[0] <= 32 and chunks[1] <= 64 and chunks[2] <= 64
