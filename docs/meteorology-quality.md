@@ -33,3 +33,7 @@ depths over the intended analysis period before model use. This bounded
 correction does not resolve small positive packing artefacts, establish exact
 rain-free days or independently validate unusually high rainfall. Missing data
 are never converted to zero. Source files remain unchanged.
+
+## Exact DEM windows
+
+Independent exports may include different boundary rows or columns even when their cells share one grid. `pysweb.io.raster_grid.aligned_grid_window(source, target)` returns the contained integer window without resampling. It requires matching CRS and cell bases, rejects fractional-cell shifts and insufficient coverage, and tolerates only affine serialization roundoff (default 1e-7 source pixels). Use the returned window to read the DEM and write it using the target grid metadata before stacking meteorology.
