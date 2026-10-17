@@ -22,6 +22,7 @@ import numpy as np
 import rasterio
 import requests
 import yaml
+from pysweb.io.native_grid import native_projection, export_parameters, verify_native_grid, region_extent
 from dateutil.relativedelta import relativedelta
 from rasterio.merge import merge as rio_merge
 
@@ -311,6 +312,7 @@ class GEEDownloader:
         self.cfg = self._load_config(yaml_path)
         self._validate_config()
         self._region_info = None
+        self._native_projection = None
 
     def _load_config(self, p):
         if not os.path.exists(p):
@@ -321,7 +323,7 @@ class GEEDownloader:
     def _validate_config(self):
         req = [
             "coords", "download_dir", "start_year", "start_month", "start_day",
-            "end_year", "end_month", "end_day", "bands", "scale", "out_format",
+            "end_year", "end_month", "end_day", "bands", "out_format",
             "auth_mode", "filename_prefix",
         ]
         missing = [k for k in req if k not in self.cfg]
@@ -331,12 +333,11 @@ class GEEDownloader:
             raise ValueError("Missing required config key: provide either 'collection' or 'collections'.")
         if len(self.cfg["coords"]) != 4:
             raise ValueError("coords must be [min_lon, min_lat, max_lon, max_lat].")
-        try:
+        if "scale" in self.cfg:
+            if not math.isfinite(float(self.cfg["scale"])) or float(self.cfg["scale"]) <= 0:
+                raise ValueError("scale must be positive when present in a legacy configuration")
             self.cfg["scale"] = float(self.cfg["scale"])
-        except (TypeError, ValueError) as e:
-            raise ValueError("scale must be numeric.") from e
-        if self.cfg["scale"] <= 0:
-            raise ValueError("scale must be > 0.")
+        self.cfg["preserve_native_grid"] = True
         parent = os.path.dirname(self.cfg["download_dir"]) or "."
         if not os.path.isdir(parent):
             raise ValueError(f"Parent directory of download_dir does not exist: {parent}")
@@ -344,14 +345,12 @@ class GEEDownloader:
             self.cfg.get("collections", self.cfg.get("collection"))
         )
         self.cfg["collection"] = self.cfg["collections"][0]
-        daily_strategy = str(self.cfg.get("daily_strategy", "median")).lower()
-        if daily_strategy not in {"median", "first"}:
-            raise ValueError("daily_strategy must be one of: median, first.")
-        self.cfg["daily_strategy"] = daily_strategy
-        if daily_strategy == "median" and any(
-            name in self.cfg["bands"] for name in ("QA_PIXEL", "QA_RADSAT")
-        ):
+        daily_strategy = str(self.cfg.get("daily_strategy", "first")).lower()
+        if daily_strategy == "median" and any(b.startswith('QA_') for b in self.cfg.get('bands', [])):
             raise ValueError("QA bitfields cannot be median-composited; use daily_strategy='first'.")
+        if daily_strategy != "first":
+            raise ValueError("Native downloads require daily_strategy='first'; composite after acquisition")
+        self.cfg["daily_strategy"] = daily_strategy
         if any(name in self.cfg["bands"] for name in ("QA_PIXEL", "QA_RADSAT")):
             if (self.cfg.get("postprocess") or {}).get("maskval_to_na", True):
                 raise ValueError("QA zeros are valid; set postprocess.maskval_to_na=false.")
@@ -442,6 +441,8 @@ class GEEDownloader:
             datetime.strptime(end, "%Y-%m-%d") + relativedelta(days=1)
         ).strftime("%Y-%m-%d")
         col = ee.ImageCollection(collection).filterDate(start, end_exclusive)
+        if collection.startswith("LANDSAT/") and collection.endswith("/T1_L2"):
+            col = col.filter(ee.Filter.eq("PROCESSING_LEVEL", "L2SP"))
         if not self._is_globalish_extent():
             col = col.filterBounds(self._region())
         else:
@@ -459,6 +460,8 @@ class GEEDownloader:
     def _composite_for_day(self, day_str: str, collection: str) -> ee.Image:
         next_day = (datetime.strptime(day_str, "%Y-%m-%d") + relativedelta(days=1)).strftime("%Y-%m-%d")
         col = ee.ImageCollection(collection).filterDate(day_str, next_day)
+        if collection.startswith("LANDSAT/") and collection.endswith("/T1_L2"):
+            col = col.filter(ee.Filter.eq("PROCESSING_LEVEL", "L2SP"))
         if not self._is_globalish_extent():
             col = col.filterBounds(self._region())
 
@@ -489,11 +492,11 @@ class GEEDownloader:
         return img.select(bands)
 
     def _get_download_url(self, img: ee.Image, region_json=None) -> str:
+        if self._native_projection is None:
+            self._native_projection = native_projection(img)
         params = {
-            "scale": self.cfg["scale"],
-            "crs": self.cfg["crs"],
+            **export_parameters(self._native_projection,region_extent(region_json or self._region_json())),
             "filePerBand": False,
-            "region": region_json or self._region_json(),
             "format": "GEO_TIFF",
         }
         return img.getDownloadURL(params)
@@ -521,9 +524,19 @@ class GEEDownloader:
         return max(total, 4 * max(len(band_names), 1))
 
     def _estimate_request(self, region_coords, bytes_per_pixel: int, band_count: int):
-        width_m, height_m = _bbox_span_m(region_coords)
-        width_px = max(1, int(math.ceil(width_m / self.cfg["scale"])))
-        height_px = max(1, int(math.ceil(height_m / self.cfg["scale"])))
+        projection = getattr(self, "_native_projection", None)
+        if projection is not None:
+            from rasterio.warp import transform_bounds
+            from affine import Affine
+            left, bottom, right, top = transform_bounds("EPSG:4326", projection["crs"], *region_coords, densify_pts=21)
+            inverse = ~Affine(*projection["transform"])
+            corners = [inverse * (x, y) for x in (left, right) for y in (bottom, top)]
+            width_px = max(1, math.ceil(max(p[0] for p in corners))-math.floor(min(p[0] for p in corners)))
+            height_px = max(1, math.ceil(max(p[1] for p in corners))-math.floor(min(p[1] for p in corners)))
+        else:
+            width_m, height_m = _bbox_span_m(region_coords)
+            width_px = max(1, int(math.ceil(width_m / self.cfg.get("scale", 30))))
+            height_px = max(1, int(math.ceil(height_m / self.cfg.get("scale", 30))))
         return {
             "width_px": width_px,
             "height_px": height_px,
@@ -626,6 +639,7 @@ class GEEDownloader:
         return tile_paths
 
     def _download_image(self, img: ee.Image, out_path: str, ee_band_names: list):
+        self._native_projection = native_projection(img, ee_band_names)
         tiling_cfg = self._tiling_cfg()
         band_count = max(len(ee_band_names), 1)
         bytes_per_pixel = self._bytes_per_pixel(img, ee_band_names)
@@ -681,12 +695,15 @@ class GEEDownloader:
             print(f"Found {total} date(s) in {collection}. Starting per-day composites + downloads...")
 
             for i, day in enumerate(dates, 1):
-                out_name = f"{self.cfg['filename_prefix']}_{day}.{self.cfg['out_format']}"
+                prefix = self.cfg['filename_prefix']
+                if len(collections) > 1:
+                    prefix += '_' + collection.replace('/', '_')
+                out_name = f"{prefix}_{day}.{self.cfg['out_format']}"
                 out_final = os.path.join(self.cfg["download_dir"], out_name)
                 collection_tag = collection.replace("/", "_")
                 out_tmp = os.path.join(self.cfg["download_dir"], f"__tmp_{collection_tag}_{out_name}")
 
-                manifest = input_manifest({"download": self.cfg, "day": day}, [])
+                manifest = input_manifest({"download": self.cfg, "day": day, "collection":collection}, [])
                 sidecar = Path(out_final + ".manifest.json")
                 if os.path.exists(out_final) and sidecar.exists():
                     try:
@@ -696,11 +713,13 @@ class GEEDownloader:
                         with rasterio.open(out_final) as existing:
                             existing.read()
                             reusable = reusable and existing.crs is not None
+                            if reusable:
+                                verify_native_grid(existing,saved['native_projection'])
                         if reusable:
                             print(f"[{i}/{total}] {day}: reuse verified {out_name}")
                             skipped_dup += 1
                             continue
-                    except (ValueError, OSError, rasterio.errors.RasterioError):
+                    except (KeyError, ValueError, OSError, rasterio.errors.RasterioError):
                         pass
 
 
@@ -724,9 +743,12 @@ class GEEDownloader:
                         check.read()
                         if not check.crs or check.count != len(ee_band_names):
                             raise ValueError("Downloaded GeoTIFF has invalid CRS or band count.")
+                        grid = verify_native_grid(check, self._native_projection)
                     os.replace(out_tmp, out_final)
                     manifest["source_collection"] = collection
                     manifest["source_day"] = day
+                    manifest["native_projection"] = self._native_projection
+                    manifest["downloaded_grid"] = grid
                     save_output_manifest(out_final, manifest)
                     print(f"  saved {out_name}")
                     ok += 1

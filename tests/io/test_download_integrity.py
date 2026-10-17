@@ -3,7 +3,7 @@ Script: test_download_integrity.py
 Objective: Verify failed downloads propagate and only validated raster identities are reused.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-09-12
+Last updated: 2026-10-17
 Inputs: Temporary GeoTIFFs, cache manifests and stubbed Earth Engine download requests.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/io/test_download_integrity.py
@@ -23,6 +23,7 @@ def test_download_failures_and_cache_validation(monkeypatch, tmp_path):
     # Tests in this directory use isolated import shims; restore the real raster backend here.
     monkeypatch.setattr(mod, "rasterio", rasterio)
     obj = mod.GEEDownloader.__new__(mod.GEEDownloader)
+    obj._native_projection = {'crs':'EPSG:4326','transform':[.01,0,148,0,-.01,-35],'bands':['value']}
     obj.cfg = {
         "download_dir": str(tmp_path),
         "collections": ["test/source"],

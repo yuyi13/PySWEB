@@ -5,7 +5,9 @@ root = "outputs"
 start = "2024-01-01"
 end = "2024-01-31"
 extent = [147.20, -35.10, 147.30, -35.00]
-resolution = 0.00025
+grid_mode = "native"
+sensors = ["LC08", "LC09"] # Add "LT05", "LE07" explicitly when needed.
+processing_buffer_m = 6000
 workers = 1
 gee_project = "your-gee-project"
 state_timing = "start"
@@ -27,7 +29,7 @@ root_beta = 0.96
 
 [ssebop]
 landsat_qa = "required"
-lst_band = "ST_B10"
+lst_band = "auto"
 red_band = "SR_B4"
 nir_band = "SR_B5"
 ndvi_band = "ndvi"

@@ -4,7 +4,7 @@ Script: test_preprocess.py
 Objective: Verify SWB preprocess helpers and package-owned preprocessing orchestration for forcing, soil dispatch, and reference SSM outputs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Pytest fixtures, temporary directories, and in-memory xarray DataArrays.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_preprocess.py
@@ -102,7 +102,15 @@ class _FakeImage:
     def bandNames(self):
         return _FakeInfo(list(self._bands))
 
+    def projection(self):
+        return {'crs':'EPSG:4326','transform':[.01,0,148,0,-.01,-35]}
+
+    def setDefaultProjection(self, projection):
+        return self
+
     def select(self, names):
+        if isinstance(names,int):
+            names = [list(self._bands)[names]]
         return _FakeImage({name: self._bands[name] for name in names}, image_id=self.image_id)
 
 
@@ -114,6 +122,9 @@ class _FakeImageCollection:
             self._images = list(self.registry[items])
         else:
             self._images = list(items)
+
+    def filterBounds(self, region):
+        return self
 
     def aggregate_array(self, field_name: str):
         assert field_name == "system:index"
@@ -247,6 +258,7 @@ def test_load_reference_ssm_filters_bands_scales_values_and_uses_reference_name(
         )
 
     monkeypatch.setattr(preprocess_module, "ee", _FakeEE)
+    monkeypatch.setattr(preprocess_module, "native_projection", lambda image: image.projection())
     monkeypatch.setattr(preprocess_module, "_download_ee_multiband_image", fake_download)
 
     result = _load_reference_ssm(
@@ -263,7 +275,7 @@ def test_load_reference_ssm_filters_bands_scales_values_and_uses_reference_name(
     assert recorded_scales == [("gssm_raw_2000", 1000.0, ["band_2000_03_05_classification", "band_2000_03_06_classification"])]
 
 
-def test_load_reference_ssm_raises_when_requested_days_are_missing(monkeypatch):
+def test_load_reference_ssm_retains_missing_observation_days(monkeypatch):
     _FakeImageCollection.registry = {
         "users/qianrswaterr/GlobalSSM1km0509": [
             _FakeImage(
@@ -290,15 +302,18 @@ def test_load_reference_ssm_raises_when_requested_days_are_missing(monkeypatch):
         )
 
     monkeypatch.setattr(preprocess_module, "ee", _FakeEE)
+    monkeypatch.setattr(preprocess_module, "native_projection", lambda image: image.projection())
     monkeypatch.setattr(preprocess_module, "_download_ee_multiband_image", fake_download)
 
-    with pytest.raises(ValueError, match="2000-03-06"):
-        _load_reference_ssm(
-            extent=(148.0, -35.1, 148.1, -35.0),
-            dates=pd.date_range("2000-03-05", "2000-03-07", freq="D"),
-            reference_ssm_asset="users/qianrswaterr/GlobalSSM1km0509",
-            gee_project="yiyu-research",
-        )
+    result = _load_reference_ssm(
+        extent=(148.0, -35.1, 148.1, -35.0),
+        dates=pd.date_range("2000-03-05", "2000-03-07", freq="D"),
+        reference_ssm_asset="users/qianrswaterr/GlobalSSM1km0509",
+        gee_project="yiyu-research",
+    )
+    assert result.sizes['time'] == 3
+    assert np.isnan(result.sel(time='2000-03-06')).all()
+    assert float(result.sel(time='2000-03-05').item()) == pytest.approx(.25)
 
 
 def test_process_precipitation_rejects_missing_internal_days_from_netcdf(tmp_path: Path):

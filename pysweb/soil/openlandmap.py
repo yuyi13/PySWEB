@@ -4,7 +4,7 @@ Script: openlandmap.py
 Objective: Implement the OpenLandMap soil backend behind the package-level soil dispatcher.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 Inputs: Soil backend arguments, target grid metadata, and a reprojection callback.
 Outputs: SoilOutputs dataclass instances with OpenLandMap-derived hydraulic property arrays.
 Usage: import pysweb.soil.openlandmap
@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Dict, Tuple
 
 import ee
+from pysweb.io.native_grid import native_projection, export_parameters, verify_native_grid
 import numpy as np
 import requests
 import rioxarray
@@ -97,12 +98,11 @@ def _download_ee_multiband_image(
     scale_m: float,
 ) -> xr.DataArray:
     band_names = image.bandNames().getInfo()
+    projection = native_projection(image, band_names)
     url = image.getDownloadURL(
         {
             "name": name,
-            "region": _region_json_from_extent(extent),
-            "crs": "EPSG:4326",
-            "scale": scale_m,
+            **export_parameters(projection, extent),
             "filePerBand": False,
             "format": "GEO_TIFF",
         }
@@ -112,7 +112,12 @@ def _download_ee_multiband_image(
         da = _open_downloaded_raster(response.content, name)
     if "band" in da.dims:
         da = da.assign_coords(band=np.array(band_names, dtype=object))
+    from types import SimpleNamespace
+    verify_native_grid(SimpleNamespace(crs=da.rio.crs, transform=da.rio.transform(),
+        height=da.sizes['y'], width=da.sizes['x']), projection)
     da.name = name
+    import json
+    da.attrs["native_projection"] = json.dumps(projection, sort_keys=True)
     return da
 
 
@@ -123,18 +128,37 @@ def _select_openlandmap_bands(image_id: str) -> ee.Image:
 def _load_openlandmap_predictors(
     extent: Tuple[float, float, float, float],
     gee_project: str,
+    cache_dir: str | Path | None = None,
 ) -> Dict[str, xr.DataArray]:
+    import json
+    import hashlib
+    from pysweb.io.provenance import atomic_netcdf
+    cache_key = hashlib.sha256(json.dumps({'extent': extent, 'assets': OPENLANDMAP_DATASETS}, sort_keys=True).encode()).hexdigest()[:16]
+    cache = Path(cache_dir) if cache_dir else None
+    predictors = {}
+    if cache:
+        for key in OPENLANDMAP_DATASETS:
+            path = cache / f'{key}_{cache_key}.nc'
+            if path.exists():
+                with xr.open_dataset(path, decode_coords='all') as dataset:
+                    predictors[key] = dataset[key].load()
+        if len(predictors) == len(OPENLANDMAP_DATASETS):
+            return predictors
     _initialize_ee(gee_project)
-    region = ee.Geometry.Rectangle(list(extent), proj="EPSG:4326", geodesic=False)
-    predictors: Dict[str, xr.DataArray] = {}
     for key, image_id in OPENLANDMAP_DATASETS.items():
-        image = _select_openlandmap_bands(image_id).clip(region)
+        if key in predictors:
+            continue
+        image = _select_openlandmap_bands(image_id)
         predictors[key] = _download_ee_multiband_image(
             image,
             extent,
             f"openlandmap_{key}",
             OPENLANDMAP_EXPORT_SCALE_M,
         )
+        predictors[key].attrs['source_asset'] = image_id
+        if cache:
+            cache.mkdir(parents=True, exist_ok=True)
+            atomic_netcdf(predictors[key].rename(key).to_dataset(), cache / f'{key}_{cache_key}.nc')
     return predictors
 
 
@@ -285,7 +309,14 @@ def process_soil_properties_from_openlandmap(
 
 
 def load_soil_properties(*, args, grid, reproject_to_template, **kwargs) -> SoilOutputs:
-    soil_predictors = _load_openlandmap_predictors(tuple(args.extent), args.gee_project)
+    from rasterio.warp import transform_bounds
+    # Cover whole target cells, including coarse cells crossing the AOI edge.
+    extent = transform_bounds(grid.crs, 'EPSG:4326', *grid.template.rio.bounds(), densify_pts=21)
+    # Native soil pixels around this footprint support interpolation at edges.
+    extent = (extent[0]-0.01, extent[1]-0.01, extent[2]+0.01, extent[3]+0.01)
+    cache_dir = getattr(args, 'native_cache_dir', None)
+    soil_predictors = _load_openlandmap_predictors(extent, args.gee_project, cache_dir=cache_dir)
+
     soil_arrays = process_soil_properties_from_openlandmap(
         args,
         grid,

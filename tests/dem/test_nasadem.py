@@ -4,7 +4,7 @@ Script: test_nasadem.py
 Objective: Verify NASADEM dispatch, request construction and raster validation with stubbed remote services.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-20
-Last updated: 2026-04-20
+Last updated: 2026-10-17
 Inputs: Pytest monkeypatch fixtures, temporary output paths, and backend stubs.
 Outputs: Test assertions.
 Usage: python -m pytest tests/dem/test_nasadem.py
@@ -24,8 +24,19 @@ from pysweb.dem import api as dem_api
 from pysweb.dem import nasadem
 
 
+NATIVE = {'crs':'EPSG:4326','transform':[1/3600,0,-180,0,-1/3600,90],'bands':['elevation']}
+
+
+@pytest.fixture(autouse=True)
+def native_metadata(monkeypatch):
+    monkeypatch.setattr(nasadem,'native_projection',lambda image,bands:NATIVE)
+
+
 class _FakeRaster:
     count = 1
+    crs = rasterio.crs.CRS.from_epsg(4326)
+    transform = rasterio.Affine(*NATIVE['transform'])
+    height = width = 1
 
     def __enter__(self):
         return self
@@ -147,12 +158,11 @@ def test_prepare_dem_downloads_clipped_nasadem_geotiff(monkeypatch, tmp_path: Pa
         },
     }
     assert fake_image.selected_band == "elevation"
-    assert fake_image.clip_region == {"type": "Rectangle", "coords": [147.2, -35.1, 147.3, -35.0]}
+    assert fake_image.clip_region is None
+    from pysweb.io.native_grid import export_parameters
     assert fake_image.download_params == {
         "name": "nasadem",
-        "region": {"type": "Rectangle", "coords": [147.2, -35.1, 147.3, -35.0]},
-        "crs": "EPSG:4326",
-        "scale": 11132,
+        **export_parameters(NATIVE,[147.2,-35.1,147.3,-35.0]),
         "format": "GEO_TIFF",
         "filePerBand": False,
     }

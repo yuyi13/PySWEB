@@ -3,7 +3,7 @@ Script: core.py
 Objective: Provide reusable SWB forcing and soil-input helpers for package-owned run and calibration workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: NetCDF forcing paths, soil-property NetCDF paths, and layer metadata or user-supplied layer depths.
 Outputs: Loaded xarray DataArrays, resolved soil-path mappings, numpy soil-property grids, and validation errors.
 Usage: import pysweb.swb.core
@@ -16,6 +16,7 @@ from typing import Dict, Mapping, Optional, Sequence
 
 import numpy as np
 import xarray as xr
+import rioxarray  # Register CRS access for direct helper calls.
 from pysweb.contracts import layer_bottoms
 
 SOIL_FILE_STEMS = {
@@ -133,6 +134,10 @@ def ensure_matching_grid(
     lon_ref = reference.coords[lon_dim].values
 
     for name, array in soil_arrays.items():
+        if reference.rio.crs is not None and array.rio.crs is not None and reference.rio.crs != array.rio.crs:
+            raise ValueError(f"Soil array '{name}' CRS differs from the forcing grid")
+        if reference.rio.crs is None and (lat_dim,lon_dim) == ('y','x'):
+            raise ValueError('Projected forcing requires explicit CRS metadata')
         if lat_dim not in array.dims or lon_dim not in array.dims:
             raise ValueError(f"Soil array '{name}' is missing '{lat_dim}'/'{lon_dim}' dimensions.")
         lat_vals = array.coords[lat_dim].values

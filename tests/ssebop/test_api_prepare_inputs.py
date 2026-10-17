@@ -4,7 +4,7 @@ Script: test_api_prepare_inputs.py
 Objective: Verify the SSEBop package API orchestrates Landsat and meteorological input preparation steps.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-09-12
+Last updated: 2026-10-17
 Inputs: Temporary paths and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_api_prepare_inputs.py
@@ -34,6 +34,10 @@ def _load_config_payload(path: Path) -> dict:
 
 def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, tmp_path: Path):
     recorded = []
+    monkeypatch.setattr(
+        "pysweb.met.era5land.stack.native_download_extent",
+        lambda *args: [147.15, -35.15, 147.35, -34.95],
+    )
 
     monkeypatch.setattr(
         "pysweb.ssebop.landsat.prepare_landsat_inputs",
@@ -74,6 +78,7 @@ def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, 
                 "out_dir": str(tmp_path / "landsat"),
                 "gee_project": "workflow-project",
                 "gee_config_template": "/tmp/gee.yaml",
+                "sensors": ("LC08", "LC09"),
             },
         ),
         (
@@ -91,7 +96,7 @@ def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, 
             {
                 "dem_source": "nasadem",
                 "gee_project": "workflow-project",
-                "extent": [147.2, -35.1, 147.3, -35.0],
+                "extent": [147.15, -35.15, 147.35, -34.95],
                 "output_path": str(tmp_path / "dem" / "nasadem.tif"),
             },
         ),

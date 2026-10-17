@@ -31,6 +31,7 @@ def test_raw_qa_export(monkeypatch,tmp_path):
         with rasterio.open(path,'w',driver='GTiff',height=2,width=2,count=2,dtype='uint16',crs='EPSG:32755',transform=from_origin(500000,6000000,30,30)) as dst:
             dst.write(np.array([[[64,8],[64,128]],[[0,0],[512,0]]],dtype='uint16'))
     monkeypatch.setattr(ee_export,'_retry_download',download)
+    monkeypatch.setattr(ee_export,'native_projection',lambda image,bands:{'crs':'EPSG:32755','transform':[30,0,500000,0,-30,6000000],'bands':bands})
     img=Image()
     path=tmp_path/'scene.tif'
     record=ee_export.download_geotiff(img,path,parameters={'region':[1,2,3,4],'crs':'EPSG:32755','crs_transform':[30,0,500000,0,-30,6000000]},bands=['QA_PIXEL','QA_RADSAT'],source={'asset':'mock'})
@@ -46,3 +47,9 @@ def test_raw_qa_export(monkeypatch,tmp_path):
 def test_ambiguous_grid_rejected(tmp_path,params):
     with pytest.raises(ValueError,match='exactly one'):
         ee_export.download_geotiff(Image(),tmp_path/'bad.tif',parameters=params,bands=['QA_PIXEL'],source='mock')
+
+
+def test_source_grid_override_is_rejected(monkeypatch,tmp_path):
+    monkeypatch.setattr(ee_export,'native_projection',lambda image,bands:{'crs':'EPSG:32755','transform':[30,0,500000,0,-30,6000000],'bands':bands})
+    with pytest.raises(ValueError,match='differs from native'):
+        ee_export.download_geotiff(Image(),tmp_path/'bad.tif',parameters={'region':[], 'crs':'EPSG:32755','crs_transform':[30,0,500015,0,-30,6000000]},bands=['QA_PIXEL'],source='mock')

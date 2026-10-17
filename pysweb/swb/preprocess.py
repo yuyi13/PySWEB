@@ -4,7 +4,7 @@ Script: preprocess.py
 Objective: Align forcing, selected soil data and optional reference SSM on the SWB model grid.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Dates, extent, forcing files, soil-source settings, optional reference SSM and output paths.
 Outputs: Aligned forcing, soil-property and optional reference SSM NetCDFs with provenance manifests.
 Usage: pysweb swb-preprocess --help
@@ -26,6 +26,8 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import ee
+from pysweb.io.native_grid import native_projection, export_parameters, verify_native_grid
+from pysweb.io.grids import open_template, subset_template, align_to_grid, spatial
 import numpy as np
 import pandas as pd
 import requests
@@ -42,6 +44,7 @@ from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from pysweb.contracts import daily_data, month_bounds
 from pysweb.io.provenance import atomic_netcdf, input_manifest, atomic_json, sha256
+GSSM_ASSET = "users/qianrswaterr/GlobalSSM1km0509"
 GSSM_SCALE_FACTOR = 1000.0
 GSSM_EXPORT_SCALE_M = 1000.0
 _RAIN_WORKER_STATE: Dict[str, object] = {}
@@ -56,6 +59,8 @@ class TargetGrid:
     lat_dim: str
     lon_dim: str
     crs: str
+    resampling: str = "bilinear"
+    mode: str = "legacy"
 
 
 def _pool_context():
@@ -218,10 +223,13 @@ def _transform_extent(
 
 
 def _clip_to_extent(da: xr.DataArray, grid: TargetGrid, extent: Tuple[float, float, float, float]) -> xr.DataArray:
+    if grid.mode == 'legacy' and da.sizes.get(da.rio.x_dim) == 1 and da.sizes.get(da.rio.y_dim) == 1:
+        return da
     data_crs = da.rio.crs
     if data_crs is None:
         return da
-    minx, miny, maxx, maxy = _transform_extent(extent, grid.crs, str(data_crs))
+    from rasterio.warp import transform_bounds
+    minx, miny, maxx, maxy = transform_bounds(grid.crs, data_crs, *grid.template.rio.bounds(), densify_pts=21)
     try:
         res_x, res_y = da.rio.resolution()
         buffer_x = abs(res_x) * 2
@@ -233,6 +241,7 @@ def _clip_to_extent(da: xr.DataArray, grid: TargetGrid, extent: Tuple[float, flo
         miny = miny - buffer_y,
         maxx = maxx + buffer_x,
         maxy = maxy + buffer_y,
+        allow_one_dimensional_raster=True,
     )
 
 
@@ -353,45 +362,16 @@ def _reproject_to_template(
     grid: TargetGrid,
     resampling: Resampling = Resampling.bilinear,
 ) -> xr.DataArray:
-    if grid.lat_dim in data.dims and grid.lon_dim in data.dims:
-        lat_name = grid.lat_dim
-        lon_name = grid.lon_dim
-    elif "y" in data.dims and "x" in data.dims:
-        lat_name = "y"
-        lon_name = "x"
-    else:
-        raise ValueError("DataArray must have latitude/longitude or y/x dimensions for reprojection.")
-
-    data = data.sortby(lat_name, ascending = False)
-    lat_vals = data.coords[lat_name].values
-    lon_vals = data.coords[lon_name].values
-    if lat_vals.size < 2 or lon_vals.size < 2:
-        transform = grid.template.rio.transform()
-    else:
-        transform = _compute_transform(lat_vals, lon_vals)
-
-    if data.rio.crs is None:
-        data = data.rio.write_crs(grid.crs)
-    data = data.rio.write_transform(transform)
-    data = data.rio.set_spatial_dims(x_dim = lon_name, y_dim = lat_name)
-    data = data.rio.reproject_match(grid.template, resampling = resampling)
-
-    rename_map = {}
-    if "y" in data.dims:
-        rename_map["y"] = grid.lat_dim
-    if "x" in data.dims:
-        rename_map["x"] = grid.lon_dim
-    if rename_map:
-        data = data.rename(rename_map)
-    return data.assign_coords(
-        {
-            grid.lat_dim: grid.template.coords[grid.lat_dim].values,
-            grid.lon_dim: grid.template.coords[grid.lon_dim].values,
-        }
-    )
+    method = grid.resampling if resampling == Resampling.bilinear else resampling.name
+    result = align_to_grid(data, grid.template, resampling=method)
+    rename = {a:b for a,b in (("y",grid.lat_dim),("x",grid.lon_dim)) if a != b}
+    result = result.rename(rename) if rename else result
+    return result.rio.set_spatial_dims(x_dim=grid.lon_dim, y_dim=grid.lat_dim)
 
 
 def _broadcast_single_pixel(data: xr.DataArray, grid: TargetGrid) -> xr.DataArray | None:
+    if grid.mode != 'legacy':
+        return None
     if grid.lat_dim in data.dims and grid.lon_dim in data.dims:
         lat_name = grid.lat_dim
         lon_name = grid.lon_dim
@@ -480,12 +460,22 @@ def _ensure_date_inputs(args: argparse.Namespace) -> Tuple[pd.Timestamp, pd.Time
 
 
 def _build_target_grid(args: argparse.Namespace) -> TargetGrid:
+    if getattr(args, "grid_template", None):
+        template = subset_template(open_template(args.grid_template, args.grid_template_var), args.extent)
+        projected = template.rio.crs.is_projected
+        lat_dim, lon_dim = ("y", "x") if projected else ("lat", "lon")
+        if not projected:
+            template = template.rename(y=lat_dim, x=lon_dim).rio.set_spatial_dims(x_dim=lon_dim, y_dim=lat_dim)
+        return TargetGrid(template, template[lat_dim].values, template[lon_dim].values,
+                          lat_dim, lon_dim, str(template.rio.crs), args.resampling, args.grid_mode)
     if args.extent is None:
         raise ValueError("--extent must be provided (MIN_LON MIN_LAT MAX_LON MAX_LAT).")
     min_lon, min_lat, max_lon, max_lat = args.extent
     if not (min_lon < max_lon and min_lat < max_lat):
         raise ValueError("--extent requires MIN_LON < MAX_LON and MIN_LAT < MAX_LAT.")
 
+    if args.sm_res is None:
+        raise ValueError("Provide grid_template or an explicit legacy sm_res")
     res = float(args.sm_res)
     if res <= 0.0:
         raise ValueError("--sm-res must be positive.")
@@ -533,7 +523,7 @@ def _load_rain_file_for_window(
     lon_dim: str,
 ) -> Optional[xr.DataArray]:
     expected_dates = pd.date_range(start = start, end = end, freq = "D")
-    with xr.open_dataset(path) as ds:
+    with xr.open_dataset(path, decode_coords="all") as ds:
         if rain_var not in ds:
             raise KeyError(f"Variable '{rain_var}' not found in precipitation dataset: {path}")
         da = _require_daily_coverage(
@@ -544,6 +534,7 @@ def _load_rain_file_for_window(
         )
         if da.sizes.get("time", 0) == 0:
             return None
+        da = spatial(da)
         if extent:
             if da.rio.crs is not None:
                 da = _clip_to_extent(da, grid, extent)
@@ -605,10 +596,10 @@ def _prepare_et_file_component(
 ) -> xr.DataArray:
     expected_dates = pd.date_range(start = start_date, end = end_date, freq = "D")
     layers: List[xr.DataArray] = []
-    with xr.open_dataset(path) as ds:
+    with xr.open_dataset(path, decode_coords="all") as ds:
         if var_name not in ds:
             raise KeyError(f"Variable '{var_name}' not found in ET dataset: {path}")
-        da = ds[var_name]
+        da = spatial(ds[var_name])
         if "time" not in da.coords:
             raise ValueError(f"ET variable '{var_name}' must include a time coordinate.")
         da = _require_daily_coverage(da, expected_dates, f"ET variable '{var_name}'")
@@ -715,10 +706,10 @@ def process_precipitation(args: argparse.Namespace, grid: TargetGrid, start: pd.
             companion = path.with_name(f"precipitation_daily_{start:%Y-%m-%d}_{end:%Y-%m-%d}.nc")
             if companion.exists():
                 path = companion
-        with xr.open_dataset(path) as ds:
+        with xr.open_dataset(path, decode_coords="all") as ds:
             if args.rain_var not in ds:
                 raise KeyError(f"Variable '{args.rain_var}' not found in precipitation dataset: {path}")
-            rain = _require_daily_coverage(ds[args.rain_var], expected_dates, "Precipitation")
+            rain = spatial(_require_daily_coverage(ds[args.rain_var], expected_dates, "Precipitation"))
             if args.extent:
                 extent = tuple(args.extent)
                 if rain.rio.crs is not None:
@@ -989,12 +980,11 @@ def _download_ee_multiband_image(
     scale_m: float,
 ) -> xr.DataArray:
     band_names = image.bandNames().getInfo()
+    projection = native_projection(image, band_names)
     url = image.getDownloadURL(
         {
             "name": name,
-            "region": _region_json_from_extent(extent),
-            "crs": "EPSG:4326",
-            "scale": scale_m,
+            **export_parameters(projection, extent),
             "filePerBand": False,
             "format": "GEO_TIFF",
         }
@@ -1004,6 +994,11 @@ def _download_ee_multiband_image(
         da = _open_downloaded_raster(response.content, name)
     if "band" in da.dims:
         da = da.assign_coords(band = np.array(band_names, dtype = object))
+    from types import SimpleNamespace
+    verify_native_grid(SimpleNamespace(crs=da.rio.crs, transform=da.rio.transform(),
+        height=da.sizes['y'], width=da.sizes['x']), projection)
+    import json
+    da.attrs['native_projection'] = json.dumps(projection, sort_keys=True)
     da.name = name
     return da
 
@@ -1017,7 +1012,7 @@ def _load_reference_ssm(
 ) -> xr.DataArray:
     _initialize_ee(gee_project)
     region = ee.Geometry.Rectangle(list(extent), proj = "EPSG:4326", geodesic = False)
-    collection = ee.ImageCollection(reference_ssm_asset)
+    collection = ee.ImageCollection(reference_ssm_asset).filterBounds(region)
     all_indices = collection.aggregate_array("system:index").getInfo()
 
     year_stacks = []
@@ -1027,10 +1022,20 @@ def _load_reference_ssm(
             raise ValueError(f"No gssm1km image found for year {year}.")
 
         year_images = [
-            ee.Image(collection.filter(ee.Filter.eq("system:index", image_id)).first()).clip(region)
+            ee.Image(collection.filter(ee.Filter.eq("system:index", image_id)).first())
             for image_id in year_indices
         ]
-        year_image = ee.ImageCollection(year_images).mosaic()
+        # A mosaic has no meaningful native grid until congruence is checked.
+        from affine import Affine
+        projections = [native_projection(image.select(0)) for image in year_images]
+        origin = projections[0]
+        for projection in projections[1:]:
+            relative = ~Affine(*origin['transform']) * Affine(*projection['transform'])
+            if (origin['crs'] != projection['crs'] or
+                    not np.allclose([relative.a, relative.b, relative.d, relative.e], [1,0,0,1], atol=1e-8) or
+                    max(abs(relative.c-round(relative.c)), abs(relative.f-round(relative.f))) > 1e-6):
+                raise ValueError('GSSM source tiles have incompatible native grids')
+        year_image = ee.ImageCollection(year_images).mosaic().setDefaultProjection(year_images[0].select(0).projection())
         selected = []
         for band_name in year_image.bandNames().getInfo():
             band_date = _parse_gssm_band_date(band_name)
@@ -1052,14 +1057,29 @@ def _load_reference_ssm(
     if not year_stacks:
         raise ValueError("Requested dates do not overlap any gssm1km daily bands.")
 
+    for stack in year_stacks[1:]:
+        if stack.rio.crs != year_stacks[0].rio.crs or any(not np.array_equal(stack[k],year_stacks[0][k]) for k in ('x','y')):
+            raise ValueError('GSSM annual exports do not share an identical native grid')
     raw = xr.concat(year_stacks, dim = "time").sortby("time")
-    raw = _require_daily_coverage(raw, dates, "gssm1km reference SSM")
-    return _rename_reference_ssm(raw / GSSM_SCALE_FACTOR)
+    raw = raw.reindex(time=pd.DatetimeIndex(dates))
+    scaled = raw / GSSM_SCALE_FACTOR
+    scaled.attrs.update(raw.attrs)
+    scaled.attrs['source_asset'] = reference_ssm_asset
+    return _rename_reference_ssm(scaled)
 
 
 def write_dataarray(da: xr.DataArray, output_path: Path):
     da = da.copy()
     da.attrs.pop("_FillValue", None)
+    if da.rio.crs is not None:
+        for x_dim,y_dim in (('x','y'),('lon','lat'),('longitude','latitude')):
+            if x_dim in da.dims and y_dim in da.dims:
+                da.rio.set_spatial_dims(x_dim=x_dim,y_dim=y_dim,inplace=True)
+                break
+        # In-place metadata writes retain custom lat/lon accessor dimensions.
+        da.rio.write_crs(da.rio.crs,inplace=True)
+        da.rio.write_transform(da.rio.transform(),inplace=True)
+        da.rio.write_coordinate_system(inplace=True)
     output_path.parent.mkdir(parents = True, exist_ok = True)
     encoding = {da.name: _standard_encoding(str(da.dtype))}
     if "grid_mapping" in da.encoding:
@@ -1098,7 +1118,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar = ("MIN_LON", "MIN_LAT", "MAX_LON", "MAX_LAT"),
         help = "Spatial extent.",
     )
-    parser.add_argument("--sm-res", type = float, required = True, help = "Target spatial resolution (degrees).")
+    parser.add_argument("--sm-res", type = float, help = "Legacy explicit geographic resolution; use a native grid template for new runs.")
+    parser.add_argument("--grid-template", help="Raster or NetCDF whose exact grid defines preparation.")
+    parser.add_argument("--grid-template-var", help="Spatial variable in a NetCDF template.")
+    parser.add_argument("--grid-mode", choices=("reference", "landsat", "legacy"), default="legacy")
+    parser.add_argument("--resampling", choices=("average", "bilinear", "nearest"), default="bilinear")
     parser.add_argument("--crs", default = "EPSG:4326", help = "Target CRS.")
     parser.add_argument("--lat-dim", default = "lat", help = "Latitude dimension name.")
     parser.add_argument("--lon-dim", default = "lon", help = "Longitude dimension name.")
@@ -1154,6 +1178,7 @@ def build_parser() -> argparse.ArgumentParser:
         help = "Default SOC value in g/kg for masked OpenLandMap SOC pixels where texture predictors are valid.",
     )
     parser.add_argument("--soil-file", help="Custom hydraulic properties in one NetCDF.")
+    parser.add_argument("--native-cache-dir", help="Persistent native OpenLandMap cache directory.")
     parser.add_argument("--soil-input-dir", help="Custom hydraulic NetCDF directory (soil_<property>.nc).")
     parser.add_argument("--soil-mlcons-dir", help="MLConstraints texture/SOC rasters or RDS directory.")
     parser.add_argument("--soil-layer-bottoms-mm", nargs="+", type=float, help="Actual lower layer boundaries in mm.")
@@ -1162,7 +1187,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-source", default = "gssm1km", help = "Reference SSM source. Only 'gssm1km' is supported.")
     parser.add_argument(
         "--reference-ssm-asset",
-        default = "users/qianrswaterr/GlobalSSM1km0509",
+        default = GSSM_ASSET,
         help = "Earth Engine ImageCollection asset for the reference SSM source.",
     )
     parser.add_argument("--gee-project", default = None, help = "Google Earth Engine project for preprocessing.")
@@ -1205,9 +1230,33 @@ def preprocess_inputs(**kwargs):
         raise ValueError("gee_project is required for the selected online preprocessing stages.")
     start, end = _ensure_date_inputs(args)
     dates = pd.date_range(start = start, end = end, freq = "D")
-    grid = _build_target_grid(args)
     output_dir = Path(args.output_dir).expanduser().resolve()
-    output_dir.mkdir(parents = True, exist_ok = True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    native_reference = None
+    if args.grid_mode == "reference":
+        if args.skip_reference_ssm:
+            raise ValueError("Reference-grid preparation requires reference SSM")
+        if args.reference_file:
+            with xr.open_dataset(args.reference_file, decode_coords="all") as ds:
+                native_reference = ds[args.reference_var].reindex(time=dates).load()
+            if str(native_reference.attrs.get("units", "")).strip() not in {"m3 m-3", "m^3/m^3", "m3/m3"}:
+                raise ValueError("Local reference SSM requires volumetric units m3 m-3")
+        else:
+            native_reference = _load_reference_ssm(extent=tuple(args.extent), dates=dates,
+                reference_ssm_asset=args.reference_ssm_asset, gee_project=args.gee_project)
+        native_path = output_dir / "reference_native.nc"
+        write_dataarray(native_reference.rename("reference_ssm"), native_path)
+        args.grid_template, args.grid_template_var = str(native_path), "reference_ssm"
+        args.resampling = "average"
+    elif args.grid_mode == "landsat" and not args.grid_template:
+        args.grid_template, args.grid_template_var = args.et_file, args.et_var
+    grid = _build_target_grid(args)
+    if args.grid_mode == "landsat":
+        from pyproj import CRS
+        crs = CRS.from_user_input(grid.crs)
+        if not crs.utm_zone or not np.allclose(np.abs(grid.template.rio.resolution()), 30., rtol=0, atol=1e-6):
+            raise ValueError("Run grid must be a native Landsat UTM template with 30 m pixels")
+    args.lat_dim, args.lon_dim, args.crs = grid.lat_dim, grid.lon_dim, grid.crs
 
     month_start, month_end = month_bounds(start, end)
     rain_context = process_precipitation(args, grid, month_start, month_end)
@@ -1236,7 +1285,10 @@ def preprocess_inputs(**kwargs):
         outputs[f"soil_evaporation_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["E_s"]
     if "ndvi" in et_components:
         outputs[f"ndvi_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["ndvi"]
-    if not args.skip_reference_ssm and args.reference_file:
+    if native_reference is not None:
+        reference_ssm = _reproject_to_template(native_reference, grid, resampling=Resampling.nearest)
+        outputs[f"reference_ssm_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = _rename_reference_ssm(reference_ssm)
+    elif not args.skip_reference_ssm and args.reference_file:
         with xr.open_dataset(args.reference_file, decode_coords="all") as ds:
             reference_ssm = daily_data(ds[args.reference_var], start, end, "Reference SSM").load()
         if str(reference_ssm.attrs.get("units", "")).strip() not in {"m3 m-3", "m^3/m^3", "m3/m3"}:
@@ -1254,7 +1306,7 @@ def preprocess_inputs(**kwargs):
         outputs[f"reference_ssm_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = reference_ssm
 
     written = _write_preprocess_outputs(output_dir, outputs, soil_arrays)
-    paths = [Path(p) for p in (args.rain_file,args.et_file,args.soil_file,args.reference_file) if p]
+    paths = [Path(p) for p in (args.rain_file,args.et_file,args.soil_file,args.reference_file,args.grid_template) if p]
     if args.rain_file:
         companion = Path(args.rain_file).with_name(f"precipitation_daily_{month_start:%Y-%m-%d}_{month_end:%Y-%m-%d}.nc")
         if companion.exists():
@@ -1269,6 +1321,8 @@ def preprocess_inputs(**kwargs):
     if args.et_root and not args.et_file:
         pattern = args.et_filename_pattern or "GLDAS_2.2_ET_SM_{year:04d}-{month:02d}-{day:02d}.tif"
         paths.extend(p for p in _generate_daily_paths(Path(args.et_root),pattern,dates) if p.exists())
+    if args.native_cache_dir:
+        paths.extend(Path(args.native_cache_dir).glob('*.nc'))
     manifest = input_manifest(vars(args), paths)
     manifest["monthly_context"] = [str(month_start.date()),str(month_end.date())]
     manifest["remote_sources"] = {"soil_source":args.soil_source,"reference_asset":args.reference_ssm_asset if not args.skip_reference_ssm and not args.reference_file else None}

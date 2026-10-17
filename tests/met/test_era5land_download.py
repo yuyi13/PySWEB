@@ -4,7 +4,7 @@ Script: test_era5land_download.py
 Objective: Verify the package ERA5-Land daily download config builder produces the expected GEE settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-05-03
+Last updated: 2026-10-17
 Inputs: Temporary paths and pure config-builder inputs supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/met/test_era5land_download.py
@@ -58,8 +58,8 @@ def test_build_era5land_cfg_sets_expected_contract(tmp_path):
     assert cfg["end_month"] == 1
     assert cfg["end_day"] == 3
     assert cfg["bands"] == EXPECTED_BANDS
-    assert cfg["scale"] == 11132
-    assert cfg["crs"] == "EPSG:4326"
+    assert cfg["preserve_native_grid"] is True
+    assert "scale" not in cfg and "crs" not in cfg
     assert cfg["out_format"] == "tif"
     assert cfg["auth_mode"] == "browser"
     assert cfg["gee_project"] == "workflow-project"

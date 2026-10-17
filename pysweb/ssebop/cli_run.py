@@ -53,6 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--landcover", default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-gap-days", type=int, default=32)
+    parser.add_argument("--development-end", help="Last development day; temporal reconstruction never crosses this boundary.")
+    parser.add_argument("--climatology-start", help="First development date used for dT climatology.")
+    parser.add_argument("--climatology-end", help="Last development date used for dT climatology.")
     parser.add_argument("--apply-water-mask", action="store_true")
     parser.add_argument(
         "--met-temp-units",

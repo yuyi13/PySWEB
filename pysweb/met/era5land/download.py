@@ -4,7 +4,7 @@ Script: download.py
 Objective: Build and run ERA5-Land daily download configurations for package-backed meteorology preparation.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-16
-Last updated: 2026-04-20
+Last updated: 2026-10-17
 Inputs: Date range, geographic extent, Earth Engine project, and local output directory.
 Outputs: ERA5-Land download configs and daily GeoTIFF downloads.
 Usage: import pysweb.met.era5land.download
@@ -76,8 +76,7 @@ def build_era5land_cfg(
         "end_month": end_dt.month,
         "end_day": end_dt.day,
         "bands": list(ERA5LAND_BANDS),
-        "scale": ERA5LAND_EXPORT_SCALE_METERS,
-        "crs": ERA5LAND_EXPORT_CRS,
+        "preserve_native_grid": True,
         "out_format": "tif",
         "auth_mode": "browser",
         "gee_project": gee_project,

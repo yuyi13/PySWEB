@@ -4,7 +4,7 @@ Script: cli_prepare.py
 Objective: Prepare Landsat, ERA5-Land, DEM, and stacked meteorology inputs for the first SSEBop step.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-09-12
+Last updated: 2026-10-17
 Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --out-dir).
 Outputs: Package-managed Landsat, NASADEM, and meteorology inputs for the requested SSEBop run.
 Usage: pysweb ssebop-prepare --help
@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--met-source", default="era5land", choices=["era5land"])
     parser.add_argument("--gee-project", required=True, help="Google Earth Engine project for Landsat and ERA5-Land downloads")
     parser.add_argument("--out-dir", required=True, help="Base output directory for prepared inputs")
+    parser.add_argument("--sensors", nargs="+", choices=["LC08", "LC09", "LE07", "LT05"], default=["LC08", "LC09"])
     return parser
 
 
@@ -53,6 +54,7 @@ def main(argv: list[str] | None = None) -> None:
         dem_dir = os.path.join(out_dir, "dem"),
         dem_source = "nasadem",
         gee_config_template = None,
+        sensors = args.sensors,
     )
 
 

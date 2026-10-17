@@ -44,6 +44,7 @@ from pysweb.ssebop.core import (
     tcold_fano_simple_xr,
 )
 from pysweb.ssebop.grid import reproject_match, reproject_match_crop_first
+from pysweb.io.grids import align_to_grid
 from pysweb.ssebop import landsat
 from pysweb.ssebop.quality import landsat_c2_qa_mask, landsat_c2_l2_bands
 from pysweb.ssebop.landcover import (
@@ -101,6 +102,7 @@ def prepare_inputs(
     dem_dir: str,
     dem_source: str = "nasadem",
     gee_config_template: str | None = None,
+    sensors: tuple[str, ...] | list[str] = ("LC08", "LC09"),
 ) -> None:
     gee_project = gee_project.strip()
     if not gee_project:
@@ -121,6 +123,7 @@ def prepare_inputs(
         out_dir = landsat_dir,
         gee_project = gee_project,
         gee_config_template = gee_config_template,
+        sensors = sensors,
     )
 
     month_start, month_end = month_bounds(start_date, end_date)
@@ -132,10 +135,13 @@ def prepare_inputs(
         gee_project = gee_project,
     )
 
+    # Native meteorology pixels extend beyond the requested bounding box.
+    # Reference ET needs elevation over those whole footprints.
+    dem_extent = era5land_stack.native_download_extent(met_raw_dir, start_date, end_date)
     prepared_dem_path = dem_api.prepare_dem(
         dem_source = dem_source,
         gee_project = gee_project,
-        extent = extent,
+        extent = dem_extent,
         output_path = str(Path(dem_dir) / "nasadem.tif"),
     )
 
@@ -339,7 +345,7 @@ def load_output_stack(
     for ts, path in sorted(records, key=lambda item: item[0]):
         da = rioxarray.open_rasterio(path, masked=True).squeeze("band", drop=True).rename(var_name)
         if reference_grid is not None:
-            da = assign_dim_coords_from_reference(da, reference_grid)
+            da = align_to_grid(da, reference_grid, resampling="bilinear")
         da = da.load()
         arrays.append(da.assign_coords(time=ts).expand_dims("time"))
         times.append(ts)
@@ -566,6 +572,7 @@ def process_landsat_scene(
     lst = lst.where(np.isfinite(ndvi))
 
     if apply_water_mask and water_mask is not None:
+        water_mask = align_to_grid(water_mask, lst, resampling="nearest")
         lst = lst.where(water_mask == 0)
         ndvi = ndvi.where(water_mask == 0)
 
@@ -574,6 +581,24 @@ def process_landsat_scene(
         tcold_config = LocalFanoConfig()
     tcold = tcold_fano_simple_xr(lst, ndvi, dt, config=tcold_config)
     etf = et_fraction_xr(lst, tcold, dt).rename("etf")
+    from pysweb.io.provenance import atomic_netcdf
+    fields = {"lst_K": lst, "tcold_K": tcold, "dt_K": dt,
+              "ndvi_observed": ndvi, "etf_observed": etf,
+              "scene_valid": np.isfinite(etf).astype('uint8')}
+    for name in ("QA_PIXEL", "QA_RADSAT"):
+        if name in bands:
+            fields[name] = bands[name]
+    if red_band in bands and nir_band in bands:
+        fields["red_reflectance"] = scale_landsat_sr(bands[red_band]).where(valid)
+        fields["nir_reflectance"] = scale_landsat_sr(bands[nir_band]).where(valid)
+    for name, field in fields.items():
+        fields[name] = field.drop_vars([coord for coord in ('band','dayofyear')
+                                       if coord in field.coords and coord not in field.dims])
+    auxiliary = xr.Dataset(fields)
+    auxiliary.attrs.update(source_scene=str(Path(tif_path).resolve()),
+                           source_crs=str(lst.rio.crs), source_transform=list(lst.rio.transform())[:6])
+    auxiliary = auxiliary.rio.write_crs(lst.rio.crs)
+    atomic_netcdf(auxiliary, Path(etf_dir)/f"auxiliary_{date_str}.nc")
     ts = np.datetime64(date_str, "ns")
     etf = etf.assign_coords(time=ts).expand_dims("time")
     ndvi_out = ndvi.rename("ndvi").assign_coords(time=ts).expand_dims("time")
@@ -588,14 +613,14 @@ def process_landsat_scene(
     etf_single = etf.squeeze("time", drop=True).astype("float32").rio.write_nodata(np.nan, encoded=True)
     etf_single.attrs["long_name"] = "ET fraction"
     etf_single.attrs["landsat_qa"] = landsat_qa
-    etf_single.rio.write_crs(template_crs, inplace=True)
+    etf_single.rio.write_crs(lst.rio.crs, inplace=True)
     etf_single.rio.to_raster(out_etf)
 
     out_ndvi = os.path.join(ndvi_dir, f"ndvi_{date_str}.tif")
     ndvi_single = ndvi_out.squeeze("time", drop=True).astype("float32").rio.write_nodata(np.nan, encoded=True)
     ndvi_single.attrs["long_name"] = "NDVI"
     ndvi_single.attrs["landsat_qa"] = landsat_qa
-    ndvi_single.rio.write_crs(template_crs, inplace=True)
+    ndvi_single.rio.write_crs(lst.rio.crs, inplace=True)
     ndvi_single.rio.to_raster(out_ndvi)
 
     return ts, out_etf, out_ndvi
@@ -623,6 +648,30 @@ def _cfg_value(
             if candidate in cfg:
                 return cfg[candidate]
     return args.get(key, default)
+
+
+def reconstruct_scene_series(stack, daily_index, max_gap_days, development_end=None,
+                             gapfill=False, gapfill_window_days=None, min_samples=5, workers=1):
+    """Reconstruct independent temporal partitions without cross-boundary donors."""
+    groups = [daily_index]
+    if development_end:
+        boundary = pd.Timestamp(development_end)
+        groups = [daily_index[daily_index <= boundary], daily_index[daily_index > boundary]]
+    pieces = []
+    for dates in groups:
+        if not len(dates):
+            continue
+        selected = stack.sel(time=slice(dates[0], dates[-1]))
+        daily_time = xr.DataArray(dates.values, coords={"time":dates.values}, dims="time")
+        if not selected.sizes['time']:
+            piece = xr.full_like(stack.isel(time=0,drop=True),np.nan).expand_dims(time=dates)
+        else:
+            if gapfill:
+                window = gapfill_window_days if gapfill_window_days is not None else max_gap_days
+                selected = gapfill_etf_savgol(selected,window,min_samples,workers=workers)
+            piece = interpolate_etf_daily(selected,daily_time,max_gap_days)
+        pieces.append(piece)
+    return xr.concat(pieces,dim='time')
 
 
 def run_ssebop_workflow(
@@ -735,6 +784,16 @@ def run_ssebop_workflow(
     landsat_files = filter_landsat_files_by_date(landsat_files, date_range)
     if not landsat_files:
         raise RuntimeError("No Landsat GeoTIFFs found.")
+    # Preserve raw scenes, select one deterministic retrieval per date and keep
+    # the selection in provenance. Never silently overwrite same-day products.
+    all_landsat_files = list(landsat_files)
+    def scene_rank(path):
+        priority = next((i for i, sensor in enumerate(("LC09", "LC08", "LE07", "LT05")) if sensor in Path(path).name), 4)
+        return parse_date_from_filename(path), priority, str(path)
+    selected_by_date = {}
+    for path in sorted(landsat_files, key=scene_rank):
+        selected_by_date.setdefault(parse_date_from_filename(path), path)
+    landsat_files = list(selected_by_date.values())
 
     sample_bands = read_geotiff_bands(landsat_files[0])
     template = next(iter(sample_bands.values()))
@@ -807,7 +866,16 @@ def run_ssebop_workflow(
 
     lat_deg, _ = build_lat_lon(template)
     dt_daily = compute_dt_daily(tmax, tmin, dem_da, lat_deg, rs_mj_m2_day=rs, ea_kpa=ea).load()
-    dt_clim = build_doy_climatology(dt_daily).load()
+    climatology_start = _cfg_value(cfg, args, "climatology_start")
+    climatology_end = _cfg_value(cfg, args, "climatology_end")
+    climate = dt_daily.sel(time=slice(climatology_start, climatology_end))
+    if not climate.sizes.get('time', 0):
+        raise ValueError("No development meteorology is available for the dT climatology")
+    dt_clim = build_doy_climatology(climate).load()
+    auxiliaries = {"tmax_K": tmax, "tmin_K": tmin, "solar_radiation": rs,
+                   "vapour_pressure": ea, "elevation": dem_da, "dt_climatology": dt_clim}
+    if water_mask is not None:
+        auxiliaries["water_mask"] = water_mask
 
     del dt_daily
     del tmax
@@ -893,18 +961,18 @@ def run_ssebop_workflow(
         "ndvi",
         reference_grid=template,
     )
-    if gapfill_etf:
-        window_days = gapfill_window_days if gapfill_window_days is not None else max_gap_days
-        etf_stack = gapfill_etf_savgol(etf_stack, window_days, gapfill_min_samples, workers=workers)
-        ndvi_stack = gapfill_etf_savgol(ndvi_stack, window_days, gapfill_min_samples, workers=workers)
-
-    etf_start = pd.to_datetime(etf_stack.time.values).min()
-    etf_end = pd.to_datetime(etf_stack.time.values).max()
-    daily_index = pd.date_range(etf_start, etf_end, freq="D")
-    daily_time = xr.DataArray(daily_index.values, coords={"time": daily_index.values}, dims=("time",))
-
-    etf_daily = interpolate_etf_daily(etf_stack, daily_time, max_gap_days).rename("etf_interp")
-    ndvi_daily = interpolate_etf_daily(ndvi_stack, daily_time, max_gap_days).rename("ndvi_interp")
+    # Split all temporal smoothing/interpolation at the development boundary.
+    # Later observations cannot reconstruct earlier calibration forcing.
+    development_end = _cfg_value(cfg, args, "development_end")
+    if date_range:
+        daily_index = pd.date_range(*parse_date_range(date_range), freq="D")
+    else:
+        daily_index = pd.date_range(pd.Timestamp(etf_stack.time.min().item()),
+                                    pd.Timestamp(etf_stack.time.max().item()), freq="D")
+    etf_daily = reconstruct_scene_series(etf_stack,daily_index,max_gap_days,development_end,
+        gapfill_etf,gapfill_window_days,gapfill_min_samples,workers).rename('etf_interp')
+    ndvi_daily = reconstruct_scene_series(ndvi_stack,daily_index,max_gap_days,development_end,
+        gapfill_etf,gapfill_window_days,gapfill_min_samples,workers).rename('ndvi_interp')
 
     suffix = ""
     if date_range:
@@ -912,7 +980,7 @@ def run_ssebop_workflow(
         suffix = f"_{start_date}_{end_date}"
 
     from pysweb.io.provenance import atomic_netcdf, input_manifest, save_output_manifest
-    source_paths = list(landsat_files) + [dem_path]
+    source_paths = list(all_landsat_files) + [dem_path]
     if landcover_path:
         source_paths.append(landcover_path)
     for values in met_paths.values():
@@ -934,7 +1002,7 @@ def run_ssebop_workflow(
         et_daily = et_from_fraction(etf_daily, eto, fraction_type="alfalfa", reference_type=et_reference_type).rename("ET")
     et_daily.attrs.update(et_fraction_type="alfalfa", et_reference_type=et_reference_type,
                           reference_type_match=int(et_reference_type == "alfalfa"))
-    del eto
+    auxiliaries["reference_et"] = eto
     transpiration_fraction_daily = (1.26 * ndvi_daily - 0.18).clip(0.0, 1.0).rename("f_t")
     transpiration_daily = (et_daily * transpiration_fraction_daily).rename("E_t")
     soil_evaporation_daily = (et_daily - transpiration_daily).rename("E_s")
@@ -964,6 +1032,27 @@ def run_ssebop_workflow(
             "f_t": transpiration_fraction_daily,
         }
     )
+    for name, value in auxiliaries.items():
+        result[name] = value.sel(time=result.time) if 'time' in value.dims else value
+    scene_records = []
+    for ts, _, _ in scene_outputs:
+        auxiliary_path = Path(etf_dir)/f"auxiliary_{pd.Timestamp(ts):%Y-%m-%d}.nc"
+        if not auxiliary_path.exists():
+            raise ValueError(f"Missing SSEBop scene auxiliaries: {auxiliary_path}")
+        with xr.open_dataset(auxiliary_path, decode_coords='all') as source:
+            fields = {name: align_to_grid(da, template, resampling='nearest' if name in {'QA_PIXEL','QA_RADSAT','scene_valid'} else 'bilinear')
+                      for name, da in source.data_vars.items()}
+            scene_records.append(xr.Dataset(fields).expand_dims(scene_time=[ts]))
+    if scene_records:
+        scenes = xr.concat(scene_records, dim='scene_time')
+        for name, value in scenes.data_vars.items():
+            result[name] = value
+    result = result.rio.write_crs(template.rio.crs).rio.write_transform(template.rio.transform()).rio.write_coordinate_system()
+    result.attrs.update(climatology_start=str(climate.time.values[0]),
+                        climatology_end=str(climate.time.values[-1]),
+                        selected_scenes='\n'.join(landsat_files),
+                        development_end=str(development_end or ''),
+                        same_day_selection='prefer LC09, LC08, LE07, LT05 then path; all downloads retained')
     from pysweb.components import COMPONENT_SCHEMA
     result.attrs["component_schema"] = COMPONENT_SCHEMA
     result.attrs["landsat_qa"] = landsat_qa
@@ -974,6 +1063,7 @@ def run_ssebop_workflow(
     result_path = os.path.join(output_dir, f"et_daily_ssebop{suffix}.nc")
     atomic_netcdf(result, result_path)
     save_output_manifest(result_path, manifest)
+    return result_path
 
 
 def run(

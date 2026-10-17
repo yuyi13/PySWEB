@@ -201,7 +201,7 @@ def _select_daily_timesteps(
 
 def _prepare_observation_context(effective_precip_vals, et_vals, transpiration_vals,
                                  reference_vals, soil_valid, cell_weights=None, spinup_days=0,
-                                 solver_backend="reference"):
+                                 solver_backend="reference", objective="domain_mean"):
     """Cache parameter-independent observation support once for shared workers."""
     complete_forcing = np.all(np.isfinite(effective_precip_vals) & np.isfinite(et_vals) & np.isfinite(transpiration_vals), axis=0)
     obs_mask = np.isfinite(reference_vals) & soil_valid[None, :, :] & complete_forcing[None, :, :]
@@ -220,8 +220,11 @@ def _prepare_observation_context(effective_precip_vals, et_vals, transpiration_v
         raise ValueError("solver_backend must be reference or numba")
     for array in (obs_mask, weights, obs_sum, obs_count, obs_mean):
         array.setflags(write=False)
+    if objective not in {"cell", "domain_mean"}:
+        raise ValueError("objective must be cell or domain_mean")
     return dict(obs_mask=obs_mask, weights=weights, obs_sum=obs_sum,
-                obs_count=obs_count, obs_mean=obs_mean, solver_backend=solver_backend)
+                obs_count=obs_count, obs_mean=obs_mean, solver_backend=solver_backend,
+                objective=objective)
 
 
 def _compute_rmse(
@@ -263,6 +266,8 @@ def _compute_rmse(
 
     sim_sum = np.zeros_like(obs_sum, dtype=float)
     sim_count = np.zeros_like(obs_count, dtype=float)
+    weighted_squared_error = 0.0
+    total_weight = 0.0
 
     n_lat, n_lon = soil_valid.shape
     for lat_idx in range(n_lat):
@@ -317,6 +322,16 @@ def _compute_rmse(
                 return float("inf"), 0
             sim_sum[valid_time] += sim_vals[valid_time] * weights[lat_idx, lon_idx]
             sim_count[valid_time] += weights[lat_idx, lon_idx]
+            if observation_context.get("objective", "domain_mean") == "cell":
+                residual = sim_vals[valid_time] - reference_vals[valid_time, lat_idx, lon_idx]
+                weight = weights[lat_idx, lon_idx]
+                weighted_squared_error += float(np.dot(residual, residual))*weight
+                total_weight += int(valid_time.sum())*weight
+
+    if observation_context.get("objective", "domain_mean") == "cell":
+        if total_weight <= 0:
+            return float("inf"), 0
+        return float(np.sqrt(weighted_squared_error/total_weight)), int(obs_mask.sum())
 
     valid_time = (obs_count > 0) & (sim_count > 0)
     if not np.any(valid_time):
@@ -388,6 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transpiration", "--t", action=ComponentArgument, required=True, help="NetCDF file with transpiration (mm day-1).")
     parser.add_argument("--transpiration-var", "--t-var", action=ComponentArgument, default="E_t", help="Variable name for transpiration.")
     parser.add_argument("--ndvi", help="Optional NetCDF file with NDVI on model grid.")
+    parser.add_argument("--ndvi-reference-end", help="Last day used for the optional fixed NDVI root-depth cap.")
     parser.add_argument("--ndvi-var", default="ndvi", help="Variable name for NDVI.")
     parser.add_argument(
         "--use-ndvi-root-depth",
@@ -412,6 +428,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional coarser resolution in degrees; defaults to the input grid.",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducible differential evolution.")
+    parser.add_argument("--objective", choices=("cell", "domain_mean"), default="cell",
+                        help="Area-weighted cell-day RMSE (default), or legacy RMSE of daily domain means.")
     parser.add_argument("--state-timing", choices=("start", "end"), default="start", help="Model state convention matched to reference observations.")
     parser.add_argument("--spinup-days", type=int, default=0, help="Initial simulated days excluded from the objective.")
     parser.add_argument("--allow-unconverged", action="store_true", help="Explicitly retain a non-converged candidate with its status recorded.")
@@ -662,7 +680,10 @@ def calibrate_domain(**kwargs) -> None:
     reference_vals = reference_ssm.values.astype(float, copy=False)
     ndvi_mean_vals: Optional[np.ndarray] = None
     if ndvi is not None:
-        ndvi_vals = ndvi.values.astype(float, copy=False)
+        root_ndvi = ndvi.sel(time=slice(None,args.ndvi_reference_end)) if args.ndvi_reference_end else ndvi
+        if not root_ndvi.sizes['time']:
+            raise ValueError('NDVI root-depth reference period has no observations')
+        ndvi_vals = root_ndvi.values.astype(float, copy=False)
         valid_counts = np.sum(np.isfinite(ndvi_vals), axis=0)
         ndvi_sums = np.nansum(ndvi_vals, axis=0)
         ndvi_mean_vals = np.full(valid_counts.shape, np.nan, dtype=float)
@@ -754,7 +775,7 @@ def calibrate_domain(**kwargs) -> None:
         f"effective={de_workers}, population={de_population_size}",
         flush=True,
     )
-    print("  objective: RMSE between domain-mean simulated and observed reference SSM", flush=True)
+    print(f"  objective: area-weighted {args.objective} RMSE", flush=True)
     print(
         f"  optimizer seed x0: diff_factor={de_x0[0]:.17g}, "
         f"sm_max_factor={de_x0[1]:.17g}, sm_min_factor={de_x0[2]:.17g}, "
@@ -768,7 +789,7 @@ def calibrate_domain(**kwargs) -> None:
 
     observation_context = _prepare_observation_context(
         effective_precip_vals, et_vals, transpiration_vals, reference_vals,
-        soil_valid, cell_weights, args.spinup_days, args.solver_backend)
+        soil_valid, cell_weights, args.spinup_days, args.solver_backend, args.objective)
     result = differential_evolution(
         _objective_function,
         bounds,
@@ -859,7 +880,7 @@ def calibrate_domain(**kwargs) -> None:
         paths.append(args.ndvi)
     manifest = input_manifest(vars(args), paths)
     manifest["calibration"] = {"converged":converged, "message":str(getattr(result,"message","")),
-                               "n_observations":n_obs,"rmse":final_rmse,
+                               "n_observations":n_obs,"rmse":final_rmse,"objective":args.objective,
                                "parameters":dict(zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),best_params.tolist())),
                                "spatial_weighting":"regular geographic cell area", "seed":args.seed,
                                "nit":int(getattr(result,"nit",0)),"nfev":int(getattr(result,"nfev",0))}
