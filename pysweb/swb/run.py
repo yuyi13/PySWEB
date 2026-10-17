@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import sys
+import types
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from importlib import import_module
 from pathlib import Path
@@ -806,24 +807,15 @@ def main(argv=None):
     run_swb_workflow(**vars(build_parser().parse_args(argv)))
 
 
-def _restore_package_run_facade() -> None:
-    package = sys.modules.get("pysweb.swb")
-    if package is None:
-        return
-
-    api_module = sys.modules.get("pysweb.swb.api")
-    if api_module is not None and not hasattr(api_module, "run"):
-        return
-
-    # Keep `import pysweb.swb.run` working while restoring `pysweb.swb.run(...)`
-    # as the facade callable exposed from the package root.
-    if api_module is None:
-        package.run = import_module("pysweb.swb.api").run
-    else:
-        package.run = api_module.run
+class _CallableRunModule(types.ModuleType):
+    def __call__(self, **kwargs):
+        # Import machinery assigns this module to its parent's run attribute
+        # after executing it. Making the module callable survives that step
+        # and preserves both submodule aliases and the public API validation.
+        return import_module("pysweb.swb.api").run(**kwargs)
 
 
-_restore_package_run_facade()
+sys.modules[__name__].__class__ = _CallableRunModule
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Script: test_pysweb_imports.py
 Objective: Verify the package exposes importable subpackages and callable facade entry points.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-10-17
 Inputs: Package imports and direct facade calls exercised under pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/package/test_pysweb_imports.py
@@ -113,6 +113,7 @@ def test_package_api_contracts():
     [
         ("pysweb.swb.preprocess", "preprocess"),
         ("pysweb.swb.calibrate", "calibrate"),
+        ("pysweb.swb.run", "run"),
     ],
 )
 def test_submodule_first_import_keeps_package_entry_points_callable(submodule_name, attribute_name):
@@ -131,6 +132,7 @@ def test_submodule_first_import_keeps_package_entry_points_callable(submodule_na
     [
         ("import pysweb.swb.preprocess as preprocess_module", "preprocess_module"),
         ("import pysweb.swb.calibrate as calibrate_module", "calibrate_module"),
+        ("import pysweb.swb.run as run_module", "run_module"),
     ],
 )
 def test_submodule_import_alias_remains_a_module(import_statement, module_name):
@@ -149,6 +151,7 @@ def test_submodule_import_alias_remains_a_module(import_statement, module_name):
     [
         ("preprocess",),
         ("calibrate",),
+        ("run",),
     ],
 )
 def test_api_first_import_keeps_package_entry_points_as_callable_modules(attribute_name):
@@ -168,6 +171,7 @@ def test_api_first_import_keeps_package_entry_points_as_callable_modules(attribu
     ("module_name", "arguments"),
     [
         ("pysweb.swb.preprocess", ["--help"]),
+        ("pysweb.swb.run", ["--help"]),
         (
             "pysweb.swb.calibrate",
             ["--help"],
@@ -184,3 +188,36 @@ def test_module_cli_execution_exits_cleanly(module_name, arguments):
 
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize("first_import", [
+    "from pysweb.swb.run import _parser_defaults",
+    "from pysweb.swb.api import run",
+    "import pysweb.swb; pysweb.swb.run",
+])
+def test_run_dispatch_and_validation_survive_fresh_import_order(first_import):
+    # Reproduce the production sequence in a fresh interpreter, independently
+    # of pytest's collection imports and earlier API attribute accesses.
+    script = first_import + "\n" + '''
+import importlib
+import inspect
+import pysweb.swb
+api = importlib.import_module("pysweb.swb.api")
+module = importlib.import_module("pysweb.swb.run")
+assert inspect.ismodule(module) and callable(module)
+assert pysweb.swb.run is module
+try:
+    pysweb.swb.run()
+except ValueError as error:
+    assert str(error) == "Missing required inputs for SWB run"
+else:
+    raise AssertionError("Missing-input validation was bypassed")
+calls = []
+api.run_swb_workflow = lambda **kwargs: calls.append(kwargs) or "accepted"
+assert pysweb.swb.run(et="forcing.nc", workers=2) == "accepted"
+assert module(et="forcing.nc", workers=2) == "accepted"
+assert calls == [dict(et="forcing.nc", workers=2)] * 2
+'''
+    result = subprocess.run([sys.executable, "-c", script],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr

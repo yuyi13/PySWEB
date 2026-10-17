@@ -3,7 +3,7 @@ Script: api.py
 Objective: Dispatch public SWB preprocessing, calibration and simulation calls to package workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-11
+Last updated: 2026-10-17
 Inputs: Keyword arguments describing workflow inputs, outputs and model settings.
 Outputs: Preprocessing results, calibration parameters or the simulation output path.
 Usage: import pysweb.swb.api
@@ -12,7 +12,6 @@ Dependencies: Python standard library; pysweb
 from __future__ import annotations
 
 from importlib import import_module
-import sys
 
 from pysweb.swb.run import run_swb_workflow
 
@@ -53,8 +52,3 @@ def run(**kwargs):
         raise ValueError("Missing required inputs for SWB run")
 
     return run_swb_workflow(**kwargs)
-
-
-_PACKAGE = sys.modules.get("pysweb.swb")
-if _PACKAGE is not None:
-    _PACKAGE.run = run
