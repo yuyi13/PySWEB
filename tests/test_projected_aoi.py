@@ -24,6 +24,23 @@ from tests.io.test_native_grids import raster
 BOUNDS = [774141.3598386383,6646126.87310592,779141.3598386383,6651126.87310592]
 
 
+def test_scene_start_requires_support_in_actual_analysis_area():
+    from pysweb.ssebop.scene_protocol import scene_support_calendar
+    grid = raster(np.full((3,3),np.nan),Affine(30,0,770000,0,-30,-3345000),'EPSG:32655')
+    scenes = grid.expand_dims(time=pd.date_range('2014-01-01',periods=2)).copy()
+    scenes.values[0,0,0] = .6
+    scenes.values[1,1,1] = .7
+    x, y = float(grid.x[1]), float(grid.y[1])
+    area = dict(bounds=[x-14,y-14,x+14,y+14],crs='EPSG:32655')
+    assert scene_support_calendar(scenes)['first_supported_scene'] == '2014-01-01'
+    scoped = scene_support_calendar(scenes,area)
+    assert scoped['first_supported_scene'] == '2014-01-02'
+    assert scoped['supported_scenes'] == 1 and scoped['support_aoi'] == area
+    scenes.values[1,1,1] = np.nan
+    with pytest.raises(ValueError,match='No accepted scene support'):
+        scene_support_calendar(scenes,area)
+
+
 def reference_grid():
     # Native source metadata only; all values below are synthetic.
     return raster(np.ones((12,14)),Affine(.008983152841195215,0,149.8120399326126,

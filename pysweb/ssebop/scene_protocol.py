@@ -137,6 +137,24 @@ def _retrieve_scene(path):
     return result
 
 
+def scene_support_calendar(fractions, support_aoi=None):
+    """Locate actual scene support inside the configured analysis footprint."""
+    from pysweb.io.grids import intersecting_cells
+    valid = np.isfinite(fractions)
+    scope = 'complete processing window'
+    if support_aoi is not None:
+        mask = intersecting_cells(fractions.isel(time=0, drop=True),
+            support_aoi['bounds'], support_aoi['crs'])
+        valid = valid & mask
+        scope = 'complete native pixels intersecting the analysis AOI'
+    supported = valid.any(('y', 'x')).values
+    if not supported.any():
+        raise ValueError('No accepted scene support inside the configured analysis area')
+    return dict(first_supported_scene=str(pd.Timestamp(
+        fractions.time.values[np.flatnonzero(supported)[0]]).date()),
+        supported_scenes=int(supported.sum()), support_scope=scope, support_aoi=support_aoi)
+
+
 def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
                        output_dir, extent, protocol, reconstruction, workers=1):
     """Configured bounded-memory retrieval with persistent shared scene caching.
@@ -197,11 +215,10 @@ def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
         accepted_scenes=sum(g['passed'] for g in gates), total_scenes=len(gates)))
     if not any(g['passed'] for g in gates):
         raise ValueError('No scenes pass fixed padding/local-anchor acceptance')
-    supported = np.isfinite(etf.values).reshape(etf.sizes['time'], -1).any(axis=1)
-    first_supported = str(pd.Timestamp(etf.time.values[np.flatnonzero(supported)[0]]).date())
-    atomic_json(output_dir/'scene-calendar.json',dict(first_supported_scene=first_supported,
-        requested_start=start, development_end=boundary,
-        supported_scenes=int(supported.sum())))
+    calendar = scene_support_calendar(etf, protocol.get('support_aoi'))
+    first_supported = calendar['first_supported_scene']
+    atomic_json(output_dir/'scene-calendar.json',dict(**calendar,
+        requested_start=start, development_end=boundary))
     if protocol.get('require_supported_start', False) and pd.Timestamp(start) < pd.Timestamp(first_supported):
         raise ValueError(f'Run starts before first supported scene {first_supported}; freeze that start before reconstruction')
     scenes = xr.Dataset(dict(etf=etf, ndvi=ndvi, original_support=xr.concat(original,'time').sortby('time')))
