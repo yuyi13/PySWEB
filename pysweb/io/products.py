@@ -15,6 +15,7 @@ import netCDF4 as nc
 import numpy as np
 from pysweb.io.grids import open_template, spatial
 from pysweb.io.provenance import input_manifest, save_output_manifest
+from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
 
 
 def assert_identical_grids(first_path, second_path):
@@ -53,16 +54,21 @@ def crop_product(source_path, output_path, template):
             for name, variable in source.variables.items():
                 fill = variable.getncattr('_FillValue') if '_FillValue' in variable.ncattrs() else None
                 options = {'zlib': True, 'complevel': 3} if variable.ndim else {}
+                block_dim = next((d for d in variable.dimensions if d not in slices), None)
+                shape = tuple(len(output.dimensions[d]) for d in variable.dimensions)
+                chunks = stream_chunks(variable.dimensions, shape, block_dim=block_dim)
+                if chunks is not None:
+                    options['chunksizes'] = chunks
                 target = output.createVariable(name, variable.datatype, variable.dimensions, fill_value=fill, **options)
                 target.setncatts({k: variable.getncattr(k) for k in variable.ncattrs() if k != '_FillValue'})
-                block_dim = next((d for d in variable.dimensions if d not in slices), None)
                 count = len(source.dimensions[block_dim]) if block_dim else 1
-                for begin in range(0, count, 32):
-                    src = tuple(slices.get(d, slice(begin, begin+32) if d == block_dim else slice(None))
-                                for d in variable.dimensions)
-                    dst = tuple(slice(begin, begin+32) if d == block_dim else slice(None)
-                                for d in variable.dimensions)
-                    target[dst or Ellipsis] = variable[src or Ellipsis]
+                with sequential_read_cache(variable, block_dim):
+                    for begin in range(0, count, 32):
+                        src = tuple(slices.get(d, slice(begin, begin+32) if d == block_dim else slice(None))
+                                    for d in variable.dimensions)
+                        dst = tuple(slice(begin, begin+32) if d == block_dim else slice(None)
+                                    for d in variable.dimensions)
+                        target[dst or Ellipsis] = variable[src or Ellipsis]
             output['spatial_ref'].GeoTransform = ' '.join(str(v) for v in template.rio.transform().to_gdal())
             output.spatial_grid = 'Exact subset of selected Landsat 30 m UTM scene grid'
         temporary.replace(output_path)

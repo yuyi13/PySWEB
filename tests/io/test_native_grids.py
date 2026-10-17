@@ -82,6 +82,10 @@ def test_exact_subsets_keep_reference_values_and_final_affine(tmp_path):
     with xr.open_dataset(cropped,decode_coords='all') as actual:
         for name in ('ET','elevation','qa'):
             np.testing.assert_equal(actual[name].values,expected[name].values)
+    import netCDF4 as nc
+    with nc.Dataset(cropped) as actual:
+        assert actual['ET'].chunking()[0] <= 32
+        assert actual['qa'].chunking()[0] <= 32
     wrong = expected.assign_coords(x=expected.x+15).rio.write_transform(Affine(30,0,500045,0,-30,6099970))
     wrong.to_netcdf(tmp_path/'wrong.nc')
     with pytest.raises(ValueError):

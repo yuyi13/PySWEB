@@ -16,3 +16,17 @@ Two final products share exactly the same `x`/`y` values, UTM CRS and 30 m affin
 Scene retrieval auxiliaries use `scene_time`; dT climatology uses `dayofyear`. These temporal dimensions differ from the daily model time axis without changing the spatial grid. Scenario-specific variables receive `_default`/`_calibrated` suffixes. Calibration-disabled runs have no calibrated variable. Four scalar parameters for each scenario and the configuration are stored as attributes; manifests retain input identity and software provenance.
 
 Intermediate single-scenario SWB files retain the component API's `rzsm_layer_*` variables under `products/intermediate/`. They support diagnosis and are not additional consolidated final products. Native calibration inputs remain separate under `calibration_inputs/`; they intentionally have a different spatial grid. See [the full native-grid contract](native-grids.md).
+
+## Streaming large records
+
+Streamed daily and scene-dependent arrays use temporal chunks of at most
+32 entries and spatial chunks of at most 64 pixels. This matches the bounded
+copy operations used for final crops, scenario combination and initialization
+trimming. Seasonal controls additionally align their y chunks with the row
+blocks used to construct the control.
+
+Older source files with large temporal chunks remain readable. Streaming copies
+temporarily increase the current variable's read cache to retain chunk slabs,
+capped at 512 MiB per variable, then restore its original cache settings.
+These storage choices preserve values, masks, coordinates, units and scientific
+provenance; they do not change model or forcing parameters.
