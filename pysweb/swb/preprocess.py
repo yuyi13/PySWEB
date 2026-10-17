@@ -44,6 +44,7 @@ from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from pysweb.contracts import daily_data, month_bounds
 from pysweb.io.provenance import atomic_netcdf, input_manifest, atomic_json, sha256
+from pysweb.io.netcdf_stream import open_stream_dataset
 GSSM_ASSET = "users/qianrswaterr/GlobalSSM1km0509"
 GSSM_SCALE_FACTOR = 1000.0
 GSSM_EXPORT_SCALE_M = 1000.0
@@ -599,7 +600,7 @@ def _prepare_et_file_component(
 ) -> xr.DataArray:
     expected_dates = pd.date_range(start = start_date, end = end_date, freq = "D")
     layers: List[xr.DataArray] = []
-    with xr.open_dataset(path, decode_coords="all") as ds:
+    with open_stream_dataset(path, [var_name], decode_coords="all") as ds:
         if var_name not in ds:
             raise KeyError(f"Variable '{var_name}' not found in ET dataset: {path}")
         da = spatial(ds[var_name])

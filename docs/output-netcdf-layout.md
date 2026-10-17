@@ -28,5 +28,8 @@ blocks used to construct the control.
 Older source files with large temporal chunks remain readable. Streaming copies
 temporarily increase the current variable's read cache to retain chunk slabs,
 capped at 512 MiB per variable, then restore its original cache settings.
+Daily preprocessing uses the same bounded cache on the NetCDF handle read by
+xarray, while retaining xarray's CF decoding and the existing daily reprojection.
+Only the selected component's cache changes; global NetCDF defaults stay intact.
 These storage choices preserve values, masks, coordinates, units and scientific
 provenance; they do not change model or forcing parameters.

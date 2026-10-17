@@ -5,13 +5,41 @@ Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
 Last updated: 2026-10-17
 Inputs: Variable dimensions, shapes and existing NetCDF chunk metadata.
-Outputs: Bounded chunk layouts and temporary per-variable read-cache settings.
+Outputs: Bounded chunk layouts, temporary per-variable caches and decoded sequential readers.
 Usage: from pysweb.io.netcdf_stream import stream_chunks, sequential_read_cache
-Dependencies: contextlib, math, numpy, netCDF4-compatible variables.
+Dependencies: contextlib, math, numpy, netCDF4, xarray.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from math import ceil, prod
 import numpy as np
+
+
+@contextmanager
+def open_stream_dataset(path, variables, *, max_cache_bytes=512*1024**2, **kwargs):
+    """Decode through xarray while caching sequential reads on its actual handle.
+
+    Each selected variable receives a bounded cache. Global NetCDF settings and
+    other open datasets are untouched; values and CF decoding stay with xarray.
+    Callers must load retained data before leaving this context.
+    """
+    import netCDF4 as nc
+    import xarray as xr
+
+    source = nc.Dataset(path)
+    dataset = None
+    try:
+        dataset = xr.open_dataset(xr.backends.NetCDF4DataStore(source), **kwargs)
+        with ExitStack() as caches:
+            for name in dict.fromkeys(variables):
+                caches.enter_context(sequential_read_cache(source[name],
+                    max_cache_bytes=max_cache_bytes))
+            yield dataset
+    finally:
+        if source.isopen():
+            if dataset is not None:
+                dataset.close()
+            else:
+                source.close()
 
 
 def stream_chunks(dimensions, shape, *, block_dim=None, block_size=32, spatial_size=64):
