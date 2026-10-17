@@ -461,7 +461,10 @@ def _ensure_date_inputs(args: argparse.Namespace) -> Tuple[pd.Timestamp, pd.Time
 
 def _build_target_grid(args: argparse.Namespace) -> TargetGrid:
     if getattr(args, "grid_template", None):
-        template = subset_template(open_template(args.grid_template, args.grid_template_var), args.extent)
+        bounds = getattr(args,'template_extent',None)
+        template = subset_template(open_template(args.grid_template, args.grid_template_var),
+            bounds if bounds is not None else args.extent,
+            extent_crs=args.template_extent_crs if bounds is not None else 'EPSG:4326')
         projected = template.rio.crs.is_projected
         lat_dim, lon_dim = ("y", "x") if projected else ("lat", "lon")
         if not projected:
@@ -498,7 +501,7 @@ def _standard_encoding(dtype: str) -> Dict[str, object]:
         "zlib": True,
         "complevel": 4,
         "dtype": storage_dtype.name,
-        "_FillValue": storage_dtype.type(np.nan),
+        "_FillValue": storage_dtype.type(np.nan) if storage_dtype.kind == 'f' else None,
     }
 
 
@@ -1121,6 +1124,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sm-res", type = float, help = "Legacy explicit geographic resolution; use a native grid template for new runs.")
     parser.add_argument("--grid-template", help="Raster or NetCDF whose exact grid defines preparation.")
     parser.add_argument("--grid-template-var", help="Spatial variable in a NetCDF template.")
+    parser.add_argument("--template-extent", nargs=4, type=float,
+        help="Exact AOI bounds used for template cropping and whole-cell admission.")
+    parser.add_argument("--template-extent-crs", help="CRS of template-extent; provide both settings together.")
     parser.add_argument("--grid-mode", choices=("reference", "landsat", "legacy"), default="legacy")
     parser.add_argument("--resampling", choices=("average", "bilinear", "nearest"), default="bilinear")
     parser.add_argument("--crs", default = "EPSG:4326", help = "Target CRS.")
@@ -1220,6 +1226,10 @@ def preprocess_inputs(**kwargs):
     args = _build_args(kwargs)
     if args.workers < 1:
         raise ValueError("--workers must be >= 1.")
+    if (args.template_extent is None) != (args.template_extent_crs is None):
+        raise ValueError('Provide template_extent and template_extent_crs together')
+    if args.template_extent is not None and args.grid_mode == 'legacy':
+        raise ValueError('Explicit template AOI requires a native grid mode')
 
     soil_api.validate_soil_source(args.soil_source)
     _validate_reference_source(args.reference_source)
@@ -1275,12 +1285,30 @@ def preprocess_inputs(**kwargs):
     )
     soil_arrays = {name:da.rio.write_crs(grid.crs).rio.set_spatial_dims(x_dim=grid.lon_dim,y_dim=grid.lat_dim)
                    for name,da in soil_outputs.arrays.items()}
+    aoi = None
+    if args.template_extent is not None:
+        from pysweb.io.grids import intersecting_cells
+        aoi = intersecting_cells(grid.template,args.template_extent,args.template_extent_crs)
+        rename = {key:value for key,value in [('y',grid.lat_dim),('x',grid.lon_dim)] if key != value}
+        if rename:
+            aoi = aoi.rename(rename).rio.set_spatial_dims(x_dim=grid.lon_dim,y_dim=grid.lat_dim)
+        for name,array in soil_arrays.items():
+            xr.align(array,aoi,join='exact')
+            soil_arrays[name] = array.where(aoi)
 
     outputs: Dict[str, xr.DataArray] = {
         f"rain_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc": rain,
         f"effective_precip_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc": effective_precip,
         f"et_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc": et_components["et"],
     }
+    if aoi is not None:
+        outputs['aoi_support.nc'] = aoi.astype('uint8')
+        atomic_json(output_dir/'aoi-selection.json',dict(bounds=args.template_extent,
+            bounds_crs=args.template_extent_crs,grid_crs=grid.crs,
+            grid_bounds=list(grid.template.rio.bounds()),grid_shape=list(grid.template.shape),
+            geometric_window_cells=int(aoi.size),intersecting_cells=int(aoi.sum()),
+            weighting='Original full-cell area; no partial-AOI cell weighting',
+            selection='Whole cells intersecting the configured AOI; boundary touches included'))
     if "E_t" in et_components:
         outputs[f"transpiration_daily_{start:%Y%m%d}_{end:%Y%m%d}.nc"] = et_components["E_t"]
     if "E_s" in et_components:

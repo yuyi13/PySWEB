@@ -172,7 +172,8 @@ def run_native(config, stages, dry_run=False):
             pysweb.ssebop.run(date_range=period,landsat_dir=str(prepared/'landsat'),met_dir=str(met),
                 dem=str(prepared/'dem/nasadem.tif'),output_dir=str(internal),workers=run['workers'],**options)
     if 'ssebop' in stages or 'preprocess' in stages:
-        template = subset_template(open_template(seb_internal,'ET'),run['extent'])
+        template = subset_template(open_template(seb_internal,'ET'),run.get('aoi_bounds',run['extent']),
+            extent_crs=run.get('aoi_crs','EPSG:4326'))
         from pyproj import CRS
         import numpy as np
         if not CRS(template.rio.crs).utm_zone or not np.allclose(np.abs(template.rio.resolution()),30,rtol=0,atol=1e-6):
@@ -205,6 +206,8 @@ def run_native(config, stages, dry_run=False):
             rain_file=rain_file,rain_var='precipitation',
             et_file=str(seb_internal),et_var='ET',soil_evaporation_var='E_s',transpiration_var='E_t',
             native_cache_dir=str(prepared/'soil_native'),workers=run['workers'],**soil_args)
+        if 'aoi_bounds' in run:
+            common.update(template_extent=run['aoi_bounds'],template_extent_crs=run['aoi_crs'])
         if enabled:
             pysweb.swb.preprocess(**common,end_date=fit_end,grid_mode='reference',output_dir=str(coarse),
                 reference_file=str(reference),reference_var=soil.get('reference_var','reference_ssm'))

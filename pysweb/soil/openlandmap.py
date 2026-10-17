@@ -132,7 +132,7 @@ def _load_openlandmap_predictors(
 ) -> Dict[str, xr.DataArray]:
     import json
     import hashlib
-    from pysweb.io.provenance import atomic_netcdf
+    from pysweb.io.provenance import atomic_netcdf, input_manifest, save_output_manifest, sha256
     cache_key = hashlib.sha256(json.dumps({'extent': extent, 'assets': OPENLANDMAP_DATASETS}, sort_keys=True).encode()).hexdigest()[:16]
     cache = Path(cache_dir) if cache_dir else None
     predictors = {}
@@ -142,6 +142,36 @@ def _load_openlandmap_predictors(
             if path.exists():
                 with xr.open_dataset(path, decode_coords='all') as dataset:
                     predictors[key] = dataset[key].load()
+        # A narrower native footprint can reuse a completed larger download.
+        # Match the immutable asset and verify native alignment before taking
+        # an exact pixel subset; never resample a raw predictor cache.
+        from pysweb.io.grids import subset_template
+        from types import SimpleNamespace
+        for key,image_id in OPENLANDMAP_DATASETS.items():
+            if key in predictors:
+                continue
+            for candidate in sorted(cache.glob(f'{key}_*.nc')):
+                with xr.open_dataset(candidate,decode_coords='all') as dataset:
+                    if key not in dataset:
+                        continue
+                    field = dataset[key]
+                    if field.attrs.get('source_asset') != image_id or 'native_projection' not in field.attrs:
+                        continue
+                    projection = json.loads(field.attrs['native_projection'])
+                    try:
+                        verify_native_grid(SimpleNamespace(crs=field.rio.crs,transform=field.rio.transform(),
+                            height=field.sizes['y'],width=field.sizes['x']),projection)
+                        subset = subset_template(field,extent).load()
+                    except ValueError:
+                        continue
+                subset.attrs.update(cache_parent=str(candidate.resolve()),cache_parent_sha256=sha256(candidate),
+                    cache_operation='Exact native pixel subset of a covering asset cache')
+                path = cache/f'{key}_{cache_key}.nc'
+                atomic_netcdf(subset.rename(key).to_dataset(),path)
+                save_output_manifest(path,input_manifest(dict(extent=extent,asset=image_id,
+                    operation='exact native cache subset'),[candidate]))
+                predictors[key] = subset
+                break
         if len(predictors) == len(OPENLANDMAP_DATASETS):
             return predictors
     _initialize_ee(gee_project)
@@ -158,7 +188,10 @@ def _load_openlandmap_predictors(
         predictors[key].attrs['source_asset'] = image_id
         if cache:
             cache.mkdir(parents=True, exist_ok=True)
-            atomic_netcdf(predictors[key].rename(key).to_dataset(), cache / f'{key}_{cache_key}.nc')
+            path = cache/f'{key}_{cache_key}.nc'
+            atomic_netcdf(predictors[key].rename(key).to_dataset(),path)
+            save_output_manifest(path,input_manifest(dict(extent=extent,asset=image_id,
+                native_projection=json.loads(predictors[key].attrs['native_projection'])),[]))
     return predictors
 
 

@@ -73,3 +73,38 @@ The coarse calibration grid reduces solver work but does not remove the cost of 
 Older TOML files containing `run.resolution` select the explicit legacy geographic workflow, retaining the daily-domain-mean calibration objective unless overridden. Use `grid_mode = "legacy"` when maintaining such a study. The native workflow rejects degree-resolution overrides. Individual component APIs remain available, including legacy single-scenario outputs and `--objective domain_mean` for deliberate reproduction; the standalone calibration CLI now defaults to `cell`. Use a new directory when changing grids or the objective; existing calibrated parameters do not represent the new fit.
 
 Explicit acceptance protocols, their configuration schema, optional benchmark stage and reusable evaluation APIs are documented in [configured scientific acceptance](configured-protocols.md).
+
+## Explicit projected analysis footprints
+
+Keep `run.extent` as the geographic acquisition envelope. When the analysis area
+is a rectangle defined in a projected CRS, also provide `run.aoi_bounds` and
+`run.aoi_crs`. The geographic envelope must contain that area. Final Landsat
+cropping transforms the original bounds directly to the source CRS, preserving
+its affine alignment and northing convention. Converting a projected square to
+a geographic bounding box and back can otherwise enlarge it substantially.
+
+```toml
+[run]
+# Other required run settings omitted here.
+extent = [149.8, -30.4, 150.0, -30.1]
+aoi_bounds = [774141.36, 6646126.87, 779141.36, 6651126.87]
+aoi_crs = "EPSG:32755"
+```
+
+Reference preparation keeps the rectangular native grid window and original
+reference values. `aoi_support.nc` identifies whole cells intersecting the
+original AOI; nonintersecting corner cells have unavailable hydraulic properties
+and cannot enter calibration or simulation. Cell weights remain original full
+cell areas, without fractional AOI weighting. `aoi-selection.json` records both
+window and intersecting-cell counts. Intersection uses a transformed rectangle
+with 65 samples per edge and includes boundary touches. Ordinary forcing and
+soil validity checks can further reduce this geometric support.
+
+For direct preprocessing, use `template_extent` and `template_extent_crs`
+together with a native grid mode. `subset_template` also accepts an explicit
+`extent_crs`; its default remains geographic.
+
+A smaller OpenLandMap request can reuse a covering native cache from the same
+asset. Its source-grid metadata are verified before an exact pixel subset is
+written with a parent checksum and output manifest. Original caches remain
+unchanged, so shrinking an analysis footprint does not require a repeat transfer.
