@@ -559,7 +559,13 @@ def _get_differential_evolution():
     return differential_evolution
 
 
-def calibrate_domain(**kwargs) -> None:
+def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
+    """Fit, benchmark, or serially polish the same validated calibration inputs.
+
+    ``benchmark_output`` writes measured throughput without saving fitted
+    parameters. ``polish_file`` requires a converged DE file with identical
+    input/software identity; failed polishing retains that accepted DE vector.
+    """
     args = _namespace_from_kwargs(kwargs)
     if args.workers < 1:
         raise ValueError("workers must be >= 1")
@@ -790,10 +796,7 @@ def calibrate_domain(**kwargs) -> None:
     observation_context = _prepare_observation_context(
         effective_precip_vals, et_vals, transpiration_vals, reference_vals,
         soil_valid, cell_weights, args.spinup_days, args.solver_backend, args.objective)
-    result = differential_evolution(
-        _objective_function,
-        bounds,
-        args=(
+    objective_arguments = (
             effective_precip_vals,
             et_vals,
             transpiration_vals,
@@ -812,21 +815,65 @@ def calibrate_domain(**kwargs) -> None:
             args.state_timing,
             args.spinup_days,
             observation_context,
-        ),
-        seed=args.seed,
-        maxiter=args.max_iter,
-        popsize=de_popsize,
-        mutation=(0.5, 1.0),
-        recombination=0.7,
-        strategy="best1bin",
-        tol=1e-3,
-        disp=False,
-        workers=de_workers,
-        updating="deferred" if de_workers > 1 else "immediate",
-        polish=not args.no_polish,
-        **de_extra,
-    )
-
+        )
+    paths = [args.effective_precip,args.et,args.transpiration,args.reference_ssm]
+    paths += [str(soil_dir / name) for name in SOIL_FILE_STEMS.values()]
+    if args.ndvi:
+        paths.append(args.ndvi)
+    manifest = input_manifest(vars(args), paths) if benchmark_output is not None or polish_file is not None else None
+    if benchmark_output is not None:
+        if polish_file is not None:
+            raise ValueError('Choose benchmark or polish, not both')
+        from pysweb.swb.benchmark import benchmark_objective
+        measured = benchmark_objective(objective_arguments[:-1], observation_context,
+            bounds, workers=de_workers, parameters=de_x0,
+            max_generations=args.max_iter, seed=args.seed or 0)
+        atomic_json(benchmark_output, measured)
+        save_output_manifest(benchmark_output, manifest)
+        return measured
+    polish_record = None
+    if polish_file is not None:
+        import json
+        import time
+        from scipy.optimize import minimize
+        from types import SimpleNamespace
+        from pysweb.io.provenance import sha256
+        original = json.loads(Path(str(polish_file)+'.manifest.json').read_text())
+        if not original['calibration']['converged']:
+            raise ValueError('Serial polishing requires converged DE')
+        if original['fingerprint'] != manifest['fingerprint'] or original['output']['sha256'] != sha256(polish_file):
+            raise ValueError('Serial polishing inputs, settings, software or DE output changed')
+        row = pd.read_csv(polish_file).iloc[0]
+        initial = row[['diff_factor','sm_max_factor','sm_min_factor','root_beta']].to_numpy(float)
+        started = time.perf_counter()
+        polished = minimize(_objective_function, initial, args=objective_arguments,
+                            method='L-BFGS-B', bounds=bounds)
+        accepted = bool(polished.success and np.isfinite(polished.fun) and polished.fun <= row.rmse
+            and all(low <= value <= high for value,(low,high) in zip(polished.x,bounds)))
+        polish_record = dict(source=str(polish_file), source_sha256=sha256(polish_file),
+            success=bool(polished.success), accepted=accepted, message=str(polished.message),
+            nfev=int(polished.nfev), seconds=time.perf_counter()-started)
+        result = SimpleNamespace(x=polished.x if accepted else initial, success=True,
+            message='Converged DE; serial polishing accepted' if accepted else 'Converged DE retained after unsuccessful polishing',
+            nit=original['calibration']['nit'], nfev=original['calibration']['nfev'])
+    else:
+        result = differential_evolution(
+            _objective_function,
+            bounds,
+            args=objective_arguments,
+            seed=args.seed,
+            maxiter=args.max_iter,
+            popsize=de_popsize,
+            mutation=(0.5, 1.0),
+            recombination=0.7,
+            strategy="best1bin",
+            tol=1e-3,
+            disp=False,
+            workers=de_workers,
+            updating="deferred" if de_workers > 1 else "immediate",
+            polish=not args.no_polish,
+            **de_extra,
+        )
     converged = bool(getattr(result, "success", False))
     if not converged and not args.allow_unconverged:
         raise ValueError("Calibration did not converge: " + str(getattr(result, "message", "unknown status"))
@@ -855,6 +902,8 @@ def calibrate_domain(**kwargs) -> None:
     )
     if n_obs == 0 or not np.isfinite(final_rmse):
         raise ValueError("Calibration produced no valid observations for RMSE computation.")
+    if manifest is None:
+        manifest = input_manifest(vars(args), paths)
 
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -874,16 +923,16 @@ def calibrate_domain(**kwargs) -> None:
             ]
         )
 
-    paths = [args.effective_precip,args.et,args.transpiration,args.reference_ssm]
-    paths += [str(soil_dir / name) for name in SOIL_FILE_STEMS.values()]
-    if args.ndvi:
-        paths.append(args.ndvi)
-    manifest = input_manifest(vars(args), paths)
     manifest["calibration"] = {"converged":converged, "message":str(getattr(result,"message","")),
                                "n_observations":n_obs,"rmse":final_rmse,"objective":args.objective,
                                "parameters":dict(zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),best_params.tolist())),
                                "spatial_weighting":"regular geographic cell area", "seed":args.seed,
+                               "bounds":dict(zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),bounds)),
+                               "bound_hits":{key:bool(np.isclose(value,low,rtol=0,atol=1e-8*(high-low)) or np.isclose(value,high,rtol=0,atol=1e-8*(high-low)))
+                                   for key,value,(low,high) in zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),best_params,bounds)},
                                "nit":int(getattr(result,"nit",0)),"nfev":int(getattr(result,"nfev",0))}
+    if polish_record is not None:
+        manifest['calibration']['serial_polish'] = polish_record
     Path(temporary_name).replace(output_path)
     save_output_manifest(output_path, manifest)
     print(f"Wrote domain calibration CSV: {output_path} (converged={converged})", flush=True)

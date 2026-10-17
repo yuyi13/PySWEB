@@ -24,6 +24,8 @@ Cloud masks and persistent temperature-only holes should not be mistaken for
 scan-gap eligibility. Suggested physical bounds reject implausible predictions
 without clipping them into apparently valid values.
 
-The module is an explicit preprocessing option. No automatic L7 filling is
-enabled in the standard SSEBop API. The two-site pilot requires a separate
-field-scene validation gate before its filled products enter retrieval.
+The kernel remains an explicit preprocessing option. Configured native workflows
+can invoke `pysweb.ssebop.preprocessing.prepare_l7` through `[landsat.gapfill]`.
+That integration performs donor selection, source-mask/grid checks, prospective
+withholding acceptance and identity verification before retrieval. No filling is
+enabled without this configuration. See [configured protocols](configured-protocols.md).

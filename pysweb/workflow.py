@@ -27,7 +27,7 @@ def load_config(path):
     path = Path(path).expanduser().resolve()
     with path.open("rb") as handle:
         config = tomllib.load(handle)
-    unknown = set(config) - {"run", "soil", "calibration", "model", "ssebop"}
+    unknown = set(config) - {"run", "soil", "calibration", "model", "ssebop", "landsat", "spinup", "forcing", "evaluation"}
     if unknown:
         raise ValueError(f"Unknown configuration sections: {sorted(unknown)}")
     run = config.setdefault("run", {})
@@ -75,6 +75,7 @@ def load_config(path):
         "input_dir",
         "mlcons_dir",
         "layer_bottoms_mm",
+        "maximum_organic_matter_percent",
         "reference_file",
         "reference_var",
     }
@@ -121,6 +122,7 @@ def load_config(path):
         "solver_backend",
         "shared_workers",
         "no_polish",
+        "serial_polish",
     }
     from pysweb.ssebop.cli_run import build_parser
 
@@ -150,6 +152,34 @@ def load_config(path):
         unknown = set(config.get(section, {})) - allowed_keys
         if unknown:
             raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
+    for section, keys in {
+        "landsat": {"manifest_file", "sensor_windows", "wrs", "gapfill"},
+        "spinup": {"source_year", "repeats", "tolerance", "minimum_fraction", "solver_backend"},
+        "forcing": {"peer_runs", "reconstruction", "precipitation_qc", "retrieval"},
+        "evaluation": {"longitude", "latitude", "depth_interval_mm", "observations_file", "regimes_file",
+                       "regime_column", "pairs", "phases", "scoring_start"},
+    }.items():
+        unknown = set(config.get(section, {})) - keys
+        if unknown:
+            raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
+    for section, keys in {"landsat": ["manifest_file"], "evaluation": ["observations_file", "regimes_file"]}.items():
+        for key in keys:
+            if key in config.get(section, {}):
+                value = Path(config[section][key]).expanduser()
+                config[section][key] = str(value if value.is_absolute() else (path.parent/value).resolve())
+    if "peer_runs" in config.get("forcing", {}):
+        config["forcing"]["peer_runs"] = [str(Path(p) if Path(p).is_absolute() else (path.parent/p).resolve())
+                                          for p in config["forcing"]["peer_runs"]]
+    retrieval = config.get('forcing', {}).get('retrieval', {})
+    for key in ('meteorology_raw_dir','meteorology_stack_dir','dem_file','scene_cache_dir','template_file'):
+        if key in retrieval:
+            value = Path(retrieval[key]).expanduser()
+            retrieval[key] = str(value if value.is_absolute() else (path.parent/value).resolve())
+    for key, raw in retrieval.get('meteorology_files', {}).items():
+        value = Path(raw).expanduser()
+        retrieval['meteorology_files'][key] = str(value if value.is_absolute() else (path.parent/value).resolve())
+    if run['grid_mode'] == 'legacy' and any(config.get(k) for k in ('landsat','spinup','forcing','evaluation')):
+        raise ValueError('Configured protocol integration requires grid_mode=native')
     if run['grid_mode'] == 'native':
         from pysweb.workflow_native import native_plan
         native_plan(config, STAGES)
@@ -164,12 +194,14 @@ def run_config(config, stages=STAGES, *, dry_run=False):
     soil = config.get("soil", {"source": "openlandmap"})
     calibration = config.get("calibration", {})
     enabled = bool(calibration.get("enabled", False))
-    unknown = set(stages) - set(STAGES)
+    unknown = set(stages) - (set(STAGES) | {"benchmark"})
     if unknown:
         raise ValueError(f"Unknown stages: {sorted(unknown)}")
     if run.get('grid_mode', 'legacy') == 'native':
         from pysweb.workflow_native import run_native
         return run_native(config, stages, dry_run=dry_run)
+    if "benchmark" in stages:
+        raise ValueError("The benchmark stage requires grid_mode=native")
     base = Path(run["root"]) / run["name"]
     prepared, ssebop_out, swb_in, swb_out = [
         base / p for p in ("inputs", "ssebop", "swb_inputs", "swb")
@@ -319,7 +351,7 @@ def main(argv=None):
     parser.add_argument(
         "--stages",
         default=",".join(STAGES),
-        help="Comma-separated prepare,ssebop,preprocess,calibrate,run",
+        help="Comma-separated prepare,ssebop,preprocess,benchmark,calibrate,run; benchmark is optional",
     )
     parser.add_argument(
         "--dry-run",
