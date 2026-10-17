@@ -164,9 +164,12 @@ def run_native(config, stages, dry_run=False):
             from pysweb.ssebop.scene_protocol import run_scene_workflow
             if not config.get('landsat'):
                 raise ValueError('Configured scene protocol requires an immutable scene manifest')
+            scene_protocol = {**retrieval, 'development_end': boundary}
+            if 'aoi_bounds' in run:
+                scene_protocol['support_aoi'] = dict(bounds=run['aoi_bounds'], crs=run['aoi_crs'])
             run_scene_workflow(date_range=period,scene_files=options['scene_files'],
                 gapfill_products=options.get('gapfill_products',{}),dem=retrieval['dem_file'],
-                output_dir=internal,extent=extent,protocol={**retrieval,'development_end':boundary},
+                output_dir=internal,extent=extent,protocol=scene_protocol,
                 reconstruction=config['forcing']['reconstruction'],workers=run['workers'])
         else:
             pysweb.ssebop.run(date_range=period,landsat_dir=str(prepared/'landsat'),met_dir=str(met),

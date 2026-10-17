@@ -108,3 +108,9 @@ A smaller OpenLandMap request can reuse a covering native cache from the same
 asset. Its source-grid metadata are verified before an exact pixel subset is
 written with a parent checksum and output manifest. Original caches remain
 unchanged, so shrinking an analysis footprint does not require a repeat transfer.
+
+For configured scene retrieval, the first supported acquisition must contain a
+finite accepted fraction in a native pixel intersecting the analysis AOI. Clear
+pixels confined to the surrounding processing window cannot set the run start.
+`scene-calendar.json` records this spatial scope, the AOI and supported-scene
+count; a footprint with no accepted support fails explicitly.
