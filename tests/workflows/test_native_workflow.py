@@ -91,6 +91,8 @@ def test_native_full_offline_workflow(tmp_path):
     with xr.open_dataset(base/'calibration_inputs/reference_ssm_daily_20200101_20200104.nc') as coarse:
         assert coarse.sizes['lat']*coarse.sizes['lon'] < 10
         np.testing.assert_allclose(coarse.reference_ssm,.25)
+    assert assert_identical_grids(base/'calibration_inputs/effective_precip_daily_20200101_20200104.nc',
+                                  base/'calibration_inputs/soil_porosity.nc')['identical']
     parameters = pd.read_csv(base/'calibration.csv')
     assert len(parameters) == 1
     assert set(['diff_factor','sm_max_factor','sm_min_factor','root_beta']) <= set(parameters)

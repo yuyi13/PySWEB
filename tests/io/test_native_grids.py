@@ -18,7 +18,7 @@ from rasterio import Affine
 from rasterio.crs import CRS
 from pysweb.io.native_grid import verify_native_grid, native_projection, export_parameters
 from pysweb.io.grids import align_to_grid, subset_template
-from pysweb.io.products import crop_product, assert_identical_grids
+from pysweb.io.products import crop_product, assert_identical_grids, auxiliary_grid_contract
 
 
 def raster(values, transform=Affine(30,0,500000,0,-30,6100000), crs='EPSG:32632'):
@@ -99,3 +99,68 @@ def test_global_origin_download_uses_bounded_native_pixel_window():
     assert 'region' not in request and 'scale' not in request
     grid = SimpleNamespace(crs=CRS.from_epsg(4326),transform=Affine(*request['crs_transform']),width=73,height=73)
     assert verify_native_grid(grid,projection)['native_grid_verified']
+
+
+def test_auxiliary_affine_roundoff_keeps_final_contract_strict(tmp_path):
+    transform = Affine(.008983152841195215,0,146.25471140749926,
+                       0,-.008983152841195215,-34.96243085793178)
+    source = raster(np.ones((6,8)),transform,'EPSG:4326').rename('field')
+    derived = Affine(float((source.x[-1]-source.x[0])/7),0,transform.c,
+                     0,float((source.y[-1]-source.y[0])/5),transform.f)
+    source.to_netcdf(tmp_path/'canonical.nc')
+    source.rio.write_transform(derived).to_netcdf(tmp_path/'derived.nc')
+    contract = auxiliary_grid_contract(tmp_path/'canonical.nc',tmp_path/'derived.nc')
+    assert contract['identical_coordinates'] and contract['affine_metadata_normalized']
+    assert 0 < contract['maximum_affine_adjustment'] < 1e-13
+    with pytest.raises(ValueError,match='affine'):
+        assert_identical_grids(tmp_path/'canonical.nc',tmp_path/'derived.nc')
+
+
+@pytest.mark.parametrize('change', ['origin', 'scale', 'coordinate', 'crs'])
+def test_auxiliary_grid_rejects_mismatch_despite_metadata_normalization(tmp_path,change):
+    source = raster(np.ones((3,4))).rename('field')
+    transform = source.rio.transform()
+    source.to_netcdf(tmp_path/'canonical.nc')
+    if change == 'origin':
+        wrong = source.rio.write_transform(Affine(transform.a,0,transform.c+.01,
+                                                  0,transform.e,transform.f))
+    elif change == 'scale':
+        wrong = source.rio.write_transform(Affine(transform.a+.01,0,transform.c,
+                                                  0,transform.e,transform.f))
+    elif change == 'coordinate':
+        wrong = source.assign_coords(x=np.nextafter(source.x.values,np.inf))
+    else:
+        wrong = source.rio.write_crs('EPSG:32633')
+    wrong.to_netcdf(tmp_path/'wrong.nc')
+    with pytest.raises(ValueError):
+        auxiliary_grid_contract(tmp_path/'canonical.nc',tmp_path/'wrong.nc')
+    with pytest.raises(ValueError):
+        assert_identical_grids(tmp_path/'canonical.nc',tmp_path/'wrong.nc')
+
+
+def test_combined_auxiliary_uses_exact_output_metadata_and_preserves_values(tmp_path):
+    import json
+    from pysweb.swb.paired import combine_scenarios
+    transform = Affine(.008983152841195215,0,146.25471140749926,
+                       0,-.008983152841195215,-34.96243085793178)
+    grid = raster(np.arange(48).reshape(6,8),transform,'EPSG:4326')
+    days = np.array(['2014-01-01','2014-01-02'],dtype='datetime64[D]')
+    daily = grid.expand_dims(time=days)
+    scenario = xr.Dataset(dict(rzsm_layer_1=daily/200,
+        precipitation=daily*0,effective_precipitation=daily*0))
+    scenario.rzsm_layer_1.attrs['depth_bottom_mm'] = 50.
+    scenario.attrs['state_timing'] = 'start'
+    scenario.rio.write_crs(grid.rio.crs).rio.write_transform(transform).to_netcdf(tmp_path/'scenario.nc')
+    derived = Affine(float((grid.x[-1]-grid.x[0])/7),0,transform.c,
+                     0,float((grid.y[-1]-grid.y[0])/5),transform.f)
+    auxiliary = grid.rename('porosity').rio.write_transform(derived)
+    auxiliary.to_netcdf(tmp_path/'soil.nc')
+    result = combine_scenarios({'default':tmp_path/'scenario.nc'},tmp_path/'combined.nc',
+        {'soil_porosity':(tmp_path/'soil.nc','porosity')})
+    assert assert_identical_grids(result,tmp_path/'scenario.nc')['identical']
+    with xr.open_dataset(result) as actual:
+        np.testing.assert_array_equal(actual.soil_porosity.values,auxiliary.values)
+        assert actual.soil_porosity.attrs['grid_mapping'] == 'spatial_ref'
+        assert json.loads(actual.auxiliary_grid_metadata_json)['soil_porosity']['affine_metadata_normalized']
+    manifest = json.loads((tmp_path/'combined.nc.manifest.json').read_text())
+    assert manifest['auxiliary_grids']['soil_porosity']['identical_coordinates']
