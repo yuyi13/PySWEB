@@ -126,6 +126,41 @@ def test_reference_initialization_is_missing(tmp_path):
         assert float(ds.reference_ssm.sel(time="2014-02-01")) == pytest.approx(.2)
 
 
+@pytest.mark.parametrize("start", ["2013-03-31", "2013-04-25"])
+def test_actual_2013_prefix_is_preserved_and_excluded_from_objective(tmp_path, start):
+    from pysweb.workflow_protocol import initialize_inputs, FORCING_FILES
+    from pysweb.swb.calibrate import SOIL_FILE_STEMS, _prepare_observation_context
+    end = "2014-01-03"
+    dates = pd.date_range(start, end)
+    coords = dict(time=dates, lat=[-35.], lon=[146.])
+    field = xr.DataArray(np.arange(len(dates), dtype=float)[:, None, None],
+                         dims=("time", "lat", "lon"), coords=coords)
+    mask = field[0].drop_vars("time").astype(bool) | True
+    mask.attrs["development_end"] = end
+    mask.astype("uint8").rename("development_support").to_netcdf(tmp_path/"development_support.nc")
+    for name, filename in SOIL_FILE_STEMS.items():
+        (mask.astype(float).expand_dims(layer=[1, 2])*.2).rename(name).to_netcdf(tmp_path/filename)
+    tag = f"{start.replace('-', '')}_{end.replace('-', '')}"
+    for stem, variable in FORCING_FILES.values():
+        field.rename(variable).to_netcdf(tmp_path/f"{stem}_daily_{tag}.nc")
+    field.rename("reference_ssm").to_netcdf(tmp_path/f"reference_ssm_daily_{tag}.nc")
+    record, _ = initialize_inputs(tmp_path, start, end, "2014-01-01", end)
+    assert record["simulation_start"] == start
+    assert record["initial_state"] == "physical_field_capacity"
+    assert record["initialization_mode"] == "actual_forcing_prefix"
+    assert record["artificial_warmup_days"] == 0 and record["spinup"] is None
+    assert record["spinup_days"] == (pd.Timestamp("2014-01-01")-pd.Timestamp(start)).days
+    with xr.open_dataset(record["files"]["effective_precip"][0]) as ds:
+        np.testing.assert_array_equal(ds.time.values, dates.values)
+        np.testing.assert_array_equal(ds.effective_precipitation.values, field.values)
+    values = field.values
+    context = _prepare_observation_context(values, values, values, values, mask.values,
+        spinup_days=record["spinup_days"], objective="cell")
+    assert not context["obs_mask"][dates.year == 2013].any()
+    assert context["obs_mask"][dates.year == 2014].all()
+    assert context["obs_mask"].sum() == 3
+
+
 def test_depth_and_weighted_cell_day_objective():
     np.testing.assert_array_equal(depth_weights([50, 150, 300, 600, 1000], [30, 750]), [20, 100, 150, 300, 150])
     model = xr.DataArray([[[0., 1.]], [[1., 0.]]], dims=("time", "y", "x"))

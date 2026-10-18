@@ -66,3 +66,10 @@ New configured runs use [native downloads and two preparation grids](native-grid
 ## Conservative SWB (18 October 2026)
 
 The [two-parameter formulation](swb-formulation.md) supersedes the historical four-parameter model described above. Remove `sm_max_factor`, `sm_min_factor` and their calibration bounds, derive a frozen native-cell GSSM reference artifact, set `model.reference_file`, and calibrate diffusivity and root beta into a new output directory. Old calibrations and final-state trajectories require regeneration with the revised equations. New calibration files bind the formulation, fixed numerical and drainage/root-depth settings, and reference identity. Existing historical records remain readable with their pinned source.
+
+
+## Daily SWB and actual-prefix warm-up (18 October 2026)
+
+`swb-daily-conservative-2p-v2` makes one bounded update per daily forcing record. It replaces v1's 768-or-more internal steps with a discrete daily balance; fixed physical properties, GSSM reference definitions, tau = 3 days, and the two fitted parameters are retained. Remove numerical `max_substep_days`/`hydraulic_cfl` overrides. V1 fitted parameters cannot be reused or relabelled: recalibrate and regenerate trajectories under the new formulation identity. Existing immutable p01/p99 reference artifacts remain compatible and retain their hashes.
+
+For field capacity → actual 2013 → scoring in 2014–2020, remove the `[spinup]` table and set the run start to its first available 2013 date. Set `calibration.start = "2014-01-01"` and `calibration.end = "2020-12-31"` (the 2014 start is already the Landsat 8/9 default). Use a new output directory so initialized files from an earlier repeated-year run cannot be confused with the revised protocol. Physical field capacity remains an explicit assumption; the shorter warm-up does not imply extreme-start convergence.

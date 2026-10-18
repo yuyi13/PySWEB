@@ -16,17 +16,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-FORMULATION_VERSION = "swb-conservative-2p-v1"
+FORMULATION_VERSION = "swb-daily-conservative-2p-v2"
+TIME_INTEGRATION = "single-bounded-update"
+# These observation-derived scalars are independent of the integration scheme.
+REFERENCE_COMPATIBLE_FORMULATIONS = {"swb-conservative-2p-v1", FORMULATION_VERSION}
 REFERENCE_VERSION = "gssm-native-p01-p99-v1"
 PARAMETER_NAMES = ("diff_factor", "root_beta")
 TAU_DAYS = 3.0
-MAX_SUBSTEP_DAYS = 1.0 / 768.0
-HYDRAULIC_CFL = 0.4
 LEGACY_KEYS = {"sm_max_factor", "sm_min_factor", "sm_max_bounds", "sm_min_bounds",
                "sm_min_bound", "sm_max_bound", "sm_min_relax_tau_days",
                "sm_min_relax_trigger_factor", "sm_min_factor_max_depth_mm",
                "rhs_diffusion_enabled", "rhs_diffusion_limiter_enabled",
-               "rhs_diffusion_abs_cap_mm_day"}
+               "rhs_diffusion_abs_cap_mm_day", "max_substep_days", "hydraulic_cfl"}
 
 
 def reject_legacy(settings):
@@ -49,7 +50,7 @@ def load_reference(path):
     record = json.loads(Path(path).read_text())
     if record.get("schema_version") != REFERENCE_VERSION or record.get("artifact_id") != canonical_id(record):
         raise ValueError("Incompatible or modified GSSM reference artifact")
-    if record.get("formulation_version") != FORMULATION_VERSION:
+    if record.get("formulation_version") not in REFERENCE_COMPATIBLE_FORMULATIONS:
         raise ValueError("Reference formulation version differs; derive a new reference")
     dry, wet = record["dry_reference_factor"], record["wet_reference_factor"]
     if not (np.isfinite(dry) and 0 <= dry <= 1 and np.isfinite(wet) and wet >= 1):
@@ -64,7 +65,7 @@ def settings_identity(reference_file=None, *, max_root_depth=1000., drainage_slo
                       drainage_upper_limit=25., drainage_lower_limit=0.):
     reference = load_reference(reference_file)
     return dict(formulation_version=FORMULATION_VERSION, tau_days=TAU_DAYS,
-                max_substep_days=MAX_SUBSTEP_DAYS, hydraulic_cfl=HYDRAULIC_CFL,
+                time_integration=TIME_INTEGRATION, time_step_days=1.,
                 reference_artifact_id=reference["artifact_id"],
                 max_root_depth_mm=float(max_root_depth), drainage_slope=float(drainage_slope),
                 drainage_upper_limit=float(drainage_upper_limit), drainage_lower_limit=float(drainage_lower_limit))

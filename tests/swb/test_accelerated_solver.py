@@ -32,7 +32,6 @@ def test_full_trajectory_and_budgets(layers,timing,case):
     props=dict(layer_depth=depths,layer_thickness=thick,porosity=por,wilting_point=wp,
                available_water_capacity=np.minimum(.15, por-wp-.01),b_coefficient=rng.uniform(2,9,layers),
                conductivity_sat=rng.uniform(1,100,layers),root_beta=[.9,.96,.995][case],
-               max_substep_days=1/24,  # Long parity stress; final default also checked in bounded real-forcing tests.
                dry_reference_factor=[0.,.3,1.][case],wet_reference_factor=[1.,1.1,1.25][case],
                drainage_slope=.5,drainage_lower_limit=0.,drainage_upper_limit=25.)
     rain=rng.exponential(10,n)*(rng.random(n)<.1); et=rng.uniform(0,9,n); tr=et*rng.uniform(0,1,n)

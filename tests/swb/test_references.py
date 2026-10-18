@@ -54,7 +54,25 @@ def test_missing_soil_or_incomplete_reference_cannot_shrink_frozen_support():
     hyd["wilting_point"].values[0, 0] = np.nan
     with pytest.raises(ValueError, match="Missing native hydraulic"):
         derive_reference(gssm, mask, hyd, site="fixture", sources=["synthetic"], hydraulic_provenance="fixture")
+
     gssm, mask, hyd = inputs()
     gssm.values[:40, 0, 0] = np.nan
     with pytest.raises(ValueError, match="99%"):
         derive_reference(gssm, mask, hyd, site="fixture", sources=["synthetic"], hydraulic_provenance="fixture")
+
+
+def test_daily_model_reuses_unchanged_observation_reference(tmp_path):
+    from pysweb.swb.formulation import canonical_id
+    gssm, mask, hyd = inputs()
+    record = derive_reference(gssm, mask, hyd, site="fixture", sources=["synthetic"],
+                              hydraulic_provenance="fixture")
+    record["formulation_version"] = "swb-conservative-2p-v1"
+    record["artifact_id"] = canonical_id(record)
+    path = tmp_path / "reference.json"
+    path.write_text(json.dumps(record))
+    assert load_reference(path) == record
+    record["formulation_version"] = "unknown-model"
+    record["artifact_id"] = canonical_id(record)
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="formulation version"):
+        load_reference(path)

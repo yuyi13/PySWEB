@@ -85,6 +85,8 @@ def test_native_full_offline_workflow(tmp_path):
         assert {'rzsm_default','rzsm_calibrated','soil_porosity','soil_evaporation_forcing','ndvi'} <= set(result.data_vars)
         assert result.rzsm_default.dims == ('time','layer','y','x')
         assert result.sizes['time'] == 6 and result.sizes['layer'] == 2
+        np.testing.assert_array_equal(result.is_warmup, [1, 0, 0, 0, 0, 0])
+        assert json.loads(result.attrs['initialization_json'])['initial_state'] == 'physical_field_capacity'
         assert not np.allclose(result.rzsm_default,result.rzsm_calibrated)
         for scenario in ('default','calibrated'):
             assert float(np.abs(result[f'balance_residual_{scenario}']).max()) < 1e-5

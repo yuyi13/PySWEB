@@ -99,11 +99,22 @@ def native_plan(config, stages):
         raise ValueError('L7 gap-fill donors must end within development')
     if config.get('forcing') and not boundary:
         raise ValueError('Forcing support requires a development boundary')
+    analysis_start = first if enabled else default_scoring_start
+    warmup_end = min(end, analysis_start-pd.Timedelta(days=1))
+    warmup = [str(start.date()), str(warmup_end.date())] if warmup_end >= start else None
+    initialization = dict(initial_state='physical_field_capacity',
+        mode='repeated_year' if spinup else 'actual_forcing_prefix',
+        actual_start=str(start.date()), warmup_window=warmup,
+        analysis_start=str(analysis_start.date()),
+        actual_warmup_days=max(0, (warmup_end-start).days+1),
+        artificial_warmup_days=365*spinup['repeats'] if spinup else 0,
+        interpretation='Field-capacity assumption; actual prefix alone does not establish initial-state independence')
     base = Path(run['root'])/run['name']
     return {'stages':list(stages),'run_directory':str(base), 'windows':[[run['start'],run['end']]],
             'calibration_scoring_window':[str(first.date()),str(last.date())] if enabled else None,
-            'initialization_window':[str(start.date()),str((first-pd.Timedelta(days=1)).date())]
-                if enabled and first > start else None,
+            'initialization_window':warmup,
+            'initialization':initialization,
+            'analysis_window':[str(analysis_start.date()),str(end.date())] if analysis_start <= end else None,
             'calibration_grid':'native GSSM; complete cells covering AOI',
             'output_grid':'selected Landsat native 30 m UTM; shared by SEB and SWB',
             'products':[str(base/'products'/name) for name in ('SSEBop_ET.nc','SWEB_RZSM.nc')],
@@ -127,7 +138,7 @@ def run_native(config, stages, dry_run=False):
     base.mkdir(parents=True,exist_ok=True)
     atomic_json(base/'resolved-config.json',plan)
     start,end = run['start'],run['end']
-    fit_start,fit_end = plan['calibration_scoring_window'] if enabled else (start,end)
+    fit_start,fit_end = plan['calibration_scoring_window'] if enabled else (plan['initialization']['analysis_start'],end)
     boundary = fit_end if enabled else (str((pd.Timestamp(run['holdout_start'])-pd.Timedelta(days=1)).date()) if run.get('holdout_start') else None)
     reference = Path(soil.get('reference_file', prepared/'reference_ssm_native.nc'))
     extent = list(run['extent'])
@@ -364,6 +375,7 @@ def run_native(config, stages, dry_run=False):
         output = run_default_and_calibrated(**args,**model, precip=rain,output_dir=str(products),
             output_file='SWEB_with_spinup.nc' if spinup else 'SWEB_RZSM.nc',
             calibration_file=calibration_file if enabled else None,
+            initialization=plan['initialization'],
             auxiliary_inputs={'soil_evaporation_forcing':evaporation})
         if spinup:
             from pysweb.workflow_protocol import trim_initialization
@@ -376,7 +388,9 @@ def run_native(config, stages, dry_run=False):
                 raise ValueError('Simulation validity/budget acceptance failed')
         if config.get('evaluation'):
             from pysweb.workflow_protocol import evaluate_product
-            evaluate_product(output,config['evaluation'],base/'evaluation',mask)
+            evaluation = dict(config['evaluation'])
+            evaluation.setdefault('scoring_start', plan['initialization']['analysis_start'])
+            evaluate_product(output,evaluation,base/'evaluation',mask)
         grid_contract = assert_identical_grids(seb_final,output)
         atomic_json(base/'products/grid-contract.json',grid_contract)
         if enabled:

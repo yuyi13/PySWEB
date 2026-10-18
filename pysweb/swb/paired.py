@@ -99,6 +99,15 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
             result.title = 'SWB default and calibrated soil moisture'
             result.scenarios = ','.join(scenarios)
             result.configuration_json = json.dumps(config or {}, default=str, sort_keys=True)
+            initialization = (config or {}).get('initialization')
+            if initialization:
+                result.initialization_json = json.dumps(initialization, sort_keys=True)
+                time = first['time']
+                dates = nc.num2date(time[:], time.units, calendar=getattr(time, 'calendar', 'standard'))
+                warmup = result.createVariable('is_warmup', 'u1', ('time',))
+                warmup[:] = [date.strftime('%Y-%m-%d') < initialization['analysis_start'] for date in dates]
+                warmup.setncatts(dict(long_name='Initialization period excluded from default analysis',
+                    flag_values=np.array([0, 1], dtype='uint8'), flag_meanings='analysis warmup'))
             for name in ('precipitation', 'effective_precipitation'):
                 _copy_variable(result, first[name])
             for scenario, path in scenarios.items():
@@ -122,7 +131,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
                     for name,variable in source.variables.items():
                         if name not in common:
                             _copy_variable(result,variable,f'{name}_{scenario}')
-                    for key in ('diffusivity_factor','root_beta','formulation_version','reference_artifact_id','tau_days','max_substep_days','hydraulic_cfl','dry_reference_factor','wet_reference_factor','max_root_depth_mm'):
+                    for key in ('diffusivity_factor','root_beta','formulation_version','reference_artifact_id','tau_days','time_integration','time_step_days','dry_reference_factor','wet_reference_factor','max_root_depth_mm'):
                         if key in source.ncattrs():
                             result.setncattr(f'{key}_{scenario}',source.getncattr(key))
             for name,(path,variable_name) in auxiliaries.items():
@@ -150,7 +159,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
 
 
 def run_default_and_calibrated(*, output_dir, output_file='SWEB_RZSM.nc', calibration_file=None,
-                               auxiliary_inputs=None, **kwargs):
+                               auxiliary_inputs=None, initialization=None, **kwargs):
     """Use identical forcing, initial-state convention and soil for both runs."""
     output_dir = Path(output_dir)
     scenarios = {}
@@ -168,4 +177,5 @@ def run_default_and_calibrated(*, output_dir, output_file='SWEB_RZSM.nc', calibr
     for name,filename in SOIL_FILE_STEMS.items():
         auxiliaries['soil_'+name] = (str(Path(options['soil_dir'])/filename),name)
     return combine_scenarios(scenarios,output_dir/output_file,auxiliaries,
-        config={**options,'calibration_file':str(calibration_file) if calibration_file else None})
+        config={**options,'calibration_file':str(calibration_file) if calibration_file else None,
+                'initialization':initialization})

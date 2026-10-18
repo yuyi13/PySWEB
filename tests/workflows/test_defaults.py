@@ -52,6 +52,28 @@ def test_defaults_use_single_modern_sensor_path_and_2013_initialisation(tmp_path
     assert len(calls) == 1 and calls[0]['sensors'] == ['LC08', 'LC09']
 
 
+@pytest.mark.parametrize('enabled', ['true', 'false'])
+def test_actual_2013_warmup_is_shared_by_calibration_and_normal_runs(tmp_path, enabled):
+    config = load_config(config_file(tmp_path, calibration=f'enabled = {enabled}'))
+    plan = run_config(config, dry_run=True)
+    assert plan['initialization_window'] == ['2013-05-17', '2013-12-31']
+    assert plan['analysis_window'] == ['2014-01-01', '2020-12-31']
+    assert plan['initialization']['initial_state'] == 'physical_field_capacity'
+    assert plan['initialization']['mode'] == 'actual_forcing_prefix'
+    assert plan['initialization']['artificial_warmup_days'] == 0
+    assert not config.get('spinup')
+    historical = load_config(config_file(tmp_path, calibration=f'enabled = {enabled}',
+        sensors='sensors = ["LT05", "LE07", "LC08", "LC09"]'))
+    assert run_config(historical, dry_run=True)['initialization_window'] is None
+
+
+def test_2013_only_normal_run_is_explicitly_all_warmup(tmp_path):
+    config = load_config(config_file(tmp_path, end='2013-12-31', calibration='enabled = false'))
+    plan = run_config(config, dry_run=True)
+    assert plan['analysis_window'] is None
+    assert plan['initialization_window'] == ['2013-05-17', '2013-12-31']
+
+
 def test_historical_sensors_require_explicit_selection(tmp_path):
     with pytest.raises(ValueError, match='explicitly select LT05/LE07'):
         load_config(config_file(tmp_path, start='2011-01-01'))

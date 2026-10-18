@@ -1,5 +1,12 @@
 # Changelog
 
+## Daily two-parameter SWB — 2026-10-18
+
+- Use one conservative update per daily forcing record; retain donor/receiver limits, physical bounds and separate actual/unmet E/T budgets.
+- Version the daily formulation separately from the subcycled solver and reject its prior calibrations; retain compatible immutable GSSM references.
+- Document and verify physical field capacity → available actual 2013 warm-up → 2014–2020 scoring, with repeated-year spin-up only by explicit opt-in.
+- Preserve Landsat 8/9 and the 5100 m centre-based chip defaults.
+
 ## Native-grid workflow — 2026-10-17
 
 - Preserve Earth Engine source CRS and full affine alignment in downloaded products; retain native soil/reference inputs and grid provenance.

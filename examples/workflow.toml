@@ -8,6 +8,8 @@ center = [147.25, -35.05] # Default 5100 m square: 170 x 170 native 30 m pixels.
 # chip_size_m = 5100      # Override with another positive multiple of 30 m.
 # For a historical run, select its first supported date in 2013 or later.
 # If start is in 2013, calibration starts on 2014-01-01 unless explicitly set.
+# One daily SWB update; physical FC start; available 2013 is warm-up only.
+# No repeated years unless a [spinup] table is explicitly supplied.
 grid_mode = "native"
 sensors = ["LC08", "LC09"] # Add "LT05", "LE07" explicitly when needed.
 processing_buffer_m = 6000

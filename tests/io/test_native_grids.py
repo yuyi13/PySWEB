@@ -3,7 +3,7 @@ Script: test_native_grids.py
 Objective: Verify source alignment, conservative aggregation and exact final product grids.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Synthetic projected and geographic rasters and temporary NetCDF files.
 Outputs: Geospatial contract assertions.
 Usage: python -m pytest tests/io/test_native_grids.py
@@ -164,3 +164,26 @@ def test_combined_auxiliary_uses_exact_output_metadata_and_preserves_values(tmp_
         assert json.loads(actual.auxiliary_grid_metadata_json)['soil_porosity']['affine_metadata_normalized']
     manifest = json.loads((tmp_path/'combined.nc.manifest.json').read_text())
     assert manifest['auxiliary_grids']['soil_porosity']['identical_coordinates']
+
+
+def test_normal_run_product_marks_actual_2013_as_warmup(tmp_path):
+    import json
+    from pysweb.swb.paired import combine_scenarios
+    grid = raster(np.ones((2, 2)), Affine(30, 0, 500000, 0, -30, 6100000))
+    daily = grid.expand_dims(time=np.array(['2013-12-31', '2014-01-01'], dtype='datetime64[D]'))
+    source = xr.Dataset(dict(rzsm_layer_1=daily*.3,
+        precipitation=daily*0, effective_precipitation=daily*0))
+    source.rzsm_layer_1.attrs['depth_bottom_mm'] = 50.
+    source.attrs['state_timing'] = 'start'
+    source.rio.write_crs(grid.rio.crs).rio.write_transform(grid.rio.transform()).to_netcdf(tmp_path/'normal.nc')
+    initialization = dict(initial_state='physical_field_capacity', mode='actual_forcing_prefix',
+        analysis_start='2014-01-01', artificial_warmup_days=0)
+    result = combine_scenarios({'default':tmp_path/'normal.nc'}, tmp_path/'combined.nc',
+        config={'initialization':initialization})
+    with xr.open_dataset(result) as ds:
+        assert ds.attrs['scenarios'] == 'default'
+        np.testing.assert_array_equal(ds.is_warmup, [1, 0])
+        assert json.loads(ds.attrs['initialization_json']) == initialization
+        np.testing.assert_array_equal(ds.time, source.time)
+    manifest = json.loads((tmp_path/'combined.nc.manifest.json').read_text())
+    assert manifest['config']['initialization'] == initialization

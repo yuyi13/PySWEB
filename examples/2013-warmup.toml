@@ -1,0 +1,33 @@
+# Illustrative Yanco configuration; set input locations and GEE project before execution.
+# Field capacity -> available actual 2013 -> score 2014-2020. No repeated years.
+[run]
+name = "yanco_daily_2013_warmup"
+root = "outputs"
+center = [146.2908, -34.9878]
+start = "2013-03-31"
+end = "2025-12-31"
+holdout_start = "2021-01-01"
+workers = 1
+gee_project = "your-gee-project"
+state_timing = "start"
+# Defaults: native grids, Landsat 8/9 only, 5100 m chip (170 x 170 pixels).
+
+[soil]
+source = "openlandmap"
+
+[calibration]
+enabled = true
+start = "2014-01-01"
+end = "2020-12-31"
+seed = 0
+max_iter = 100
+objective = "cell"
+solver_backend = "numba"
+allow_unconverged = false
+
+[model]
+# reference_file = "site_gssm_reference.json" # Freeze study references before fitting.
+max_root_depth = 1000.0
+diff_factor = 1000.0
+root_beta = 0.96
+solver_backend = "numba"

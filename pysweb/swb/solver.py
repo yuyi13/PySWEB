@@ -16,8 +16,7 @@ import pandas as pd
 
 from pysweb.contracts import layer_bottoms
 
-from pysweb.swb.formulation import (FORMULATION_VERSION, TAU_DAYS, MAX_SUBSTEP_DAYS,
-    HYDRAULIC_CFL, budget_names, reject_legacy)
+from pysweb.swb.formulation import (FORMULATION_VERSION, TAU_DAYS, TIME_INTEGRATION, budget_names, reject_legacy)
 from pysweb.swb.conservative import column_kernel
 
 
@@ -97,18 +96,17 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
     upper = float(props.get("drainage_upper_limit", 25.))
     if props.get("drainage_lower_limit", 0.) != 0.:
         raise ValueError("A positive drainage floor violates the zero-water hydraulic limit")
-    # Overrides are for explicit numerical/sensitivity experiments, never optimizer parameters.
+    # Tau overrides are for sensitivity experiments, never optimizer parameters.
     tau = float(props.get("supply_tau_days", TAU_DAYS))
-    max_step = float(props.get("max_substep_days", MAX_SUBSTEP_DAYS))
-    if not all(np.isfinite(v) and v > 0 for v in (tau, max_step)) or not np.isfinite(slope) or slope < 0 or not np.isfinite(upper) or upper < 0:
+    if not (np.isfinite(tau) and tau > 0) or not np.isfinite(slope) or slope < 0 or not np.isfinite(upper) or upper < 0:
         raise ValueError("Invalid drainage or fixed closure settings")
     states, budgets, valid, final = kernel(rain, et, tr, initial.copy(), por, wp, b, ks,
         thick, dry, wet, roots, float(diff_factor), float(time_step), slope, upper,
-        tau, max_step, HYDRAULIC_CFL, state_timing == "end")
+        tau, state_timing == "end")
     result = pd.DataFrame(states, index=times, columns=[f"layer_{i+1}" for i in range(len(bottoms))])
     result.attrs.update(state_timing=state_timing, initial_state=initial,
         final_state=final, final_state_time=times[-1]+pd.Timedelta(days=time_step),
-        formulation_version=FORMULATION_VERSION, supply_tau_days=tau, max_substep_days=max_step,
+        formulation_version=FORMULATION_VERSION, supply_tau_days=tau, time_integration=TIME_INTEGRATION, time_step_days=float(time_step),
         water_balance={key: budgets[:, i] for i, key in enumerate(budget_names(len(bottoms)))},
         forcing_valid=valid, dry_reference=dry, wet_reference=wet)
     return result
@@ -117,7 +115,7 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
 def soil_water_balance_1d(precip_data, et_data, soil_properties, time, time_step=1.,
                           initial_soil_moisture=None, evap_fraction=None, diff_factor=1e3,
                           transpiration_data=None, state_timing="start"):
-    """Conservative two-parameter SWB with fixed physical FC initialisation."""
+    """One conservative update per interval; daily by default, initialised at FC."""
     return _solve(precip_data, et_data, soil_properties, time, time_step,
         initial_soil_moisture, evap_fraction, diff_factor, transpiration_data, state_timing)
 

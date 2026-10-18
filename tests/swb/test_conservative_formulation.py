@@ -64,6 +64,35 @@ def test_physical_fc_initialisation_and_partial_root_geometry():
     assert roots[-1] == roots[-2] == 0
 
 
+@pytest.mark.parametrize("backend", ["reference", "numba"])
+def test_daily_transfer_matches_one_independent_balance(backend):
+    solver = soil_water_balance_1d
+    if backend == "numba":
+        from pysweb.swb.accelerated import soil_water_balance_1d as solver
+    p = props(2, porosity=np.full(2, .5), b_coefficient=np.ones(2),
+              conductivity_sat=np.ones(2), drainage_slope=0.)
+    result = solver([0.], [0.], p, ["2020-01-01"],
+                    initial_soil_moisture=[.25, .1], diff_factor=10., state_timing="end")
+    # S=1/2, K=(1/2)^5, D=10*(1/2)^3; centres are 75 mm apart.
+    transfer_mm = .03125 + 1.25 * .15 / 75.
+    np.testing.assert_allclose(result.values[0],
+        [.25-transfer_mm/50., .1+transfer_mm/100.], rtol=0, atol=1e-15)
+    assert result.attrs["water_balance"]["interface_flux_1"][0] == pytest.approx(transfer_mm)
+    np.testing.assert_array_equal(result.attrs["water_balance"]["substeps"], [1.])
+    assert result.attrs["time_step_days"] == 1.
+
+
+def test_subcycling_settings_and_prior_calibrations_are_rejected(tmp_path):
+    with pytest.raises(ValueError, match="max_substep_days"):
+        soil_water_balance_1d([0.], [0.], props(max_substep_days=1/768), ["2020-01-01"])
+    path = tmp_path / "subcycled.csv"
+    identity = settings_identity()
+    identity["formulation_version"] = "swb-conservative-2p-v1"
+    pd.DataFrame([dict(diff_factor=1000., root_beta=.96, **identity)]).to_csv(path, index=False)
+    with pytest.raises(ValueError, match="formulation_version"):
+        load_calibration(path)
+
+
 @pytest.mark.parametrize("initial", [0., .01, .149, .449, .45])
 @pytest.mark.parametrize("rain,et", [(0., 0.), (0., 10000.), (1000., 10000.), (1000., 0.)])
 def test_extremes_joint_donors_and_independent_layer_profile_balances(initial, rain, et):

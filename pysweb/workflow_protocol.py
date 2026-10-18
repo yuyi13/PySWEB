@@ -62,7 +62,7 @@ def write_support(directory, start, end, development_end):
 
 def initialize_inputs(directory, start, end, scoring_start, development_end,
                       spinup=None, peer_directories=()):
-    """Freeze paired support, mask soil and prepend development forcing cycles."""
+    """Freeze support and retain actual forcing; prepend cycles only when requested."""
     from pysweb.swb.spinup import prepend_cycles
     directory = Path(directory)
     masks = []
@@ -108,7 +108,10 @@ def initialize_inputs(directory, start, end, scoring_start, development_end,
     record = dict(actual_start=start, simulation_start=simulation_start, end=end,
         scoring_start=scoring_start, development_end=development_end,
         spinup_days=(pd.Timestamp(scoring_start)-pd.Timestamp(simulation_start)).days,
-        spinup=spinup, cells=int(mask.sum()), peers=list(map(str, peer_directories)), files=mapping)
+        spinup=spinup, initial_state="physical_field_capacity",
+        initialization_mode="repeated_year" if spinup else "actual_forcing_prefix",
+        artificial_warmup_days=(pd.Timestamp(start)-pd.Timestamp(simulation_start)).days,
+        cells=int(mask.sum()), peers=list(map(str, peer_directories)), files=mapping)
     sources = [directory/f'{stem}_daily_{actual_tag}.nc' for stem, _ in FORCING_FILES.values()]
     sources += [directory/name for name in SOIL_FILE_STEMS.values()]
     sources += [Path(folder)/'development_support.nc' for folder in [directory, *peer_directories]]
