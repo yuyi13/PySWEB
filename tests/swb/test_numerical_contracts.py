@@ -4,7 +4,7 @@ Script: test_numerical_contracts.py
 Objective: Verify conservation, restart states, forcing calendars, calibration support and output identity.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Synthetic soil profiles, daily forcing arrays, demo files and provenance manifests.
 Outputs: Regression assertions.
 Usage: python -m pytest tests/swb/test_numerical_contracts.py
@@ -37,8 +37,6 @@ def properties(n=2):
         "drainage_slope": 0.5,
         "drainage_upper_limit": 25.0,
         "drainage_lower_limit": 0.0,
-        "sm_max_factor": 1.0,
-        "sm_min_factor": 1.0,
     }
 
 
@@ -68,7 +66,9 @@ def test_water_budget_closes_for_dry_wet_and_saturated_profiles(n, rain, et):
         assert np.sum(budget["overflow"]) > 0
 
 
-def test_state_timing_and_restart_are_consistent():
+@pytest.mark.parametrize("backend", ["reference", "numba"])
+def test_state_timing_and_restart_are_consistent(backend):
+    soil_water_balance_1d = import_module("pysweb.swb." + ("solver" if backend == "reference" else "accelerated")).soil_water_balance_1d
     time = pd.date_range("2024-01-01", periods=4)
     start = soil_water_balance_1d([10, 0, 0, 3], [2] * 4, properties(), time)
     end = soil_water_balance_1d(
@@ -168,7 +168,7 @@ def test_solver_failure_penalises_calibration_candidate(monkeypatch):
     }
     data = np.ones((3, 1, 2))
     score, count = cal._compute_rmse(
-        [1000, 1, 1, 0.96],
+        [1000, 0.96],
         data,
         data,
         data,

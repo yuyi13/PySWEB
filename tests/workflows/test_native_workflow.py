@@ -3,7 +3,7 @@ Script: test_native_workflow.py
 Objective: Exercise both native preparation grids, calibration and paired products offline.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Small synthetic UTM SEB, geographic rain/reference and custom hydraulic data.
 Outputs: Full workflow, holdout and consolidated output-contract assertions.
 Usage: python -m pytest tests/workflows/test_native_workflow.py
@@ -95,7 +95,7 @@ def test_native_full_offline_workflow(tmp_path):
                                   base/'calibration_inputs/soil_porosity.nc')['identical']
     parameters = pd.read_csv(base/'calibration.csv')
     assert len(parameters) == 1
-    assert set(['diff_factor','sm_max_factor','sm_min_factor','root_beta']) <= set(parameters)
+    assert set(['diff_factor','root_beta']) <= set(parameters)
     transfer = json.loads((base/'calibration-transfer.json').read_text())
     assert transfer['scoring_end'] == '2020-01-04'
     # A chip smaller than a GSSM cell cannot support a full-cell transfer score.

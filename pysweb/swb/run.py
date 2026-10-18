@@ -4,7 +4,7 @@ Script: run.py
 Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
 Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
 Usage: pysweb swb-run --help
@@ -40,10 +40,11 @@ from pysweb.swb.core import (
     prepare_soil_property_grids,
 )
 from pysweb.swb.solver import soil_water_balance_1d
+from pysweb.swb.formulation import (budget_names, settings_identity, reference_properties,
+    load_calibration, reject_legacy)
 from pysweb.contracts import daily_data
 from pysweb.io.provenance import input_manifest, atomic_netcdf, save_output_manifest, validate_existing_output
 
-BUDGET_NAMES = ("infiltration", "actual_et", "drainage", "overflow", "storage_adjustment", "storage_change", "balance_residual")
 
 _PROCESS_RUN_STATE: Dict[str, object] = {}
 
@@ -88,18 +89,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--time-step", type=float, default=1.0, help="Model time step in days.")
     parser.add_argument("--diff-factor", type=float, default=1e3, help="Diffusivity scaling factor (mm).")
     parser.add_argument(
-        "--sm-max-factor",
-        type=float,
-        default=1.0,
-        help="Multiplier for porosity to set the upper soil moisture bound.",
-    )
-    parser.add_argument(
-        "--sm-min-factor",
-        type=float,
-        default=1.0,
-        help="Multiplier for wilting point to set the lower soil moisture bound.",
-    )
-    parser.add_argument(
         "--param-grid",
         help="NetCDF with spatially varying model parameters (currently diff_factor).",
     )
@@ -131,6 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Depth to layer bottoms in mm (overrides defaults/inferred metadata).",
     )
 
+    parser.add_argument("--reference-file", help="Frozen GSSM reference JSON; required to reuse its calibrated coefficients.")
+    parser.add_argument("--max-root-depth", type=float, default=1000., help="Fixed maximum root depth in mm.")
     parser.add_argument("--root-beta", type=float, default=0.96, help="Root distribution beta parameter.")
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
@@ -256,6 +247,7 @@ def _compute_row_soil_moisture(
         raise ValueError("solver_backend must be reference or numba")
     n_time = effective_precip_values.shape[0]
     n_layers = int(np.asarray(soil_grids["layer_depth"]).size)
+    BUDGET_NAMES = budget_names(n_layers)
     row_soil_moisture = np.full((n_time, n_layers, n_lon), np.nan, dtype=float)
     final_state = np.full((n_layers, n_lon), np.nan)
     budgets = np.full((n_time, len(BUDGET_NAMES), n_lon), np.nan)
@@ -385,15 +377,14 @@ def _run_model_for_lat_process(lat_idx: int) -> tuple[int, np.ndarray]:
 
 
 def run_swb_workflow(**workflow_kwargs) -> Path | None:
+    reject_legacy(workflow_kwargs)
     args = _build_run_args(dict(workflow_kwargs))
+    fixed_settings = {k: getattr(args, k) for k in ("max_root_depth", "drainage_slope", "drainage_upper_limit", "drainage_lower_limit")}
+    formulation = settings_identity(args.reference_file, **fixed_settings)
+    for key, value in formulation.items():
+        setattr(args, key, value)
     if args.calibration_file:
-        parameters = pd.read_csv(args.calibration_file)
-        if len(parameters) != 1:
-            raise ValueError("Calibration CSV must contain exactly one parameter row.")
-        for key in ("diff_factor", "sm_max_factor", "sm_min_factor", "root_beta"):
-            value = float(parameters.iloc[0][key])
-            if not np.isfinite(value):
-                raise ValueError(f"Non-finite calibrated parameter: {key}")
+        for key, value in load_calibration(args.calibration_file, args.reference_file, **fixed_settings).items():
             setattr(args, key, value)
     if args.time_step != 1.0:
         raise ValueError("Daily SWB forcing requires time_step=1 day.")
@@ -482,8 +473,8 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         drainage_slope = args.drainage_slope,
         drainage_upper_limit = args.drainage_upper_limit,
         drainage_lower_limit = args.drainage_lower_limit,
-        sm_max_factor = args.sm_max_factor,
-        sm_min_factor = args.sm_min_factor,
+        **reference_properties(args.reference_file),
+        max_root_depth=args.max_root_depth,
     )
     param_values = None
     if param_grids is not None:
@@ -516,6 +507,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
 
     n_time, n_lat, n_lon = effective_precip_values.shape
     n_layers = soil_grids["layer_depth"].size
+    BUDGET_NAMES = budget_names(n_layers)
 
     total_cells = n_lat * n_lon
     print(
@@ -533,7 +525,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     source_paths = [args.precip, args.effective_precip, args.et, args.transpiration, *soil_paths.values()]
-    source_paths += [p for p in [args.ndvi, args.param_grid, args.calibration_file] if p]
+    source_paths += [p for p in [args.ndvi, args.param_grid, args.calibration_file, args.reference_file] if p]
     manifest = input_manifest(vars(args), source_paths)
     if args.skip_existing and output_path.exists():
         validate_existing_output(output_path, manifest)
@@ -541,7 +533,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         return output_path
 
     final_soil_moisture = np.full((n_layers, n_lat, n_lon), np.nan)
-    budget_values = np.full((n_time, len(BUDGET_NAMES), n_lat, n_lon), np.nan)
+    budget_values = np.full((n_time, len(BUDGET_NAMES), n_lat, n_lon), np.nan, dtype=args.dtype)
     forcing_valid = np.zeros((n_time, n_lat, n_lon), dtype=np.uint8)
     soil_moisture = np.full((n_time, n_layers, n_lat, n_lon), np.nan, dtype=float)
     progress_interval = max(1, total_cells // 20)
@@ -730,7 +722,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     native_coords = {"time":time_index, args.lat_dim:latitudes, args.lon_dim:longitudes}
     for idx, name in enumerate(BUDGET_NAMES):
         da = xr.DataArray(budget_values[:, idx], dims=("time",args.lat_dim,args.lon_dim), coords=native_coords,
-                          attrs={"units":"mm", "long_name":name.replace("_", " "),
+                          attrs={"units":("day" if "_days_layer_" in name else "1" if name == "substeps" else "mm"), "long_name":name.replace("_", " "),
                                  "time_support":"interval starting at time, duration 1 day"})
         ds_rzsm[name] = _maybe_resample(da, args.lat_dim, args.lon_dim, sm_target_lat, sm_target_lon)
     valid_da = xr.DataArray(forcing_valid.astype(float), dims=("time",args.lat_dim,args.lon_dim), coords=native_coords)
@@ -770,8 +762,10 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         attrs["parameter_grid"] = str(param_path)
     else:
         attrs["diffusivity_factor"] = args.diff_factor
-    attrs["sm_max_factor"] = args.sm_max_factor
-    attrs["sm_min_factor"] = args.sm_min_factor
+    attrs.update(formulation)
+    attrs.update(reference_properties(args.reference_file))
+    attrs["max_root_depth_mm"] = args.max_root_depth
+    attrs["storage_adjustment_comment"] = "Always zero; no water restoration to WP or reference bounds"
     ds_rzsm.attrs.update(attrs)
     if effective_precip.rio.crs is not None:
         ds_rzsm = ds_rzsm.rio.set_spatial_dims(x_dim=args.lon_dim, y_dim=args.lat_dim)

@@ -3,7 +3,7 @@ Script: test_cell_objective.py
 Objective: Verify cell-day errors cannot cancel spatially and use fixed area weights.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Opposing synthetic residuals and a deterministic solver stub.
 Outputs: Exact weighted-loss and fixed-support assertions.
 Usage: python -m pytest tests/swb/test_cell_objective.py
@@ -22,7 +22,7 @@ def test_cell_day_loss_retains_opposing_errors_and_area_weights(monkeypatch):
     forcing = np.ones((2,1,2))
     obs = np.asarray([[[.1,.3]],[[.1,.3]]])
     valid = np.ones((1,2),dtype=bool)
-    args = ([1000,1,1,.96],forcing,forcing,forcing,obs,dates,{},valid,None,[50],0,.5,25,0,False)
+    args = ([1000,.96],forcing,forcing,forcing,obs,dates,{},valid,None,[50],0,.5,25,0,False)
     contexts = {kind:module._prepare_observation_context(forcing,forcing,forcing,obs,valid,objective=kind)
                 for kind in ('cell','domain_mean')}
     assert module._compute_rmse(*args,observation_context=contexts['cell'])[0] == pytest.approx(.1)

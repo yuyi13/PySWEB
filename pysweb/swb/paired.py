@@ -3,7 +3,7 @@ Script: paired.py
 Objective: Run default and calibrated SWB and stream both scenarios into one NetCDF.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Common prepared forcing/soil, optional calibrated scalars and run options.
 Outputs: Consolidated RZSM scenarios, shared auxiliaries, budgets and provenance.
 Usage: from pysweb.swb.paired import run_default_and_calibrated
@@ -122,7 +122,7 @@ def combine_scenarios(scenarios, output, auxiliaries=None, config=None):
                     for name,variable in source.variables.items():
                         if name not in common:
                             _copy_variable(result,variable,f'{name}_{scenario}')
-                    for key in ('diffusivity_factor','sm_max_factor','sm_min_factor','root_beta'):
+                    for key in ('diffusivity_factor','root_beta','formulation_version','reference_artifact_id','tau_days','max_substep_days','hydraulic_cfl','dry_reference_factor','wet_reference_factor','max_root_depth_mm'):
                         if key in source.ncattrs():
                             result.setncattr(f'{key}_{scenario}',source.getncattr(key))
             for name,(path,variable_name) in auxiliaries.items():

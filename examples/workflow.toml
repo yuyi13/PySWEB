@@ -4,7 +4,10 @@ name = "north_wagga"
 root = "outputs"
 start = "2024-01-01"
 end = "2024-01-31"
-extent = [147.20, -35.10, 147.30, -35.00]
+center = [147.25, -35.05] # Default 5100 m square: 170 x 170 native 30 m pixels.
+# chip_size_m = 5100      # Override with another positive multiple of 30 m.
+# For a historical run, select its first supported date in 2013 or later.
+# If start is in 2013, calibration starts on 2014-01-01 unless explicitly set.
 grid_mode = "native"
 sensors = ["LC08", "LC09"] # Add "LT05", "LE07" explicitly when needed.
 processing_buffer_m = 6000
@@ -22,9 +25,9 @@ max_iter = 100
 spinup_days = 7
 
 [model]
+# reference_file = "site_gssm_reference.json"  # Frozen artifact shared by both scenarios.
+max_root_depth = 1000.0
 diff_factor = 1000.0
-sm_max_factor = 1.0
-sm_min_factor = 1.0
 root_beta = 0.96
 
 [ssebop]

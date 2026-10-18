@@ -3,11 +3,11 @@ Script: grids.py
 Objective: Select exact raster templates and explicitly align continuous inputs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Georeferenced rasters, geographic AOI bounds and target templates.
 Outputs: Native-grid subsets and aligned fields with explicit spatial coordinates.
 Usage: from pysweb.io.grids import open_template, subset_template, align_to_grid
-Dependencies: numpy, xarray, rioxarray, rasterio
+Dependencies: numpy, xarray, rioxarray, rasterio, pyproj
 """
 from pathlib import Path
 import math
@@ -16,8 +16,48 @@ import xarray as xr
 import rioxarray
 from rasterio.enums import Resampling
 from rasterio.warp import transform_bounds
-from pyproj import Transformer
+from pyproj import CRS, Transformer
 from rasterio.windows import from_bounds
+
+
+def chip_extent(center, size_m=5100.0):
+    """Plan a metric point chip with one pixel of acquisition margin.
+
+    The final window is snapped to the selected Landsat affine by
+    centered_template; this geographic envelope only provides source coverage.
+    """
+    point = np.asarray(center, dtype=float)
+    size = float(size_m)
+    if (point.shape != (2,) or not np.isfinite(point).all()
+            or not -180 <= point[0] <= 180 or not -80 < point[1] < 84):
+        raise ValueError('run.center requires finite [longitude, latitude] within the UTM domain')
+    pixels = size / 30.0
+    if not np.isfinite(size) or size <= 0 or not np.isclose(pixels, round(pixels), rtol=0, atol=1e-8):
+        raise ValueError('chip_size_m must be a positive whole multiple of 30 m')
+    lon, lat = point
+    zone = min(60, max(1, int((lon + 180) // 6) + 1))
+    crs = f'EPSG:{32600 + zone if lat >= 0 else 32700 + zone}'
+    x, y = Transformer.from_crs('EPSG:4326', crs, always_xy=True).transform(lon, lat)
+    half = size / 2 + 30.0
+    return list(transform_bounds(crs, 'EPSG:4326', x-half, y-half, x+half, y+half, densify_pts=65))
+
+
+def centered_template(template, center, size_m=5100.0):
+    """Select a fixed-size chip nearest a point using only native whole pixels."""
+    chip_extent(center, size_m)  # Validate point and requested metric dimensions.
+    template = spatial(template)
+    transform = template.rio.transform()
+    if (not CRS(template.rio.crs).utm_zone or transform.b or transform.d
+            or not np.allclose([transform.a, transform.e], [30., -30.], rtol=0, atol=1e-6)):
+        raise ValueError('Point chips require a north-up native 30 m Landsat UTM grid')
+    x, y = Transformer.from_crs('EPSG:4326', template.rio.crs, always_xy=True).transform(*center)
+    column, row = ~transform * (x, y)
+    pixels = int(round(float(size_m) / 30.0))
+    x0, y0 = math.floor(column - pixels/2 + .5), math.floor(row - pixels/2 + .5)
+    x1, y1 = x0 + pixels, y0 + pixels
+    if x0 < 0 or y0 < 0 or x1 > template.sizes['x'] or y1 > template.sizes['y']:
+        raise ValueError('Template does not cover the complete point chip; prepare/download a padded extent')
+    return template.isel(x=slice(x0, x1), y=slice(y0, y1))
 
 
 def spatial(data):

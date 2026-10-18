@@ -24,8 +24,6 @@ spinup_days = 7
 
 [model]
 diff_factor = 1000.0
-sm_max_factor = 1.0
-sm_min_factor = 1.0
 root_beta = 0.96
 
 [ssebop]

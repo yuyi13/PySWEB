@@ -1,6 +1,8 @@
 # Native downloads, two preparation grids, one final grid
 
-The configured workflow defaults to `run.grid_mode = "native"`. `run.extent` remains a geographic bounding box used to select complete pixels. It does not prescribe an output projection or degree resolution.
+The configured workflow defaults to `run.grid_mode = "native"`. Set `run.center = [longitude, latitude]` for a default 5100 m square. The final chip is the nearest 170 × 170 pixel window on the selected native 30 m Landsat grid, with no resampling; its centre can move by up to 15 m along each grid axis. `run.chip_size_m` accepts another positive multiple of 30 m. `chip-window.json` records the resolved CRS, affine transform, bounds and dimensions.
+
+For custom areas, use `run.extent` as a geographic bounding box instead of `run.center`. It selects complete source pixels and does not prescribe an output projection, degree resolution or fixed dimensions. Point chips and explicit extents/projected AOIs are mutually exclusive. The point-chip acquisition envelope includes a one-pixel margin; final cropping and calibration footprint selection use the resolved native chip bounds.
 
 ```mermaid
 flowchart TD
@@ -10,7 +12,7 @@ flowchart TD
   G[Native GSSM reference cells] --> C[Calibration preparation: exact GSSM template]
   E --> C
   R[Native rainfall and soil predictors] --> C
-  C --> P[Fit four domain scalars using area-weighted cell-day errors]
+  C --> P[Fit two domain scalars using area-weighted cell-day errors]
   E --> F[Run preparation: exact Landsat 30 m UTM template]
   R --> F
   F --> D[SWB with default parameters]
@@ -27,9 +29,11 @@ flowchart TD
 
 Downloads specify the selected source band's **CRS and full affine transform**, not a nominal `scale`. An explicit integer-pixel window translates the origin by whole pixels and provides exact dimensions; this avoids ambiguous clipping from a global source origin. Every band in a multiband export must share that source grid; incompatible bands fail explicitly. A downloaded chip or tile mosaic must be an integer-pixel subset of that grid. The downloader records the source projection and verifies the resulting CRS, pixel size, rotation and offset. The Landsat/ERA5 downloader reuses files only with matching manifests and checksums. Source product grids are preserved: a Landsat Level-2 30 m thermal product does not become an independent 30 m thermal observation.
 
-Landsat 8/9 (`LC08`, `LC09`) are the defaults. Set `run.sensors = ["LT05", "LE07", "LC08", "LC09"]` to include earlier missions. Only Level-2 scenes with surface-temperature processing (`L2SP`) are requested. QA is retained; Landsat 7 SLC gaps remain missing unless an explicit, independently checked gap-fill preparation is supplied. No automatic cross-sensor adjustment is introduced.
+Landsat 8/9 (`LC08`, `LC09`) are the defaults, and native runs using only these sensors reject start dates before 2013. Set `run.sensors = ["LT05", "LE07", "LC08", "LC09"]` to include earlier missions and permit earlier simulation dates. Each invocation executes its selected sensor pathway only. Only Level-2 scenes with surface-temperature processing (`L2SP`) are requested. QA is retained; Landsat 7 SLC gaps remain missing unless an explicit, independently checked gap-fill preparation is supplied. No automatic cross-sensor adjustment is introduced.
 
 The generic downloader chooses the first source image for a date; median composites must be prepared after acquisition because they do not have one unambiguous native grid. Separate sensor exports are retained. SSEBop selects one retrieval per date in deterministic order LC09, LC08, LE07, LT05, then path. The selected paths are recorded in the SEB output. Multiple UTM source grids are retained in raw downloads; derived scene fields are explicitly aligned onto the first selected scene's processing grid.
+
+The configured workflow applies `run.sensors` when reading an existing cache as well as when downloading. Filenames from the package downloader include the mission identifier. Custom filenames without that identifier require an explicit scene manifest containing sensor metadata; the workflow stops rather than guessing their mission.
 
 Native OpenLandMap predictors are cached under `inputs/soil_native/`; native GSSM values are retained in `inputs/reference_ssm_native.nc`. GSSM tiles and annual stacks must have congruent source grids before being combined. Full source-file identities accompany prepared outputs. All auxiliary fields in the final files have been aligned to the final grid; their original source metadata remains in the native inputs/manifests.
 
@@ -39,13 +43,17 @@ This follows Earth Engine's [export alignment guidance](https://developers.googl
 
 ## Two preparation targets
 
-**Calibration:** select every complete native GSSM cell intersecting the requested chip. Inputs cover those entire footprints, including portions outside the chip. Continuous fields use area-overlap averaging; missing source support remains missing. GSSM observations are exact subsets, without interpolation. A nominal 5 km × 5 km chip contains roughly a few dozen 1 km cells; counts depend on latitude and alignment.
+**Calibration:** select every complete native GSSM cell intersecting the requested chip. Inputs cover those entire footprints, including portions outside the chip. Continuous fields use area-overlap averaging; missing source support remains missing. GSSM observations are exact subsets, without interpolation. A nominal 5.1 km × 5.1 km chip contains roughly a few dozen 1 km cells; counts depend on latitude and alignment.
 
 **Simulation:** select complete pixels from the chosen native Landsat UTM scene. The exact 30 m grid is shared by SEB and SWB products. Meteorology and soil are explicitly interpolated to this grid. The processing extent is padded by `processing_buffer_m` (default 6000 m) for FANO and whole GSSM footprints, then the final SEB file is cropped without resampling. Increase the buffer if spatial FANO scales require it. Native UTM grids avoid degree-based pixel dimensions; source coverage limitations still apply.
 
 The code rejects a source template that is not a 30 m UTM grid. This deliberate validation also rejects earlier geographic Landsat downloads. Reacquire those inputs into a new run directory; changing only the CRS label cannot correct them.
 
 ## Calibration and independent periods
+
+For Landsat 8/9 runs beginning during 2013, the default calibration scoring window begins on 2014-01-01. The available part of 2013 supplies initialisation and is excluded from the objective. `calibration.start` overrides this default; later-starting studies retain their requested dates. Runs ending in 2013 require an explicit scoring start if calibration is enabled. Dry-run output records the resolved scoring and initialisation windows.
+
+Choose `run.start` from actual accepted scene/forcing coverage. The 2013 policy does not imply January-to-December Landsat coverage or guarantee one-year convergence. Existing complete-forcing and wet/dry convergence gates remain applicable; explicit repeated-year spin-up still requires a complete development source year.
 
 For valid cell-day pairs `(i,t)`, the objective is:
 
@@ -54,7 +62,7 @@ RMSE = sqrt(sum(area_i * (simulation_it - GSSM_it)^2)
             / sum(area_i))
 ```
 
-The denominator includes an area's contribution once per valid day. Errors in different cells cannot cancel before squaring. Each configured domain produces one CSV row containing `diff_factor`, `sm_max_factor`, `sm_min_factor`, `root_beta`, the objective and observation count. These four fitted values are scalars, shared across the site's soil columns.
+The denominator includes an area's contribution once per valid day. Errors in different cells cannot cancel before squaring. Each configured domain produces one CSV row containing `diff_factor`, `root_beta`, the objective, observation count and formulation/reference identities. These two fitted values are scalars, shared across the site's soil columns.
 
 `run.start` begins continuous simulation and initialization. `calibration.start/end` select scoring dates inside that interval. Earlier simulated days are excluded from the objective, as are at least `calibration.spinup_days` initial days. For a 2011–2020 fit with independent 2021–2025 testing, include the desired initialization interval in `run.start`, set calibration end to `2020-12-31`, and set `run.holdout_start = "2021-01-01"`. Do not use test-period performance to revise these settings.
 
@@ -66,7 +74,7 @@ With calibration enabled, the dT climatology ends no later than calibration end.
 
 See [output variables](output-netcdf-layout.md). The final product grid check writes `products/grid-contract.json` and rejects unequal spatial grids. With calibration disabled, the SWB file contains only the default scenario; a calibrated result is never fabricated.
 
-Use `--stages prepare,ssebop`, then `--stages preprocess,calibrate,run`, or run all stages. Resuming later stages uses the same resolved paths. Both SWB scenarios are simulated from the same dates and initialization convention, with common forcing and soil; calibration changes only the four scalar values.
+Use `--stages prepare,ssebop`, then `--stages preprocess,calibrate,run`, or run all stages. Resuming later stages uses the same resolved paths. Both SWB scenarios are simulated from the same dates and initialization convention, with common forcing and soil; calibration changes only diffusivity and root beta.
 
 The coarse calibration grid reduces solver work but does not remove the cost of native-scene SSEBop and fine-grid simulation. These stages still allocate in-memory arrays; size HPC memory for the padded extent, record length, layers and workers. Consolidation and final cropping copy time slabs to avoid an additional full result cube. GPU execution is not introduced by this change.
 
@@ -114,3 +122,5 @@ finite accepted fraction in a native pixel intersecting the analysis AOI. Clear
 pixels confined to the surrounding processing window cannot set the run start.
 `scene-calendar.json` records this spatial scope, the AOI and supported-scene
 count; a footprint with no accepted support fails explicitly.
+
+The [revised SWB contract](swb-formulation.md) defines fixed GSSM references, physical storage limits and explicit rejection of old four-parameter fits.

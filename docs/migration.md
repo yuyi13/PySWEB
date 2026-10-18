@@ -62,3 +62,7 @@ New manifests carry `component_schema="sweb-components-v2"` in both metadata and
 ## Native grids and paired products (17 October 2026)
 
 New configured runs use [native downloads and two preparation grids](native-grids.md). Remove `run.resolution`, choose `grid_mode = "native"`, and use a new output directory. Download reprojection is replaced by CRS-plus-affine preservation, Landsat 8/9 are the default sensors, calibration uses area-weighted GSSM cell-day errors, and the final SEB/SWB products share a Landsat 30 m UTM grid. Refit the four parameters after changing the calibration grid or objective. Existing degree-resolution TOML files select legacy mode; individual old-style component outputs remain supported.
+
+## Conservative SWB (18 October 2026)
+
+The [two-parameter formulation](swb-formulation.md) supersedes the historical four-parameter model described above. Remove `sm_max_factor`, `sm_min_factor` and their calibration bounds, derive a frozen native-cell GSSM reference artifact, set `model.reference_file`, and calibrate diffusivity and root beta into a new output directory. Old calibrations and final-state trajectories require regeneration with the revised equations. New calibration files bind the formulation, fixed numerical and drainage/root-depth settings, and reference identity. Existing historical records remain readable with their pinned source.

@@ -3,7 +3,7 @@ Script: test_protocols.py
 Objective: Verify holdout isolation, donor restrictions, spin-up and evaluation contracts.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Small deterministic synthetic scenes, forcing and observation arrays.
 Outputs: Scientific protocol regression assertions.
 Usage: python -m pytest tests/test_protocols.py
@@ -184,10 +184,15 @@ def test_wet_dry_convergence_and_missing_history():
         available_water_capacity=.2,b_coefficient=4.5,conductivity_sat=8.).items()})
     soil = soil.assign_coords(layer_depth=('layer',[50.,200.]))
     mask = data[0].drop_vars('time').astype(bool) | True
-    parameters = dict(diff_factor=1000.,sm_max_factor=1.,sm_min_factor=1.,root_beta=.96)
+    parameters = dict(diff_factor=1000.,root_beta=.96)
     gate,difference = verify_convergence(forcing,soil,mask,parameters,scoring_start='2014-01-01',
         development_end='2014-12-31',tolerance=.005,minimum_fraction=.99,solver_backend=SOLVER_BACKEND)
-    assert gate['passed'] and gate['initialization_days'] == 365
+    assert not gate['passed'] and gate['initialization_days'] == 365
+    # Rain-free initially empty deep layers cannot gain the legacy floor water.
+    forcing['effective_precip'] = data + 6.
+    gate, difference = verify_convergence(forcing,soil,mask,parameters,scoring_start='2014-01-01',
+        development_end='2014-12-31',tolerance=.005,minimum_fraction=.99,solver_backend=SOLVER_BACKEND)
+    assert gate['passed']
     assert np.isfinite(difference).all()
     forcing.et[30] = np.nan
     with pytest.raises(ValueError,match='missing forcing'):
@@ -330,7 +335,7 @@ def test_configured_spinup_products_and_endpoint_operator(tmp_path):
             grid=grid.rename(y='lat',x='lon').rio.set_spatial_dims(x_dim='lon',y_dim='lat')
         tag=f'{calendar[0]:%Y%m%d}_{calendar[-1]:%Y%m%d}'
         for name,(stem,variable) in FORCING_FILES.items():
-            value={'et':3.,'E_t':2.,'ndvi':.6,'E_s':1.}.get(name,0.)
+            value={'et':3.,'E_t':2.,'ndvi':.6,'E_s':1.}.get(name,6.)
             array=(grid*value).expand_dims(time=calendar).rename(variable)
             array.attrs['units']='1' if name=='ndvi' else 'mm day-1'
             array.to_netcdf(folder/f'{stem}_daily_{tag}.nc')
@@ -351,7 +356,7 @@ def test_configured_spinup_products_and_endpoint_operator(tmp_path):
         sensors=['LC08'],holdout_start='2015-01-01'),soil=dict(source='custom'),
         calibration=dict(enabled=True,start='2014-01-01',end='2014-12-31',max_iter=2,
             no_polish=True,serial_polish=True,solver_backend=SOLVER_BACKEND,seed=0,diff_bounds=[1000.,1000.],
-            sm_max_bounds=[1.,1.],sm_min_bounds=[1.,1.],beta_bounds=[.96,.96]),
+            beta_bounds=[.96,.96]),
         model=dict(solver_backend=SOLVER_BACKEND),forcing=dict(peer_runs=[]),
         spinup=dict(source_year=2014,repeats=2,tolerance=.005,minimum_fraction=.99,solver_backend=SOLVER_BACKEND))
     run_native(config,['benchmark'])

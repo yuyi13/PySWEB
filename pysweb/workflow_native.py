@@ -3,7 +3,7 @@ Script: workflow_native.py
 Objective: Orchestrate native downloads, GSSM calibration and shared Landsat-grid products.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Validated workflow configuration and selected execution stages.
 Outputs: Two final NetCDFs, coarse calibration inputs, parameters and grid checks.
 Usage: pysweb workflow --config examples/workflow.toml
@@ -11,10 +11,11 @@ Dependencies: pandas, pyproj, rasterio, xarray, pysweb
 """
 from pathlib import Path
 import json
+import re
 import pandas as pd
 from rasterio.warp import transform_bounds
 from pysweb.contracts import month_bounds
-from pysweb.io.grids import open_template, subset_template
+from pysweb.io.grids import open_template, subset_template, centered_template
 from pysweb.io.products import crop_product, assert_identical_grids
 from pysweb.io.provenance import atomic_json
 
@@ -31,14 +32,39 @@ def buffered_extent(extent, metres):
                                  right+metres,top+metres,densify_pts=21))
 
 
+def _cached_scene_files(directory, sensors, start, end, pattern='*.tif'):
+    """Apply the selected sensors even when a reused cache contains older missions."""
+    from pysweb.ssebop.api import list_landsat_files, filter_landsat_files_by_date, parse_date_from_filename
+    files = filter_landsat_files_by_date(list_landsat_files(str(directory), pattern), f'{start} to {end}')
+    ranked = []
+    priority = ('LC09', 'LC08', 'LE07', 'LT05')
+    for path in files:
+        match = re.search(r'(?:^|_)(LC08|LC09|LE07|LT05)(?=_|\.)', Path(path).name)
+        if not match:
+            raise ValueError(f'Cannot identify Landsat sensor in {Path(path).name}; provide an explicit landsat.manifest_file')
+        sensor = match.group(1)
+        if sensor in sensors:
+            ranked.append((parse_date_from_filename(path), priority.index(sensor), str(path)))
+    selected = {}
+    for date, _, path in sorted(ranked):
+        selected.setdefault(date, path)
+    if not selected:
+        raise ValueError('No cached Landsat scenes match run.sensors and the requested dates')
+    return list(selected.values())
+
+
 def native_plan(config, stages):
     run, calibration = config['run'], config.get('calibration', {})
     start, end = pd.Timestamp(run['start']), pd.Timestamp(run['end'])
+    modern_sensors = set(run.get('sensors', ['LC08', 'LC09'])) <= {'LC08', 'LC09'}
+    if modern_sensors and start < pd.Timestamp('2013-01-01'):
+        raise ValueError('Landsat 8/9 runs start in 2013 or later; explicitly select LT05/LE07 for earlier simulations')
     enabled = bool(calibration.get('enabled', False))
-    first = pd.Timestamp(calibration.get('start', start))
+    default_scoring_start = pd.Timestamp('2014-01-01') if modern_sensors and start.year == 2013 else start
+    first = pd.Timestamp(calibration.get('start', default_scoring_start))
     last = pd.Timestamp(calibration.get('end', end))
     if enabled and not start <= first <= last <= end:
-        raise ValueError('Native calibration dates must lie within run.start/end; include initialization in run.start')
+        raise ValueError('Native calibration dates must lie within run.start/end; 2013 is initialization by default for Landsat 8/9. Set calibration.start explicitly to override')
     holdout = pd.Timestamp(run['holdout_start']) if run.get('holdout_start') else None
     if enabled and holdout is not None and last >= holdout:
         raise ValueError('Calibration must end before holdout_start')
@@ -74,6 +100,8 @@ def native_plan(config, stages):
     base = Path(run['root'])/run['name']
     return {'stages':list(stages),'run_directory':str(base), 'windows':[[run['start'],run['end']]],
             'calibration_scoring_window':[str(first.date()),str(last.date())] if enabled else None,
+            'initialization_window':[str(start.date()),str((first-pd.Timedelta(days=1)).date())]
+                if enabled and first > start else None,
             'calibration_grid':'native GSSM; complete cells covering AOI',
             'output_grid':'selected Landsat native 30 m UTM; shared by SEB and SWB',
             'products':[str(base/'products'/name) for name in ('SSEBop_ET.nc','SWEB_RZSM.nc')],
@@ -153,6 +181,11 @@ def run_native(config, stages, dry_run=False):
                     sensor_windows=selection.get('sensor_windows'), wrs=selection.get('wrs'))
                 options['gapfill_products'] = prepare_l7(donors, base/'l7_preprocessed', rule, development_end=boundary)
             atomic_json(base/'selected-scenes.json', dict(scenes=selected, rule='cloud_cover then immutable scene_id'))
+        else:
+            options['scene_files'] = _cached_scene_files(prepared/'landsat', run['sensors'], start, end,
+                options.get('landsat_pattern', '*.tif'))
+            atomic_json(base/'selected-scenes.json', dict(files=options['scene_files'],
+                sensors=run['sensors'], rule='sensor priority then immutable path; one scene per date'))
         if config.get('forcing', {}).get('reconstruction'):
             options['reconstruction_protocol'] = config['forcing']['reconstruction']
         if boundary:
@@ -175,8 +208,17 @@ def run_native(config, stages, dry_run=False):
             pysweb.ssebop.run(date_range=period,landsat_dir=str(prepared/'landsat'),met_dir=str(met),
                 dem=str(prepared/'dem/nasadem.tif'),output_dir=str(internal),workers=run['workers'],**options)
     if 'ssebop' in stages or 'preprocess' in stages:
-        template = subset_template(open_template(seb_internal,'ET'),run.get('aoi_bounds',run['extent']),
-            extent_crs=run.get('aoi_crs','EPSG:4326'))
+        source_template = open_template(seb_internal,'ET')
+        if 'center' in run:
+            template = centered_template(source_template, run['center'], run.get('chip_size_m',5100.0))
+            atomic_json(base/'chip-window.json', dict(center=run['center'],
+                size_m=run.get('chip_size_m',5100.0), bounds=list(template.rio.bounds()),
+                crs=str(template.rio.crs), transform=list(template.rio.transform())[:6],
+                shape=[template.sizes['y'],template.sizes['x']],
+                selection='Nearest fixed-size native pixel window; no resampling'))
+        else:
+            template = subset_template(source_template,run.get('aoi_bounds',run['extent']),
+                extent_crs=run.get('aoi_crs','EPSG:4326'))
         from pyproj import CRS
         import numpy as np
         if not CRS(template.rio.crs).utm_zone or not np.allclose(np.abs(template.rio.resolution()),30,rtol=0,atol=1e-6):
@@ -209,7 +251,9 @@ def run_native(config, stages, dry_run=False):
             rain_file=rain_file,rain_var='precipitation',
             et_file=str(seb_internal),et_var='ET',soil_evaporation_var='E_s',transpiration_var='E_t',
             native_cache_dir=str(prepared/'soil_native'),workers=run['workers'],**soil_args)
-        if 'aoi_bounds' in run:
+        if 'center' in run:
+            common.update(template_extent=list(template.rio.bounds()),template_extent_crs=str(template.rio.crs))
+        elif 'aoi_bounds' in run:
             common.update(template_extent=run['aoi_bounds'],template_extent_crs=run['aoi_crs'])
         if enabled:
             pysweb.swb.preprocess(**common,end_date=fit_end,grid_mode='reference',output_dir=str(coarse),
@@ -220,6 +264,9 @@ def run_native(config, stages, dry_run=False):
             from pysweb.workflow_protocol import write_support
             if enabled:
                 write_support(coarse, start, fit_end, boundary)
+                if config.get('model', {}).get('reference_file'):
+                    from pysweb.swb.references import freeze_prepared_support
+                    freeze_prepared_support(coarse, config['model']['reference_file'])
             write_support(fine, start, end, boundary)
 
     def forcing(directory,last,projected=False):
@@ -248,7 +295,7 @@ def run_native(config, stages, dry_run=False):
         options = {key:value for key,value in calibration.items() if key not in {'enabled','start','end','serial_polish'}}
         options['objective'] = 'cell'
         options['spinup_days'] = max(int(options.get('spinup_days',0)),(pd.Timestamp(fit_start)-pd.Timestamp(start)).days)
-        for key in ('drainage_slope','drainage_upper_limit','drainage_lower_limit','use_ndvi_root_depth','ndvi_reference_end'):
+        for key in ('reference_file','max_root_depth','drainage_slope','drainage_upper_limit','drainage_lower_limit','use_ndvi_root_depth','ndvi_reference_end'):
             if key in model:
                 options[key] = model[key]
         tag = f'{start.replace("-","")}_{fit_end.replace("-","")}'
@@ -261,7 +308,7 @@ def run_native(config, stages, dry_run=False):
             if spinup:
                 from pysweb.workflow_protocol import convergence_gate, default_parameters
                 defaults = default_parameters(model)
-                convergence_gate(coarse,record,mask,defaults,spinup,'default',model)
+                convergence_gate(coarse,record,mask,defaults,spinup,'default',model,workers=run['workers'])
         if 'benchmark' in stages:
             pysweb.swb.calibrate(**args,reference_ssm=reference_path,
                 output=str(calibration_file),benchmark_output=base/'calibration-benchmark.json',**options)
@@ -277,8 +324,8 @@ def run_native(config, stages, dry_run=False):
                 pysweb.swb.calibrate(**args,reference_ssm=reference_path,output=str(calibration_file),**options)
             if spinup:
                 parameters = pd.read_csv(calibration_file).iloc[0]
-                values = {k:float(parameters[k]) for k in ('diff_factor','sm_max_factor','sm_min_factor','root_beta')}
-                convergence_gate(coarse,record,mask,values,spinup,'calibrated',model)
+                values = {k:float(parameters[k]) for k in ('diff_factor','root_beta')}
+                convergence_gate(coarse,record,mask,values,spinup,'calibrated',model,workers=run['workers'])
             if protocol:
                 from pysweb.workflow_protocol import reproduce_calibration, calibration_identity
                 reproduction = reproduce_calibration(coarse,record,mask,args,model,calibration_file,
@@ -307,11 +354,11 @@ def run_native(config, stages, dry_run=False):
             if spinup:
                 from pysweb.workflow_protocol import convergence_gate, default_parameters
                 defaults = default_parameters(model)
-                convergence_gate(fine,record,mask,defaults,spinup,'default',model)
+                convergence_gate(fine,record,mask,defaults,spinup,'default',model,workers=run['workers'])
                 if enabled:
                     parameters = pd.read_csv(calibration_file).iloc[0]
                     values = {k:float(parameters[k]) for k in defaults}
-                    convergence_gate(fine,record,mask,values,spinup,'calibrated',model)
+                    convergence_gate(fine,record,mask,values,spinup,'calibrated',model,workers=run['workers'])
         output = run_default_and_calibrated(**args,**model, precip=rain,output_dir=str(products),
             output_file='SWEB_with_spinup.nc' if spinup else 'SWEB_RZSM.nc',
             calibration_file=calibration_file if enabled else None,

@@ -3,7 +3,7 @@ Script: solver.py
 Objective: Solve daily soil-water balances and vertical redistribution for a layered soil column.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-11
+Last updated: 2026-10-18
 Inputs: Daily forcing, per-layer hydraulic properties, initial states and solver settings.
 Outputs: Layer moisture and final states, hydraulic coefficients, water-budget terms and quality flags.
 Usage: import pysweb.swb.solver
@@ -16,368 +16,113 @@ import pandas as pd
 
 from pysweb.contracts import layer_bottoms
 
-# Code lineage: the layered hydraulic matrix follows the Noah-MP ROSR12-style
-# tridiagonal formulation used in earlier SWEB scripts, with Python package
-# revisions for explicit RHS diffusion limiting and configurable bounds.
+from pysweb.swb.formulation import (FORMULATION_VERSION, TAU_DAYS, MAX_SUBSTEP_DAYS,
+    HYDRAULIC_CFL, budget_names, reject_legacy)
+from pysweb.swb.conservative import column_kernel
+
+
+def calculate_hydraulic_properties(soil_moisture, soil_properties, layer, diff_factor):
+    """K = Ksat S^(2b+3); D = alpha_D Ksat S^(b+2), including S=0."""
+    saturation = soil_moisture / soil_properties["porosity"][layer]
+    if not 0 <= saturation <= 1:
+        raise ValueError("Hydraulic state outside physical saturation bounds")
+    b = soil_properties["b_coefficient"][layer]
+    ks = soil_properties["conductivity_sat"][layer]
+    return dict(conductivity=ks*saturation**(2*b+3),
+                diffusivity=diff_factor*ks*saturation**(b+2))
+
+
+def _resolve_sm_bounds(soil_properties):
+    reject_legacy(soil_properties)
+    porosity = np.asarray(soil_properties["porosity"], dtype=float)
+    return np.zeros_like(porosity), porosity.copy()
+
+
+def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
+           initial_soil_moisture=None, evap_fraction=None, diff_factor=1e3,
+           transpiration_data=None, state_timing="start", *, kernel=column_kernel):
+    """Validate once outside either numerical backend; retain missing-forcing states."""
+    props = dict(soil_properties)
+    reject_legacy(props)
+    if not np.isfinite(time_step) or time_step <= 0 or state_timing not in {"start", "end"}:
+        raise ValueError("Invalid timestep or state timing")
+    if not np.isfinite(diff_factor) or diff_factor < 0:
+        raise ValueError("diff_factor must be finite and nonnegative")
+    bottoms = layer_bottoms(props["layer_depth"])
+    shape = bottoms.shape
+    arrays = {}
+    for key in ("porosity", "wilting_point", "available_water_capacity", "b_coefficient",
+                "conductivity_sat", "layer_thickness"):
+        value = np.asarray(props[key], dtype=float)
+        if value.shape != shape or not np.all(np.isfinite(value)):
+            raise ValueError(f"{key} must have one finite value per layer")
+        arrays[key] = value
+    por, wp, awc, b, ks, thick = (arrays[k] for k in arrays)
+    fc = wp + awc
+    if (np.any(por <= 0) or np.any(por > 1) or np.any(wp < 0) or np.any(awc < 0)
+            or np.any(fc > por) or np.any(b <= 0) or np.any(ks < 0)):
+        raise ValueError("Invalid physical hydraulic inputs: require 0 <= WP <= FC <= theta_s <= 1, b > 0, Ksat >= 0")
+    if not np.allclose(np.diff(np.r_[0., bottoms]), thick, rtol=0, atol=1e-10):
+        raise ValueError("Layer thickness and bottom depths disagree")
+    times = pd.DatetimeIndex(time)
+    if not len(times) or times.hasnans or times.has_duplicates or not times.is_monotonic_increasing:
+        raise ValueError("Time must be non-empty, unique and increasing")
+    if len(times) > 1 and not np.allclose(np.diff(times.to_numpy(dtype="datetime64[ns]")) / np.timedelta64(1, "D"), time_step):
+        raise ValueError("Time coordinate cadence must match time_step")
+    def vector(value):
+        if isinstance(value, pd.DataFrame):
+            value = value.iloc[:, 0]
+        return np.asarray(value, dtype=float).reshape(-1)
+    rain, et = vector(precip_data), vector(et_data)
+    fraction = .3 if evap_fraction is None else float(evap_fraction)
+    if not np.isfinite(fraction) or not 0 <= fraction <= 1:
+        raise ValueError("evap_fraction must lie in [0,1]")
+    tr = vector(transpiration_data) if transpiration_data is not None else np.maximum(et, 0.) * (1-fraction)
+    if not len(rain) == len(et) == len(tr) == len(times):
+        raise ValueError("Forcing and time lengths disagree")
+    initial = fc.copy() if initial_soil_moisture is None else np.asarray(initial_soil_moisture, dtype=float).copy()
+    if initial.shape != shape or not np.isfinite(initial).all() or np.any(initial < 0) or np.any(initial > por):
+        raise ValueError("Initial soil moisture is outside physical storage bounds")
+    dry_factor = float(props.get("dry_reference_factor", 1.))
+    wet_factor = float(props.get("wet_reference_factor", 1.))
+    if not (np.isfinite(dry_factor) and 0 <= dry_factor <= 1 and np.isfinite(wet_factor) and wet_factor >= 1):
+        raise ValueError("Invalid fixed dry/wet reference factors")
+    dry, wet = wp.copy(), por.copy()
+    shallow = bottoms <= 150.
+    dry[shallow] *= dry_factor
+    wet[shallow] *= wet_factor
+    roots = _compute_root_distribution_beta(props, beta=props.get("root_beta"),
+        max_root_depth_mm=props.get("max_root_depth"), use_ndvi_root_depth=bool(props.get("use_ndvi_root_depth", False)))
+    slope = float(props.get("drainage_slope", .5))
+    upper = float(props.get("drainage_upper_limit", 25.))
+    if props.get("drainage_lower_limit", 0.) != 0.:
+        raise ValueError("A positive drainage floor violates the zero-water hydraulic limit")
+    # Overrides are for explicit numerical/sensitivity experiments, never optimizer parameters.
+    tau = float(props.get("supply_tau_days", TAU_DAYS))
+    max_step = float(props.get("max_substep_days", MAX_SUBSTEP_DAYS))
+    if not all(np.isfinite(v) and v > 0 for v in (tau, max_step)) or not np.isfinite(slope) or slope < 0 or not np.isfinite(upper) or upper < 0:
+        raise ValueError("Invalid drainage or fixed closure settings")
+    states, budgets, valid, final = kernel(rain, et, tr, initial.copy(), por, wp, b, ks,
+        thick, dry, wet, roots, float(diff_factor), float(time_step), slope, upper,
+        tau, max_step, HYDRAULIC_CFL, state_timing == "end")
+    result = pd.DataFrame(states, index=times, columns=[f"layer_{i+1}" for i in range(len(bottoms))])
+    result.attrs.update(state_timing=state_timing, initial_state=initial,
+        final_state=final, final_state_time=times[-1]+pd.Timedelta(days=time_step),
+        formulation_version=FORMULATION_VERSION, supply_tau_days=tau, max_substep_days=max_step,
+        water_balance={key: budgets[:, i] for i, key in enumerate(budget_names(len(bottoms)))},
+        forcing_valid=valid, dry_reference=dry, wet_reference=wet)
+    return result
+
+
+def soil_water_balance_1d(precip_data, et_data, soil_properties, time, time_step=1.,
+                          initial_soil_moisture=None, evap_fraction=None, diff_factor=1e3,
+                          transpiration_data=None, state_timing="start"):
+    """Conservative two-parameter SWB with fixed physical FC initialisation."""
+    return _solve(precip_data, et_data, soil_properties, time, time_step,
+        initial_soil_moisture, evap_fraction, diff_factor, transpiration_data, state_timing)
 
 _DEFAULT_NDVI_ROOT_QUANTILES = (0.2, 0.4, 0.6, 0.8, 1.0)
 _DEFAULT_NDVI_ROOT_DEPTHS_CM = (5.0, 15.0, 30.0, 60.0, 100.0)
-
-
-def calculate_hydraulic_properties(
-    soil_moisture,
-    soil_properties,
-    layer,
-    diff_factor,
-):
-    """
-    Calculate hydraulic conductivity and diffusivity for one soil layer.
-
-    Parameters are expected in volumetric soil moisture units for state values
-    and mm/day for saturated conductivity. Conductivity follows the
-    Brooks-Corey-style exponent K(theta) with `2b + 3`; diffusivity uses
-    `D(theta) = diff_factor * K(theta) * (theta_s / theta) ** (b + 1)`.
-    """
-    porosity = soil_properties["porosity"][layer]
-    b_coefficient = soil_properties["b_coefficient"][layer]
-    conductivity_sat = soil_properties["conductivity_sat"][layer]
-
-    soil_pre_fac = max(0.01, soil_moisture / porosity)
-
-    exponent_k = 2.0 * b_coefficient + 3.0
-    conductivity = conductivity_sat * soil_pre_fac**exponent_k
-
-    exponent_diff = b_coefficient + 1
-    diffusivity = diff_factor * conductivity * (1.0 / soil_pre_fac**exponent_diff)
-
-    return {
-        "conductivity": conductivity,
-        "diffusivity": diffusivity,
-    }
-
-
-def _resolve_sm_bounds_for_diffusion_limiter(soil_properties, porosity):
-    sm_max_bound = np.asarray(soil_properties.get("sm_max_bound", porosity), dtype=float)
-    sm_min_bound = np.asarray(soil_properties.get("sm_min_bound", 0.0), dtype=float)
-
-    if sm_max_bound.ndim == 0:
-        sm_max_bound = np.full_like(porosity, float(sm_max_bound))
-    if sm_min_bound.ndim == 0:
-        sm_min_bound = np.full_like(porosity, float(sm_min_bound))
-
-    sm_min_bound = np.minimum(sm_min_bound, sm_max_bound)
-    return sm_min_bound, sm_max_bound
-
-
-def _limit_rhs_diffusive_interface_flux(
-    raw_flux,
-    upper_idx,
-    lower_idx,
-    soil_moisture,
-    sm_min_bound,
-    sm_max_bound,
-    layer_thickness,
-    time_step,
-    abs_cap_mm_day=None,
-):
-    """
-    Limit explicit RHS diffusive flux at a layer interface to available storage.
-
-    Positive flux means downward transfer from the upper layer to the lower
-    layer. Negative flux means upward transfer.
-    """
-    if not np.isfinite(raw_flux):
-        return 0.0
-
-    dt = max(float(time_step), 1.0e-12)
-    if raw_flux >= 0.0:
-        donor = upper_idx
-        receiver = lower_idx
-    else:
-        donor = lower_idx
-        receiver = upper_idx
-
-    donor_available = max(
-        0.0,
-        (soil_moisture[donor] - sm_min_bound[donor]) * layer_thickness[donor] / dt,
-    )
-    receiver_capacity = max(
-        0.0,
-        (sm_max_bound[receiver] - soil_moisture[receiver]) * layer_thickness[receiver] / dt,
-    )
-    flux_cap = min(donor_available, receiver_capacity)
-
-    if abs_cap_mm_day is not None and np.isfinite(abs_cap_mm_day) and abs_cap_mm_day > 0.0:
-        flux_cap = min(flux_cap, float(abs_cap_mm_day))
-
-    if raw_flux >= 0.0:
-        return min(raw_flux, flux_cap)
-    return max(raw_flux, -flux_cap)
-
-
-def setup_richards_matrix(
-    soil_moisture,
-    soil_properties,
-    boundary_fluxes,
-    diff_factor,
-    time_step=1.0,
-):
-    num_layers = len(soil_moisture)
-    porosity = np.asarray(soil_properties["porosity"], dtype=float)
-    sm_min_bound, sm_max_bound = _resolve_sm_bounds_for_diffusion_limiter(soil_properties, porosity)
-    rhs_diffusion_enabled = bool(soil_properties.get("rhs_diffusion_enabled", True))
-    rhs_diffusion_limiter_enabled = bool(soil_properties.get("rhs_diffusion_limiter_enabled", True))
-    rhs_diffusion_abs_cap = soil_properties.get("rhs_diffusion_abs_cap_mm_day", None)
-    time_step = max(float(time_step), 1.0e-12)
-
-    mat_left1 = np.zeros(num_layers)
-    mat_left2 = np.zeros(num_layers)
-    mat_left3 = np.zeros(num_layers)
-    mat_right = np.zeros(num_layers)
-
-    conductivity = np.zeros(num_layers)
-    diffusivity = np.zeros(num_layers)
-
-    for i in range(num_layers):
-        hydraulic_props = calculate_hydraulic_properties(
-            soil_moisture[i],
-            soil_properties,
-            i,
-            diff_factor,
-        )
-        conductivity[i] = hydraulic_props["conductivity"]
-        diffusivity[i] = hydraulic_props["diffusivity"]
-
-    layer_thickness = np.zeros(num_layers)
-    distance_between_layers = np.zeros(num_layers - 1)
-
-    for i in range(num_layers):
-        if i == 0:
-            layer_thickness[i] = soil_properties["layer_depth"][i]
-        else:
-            layer_thickness[i] = soil_properties["layer_depth"][i] - soil_properties["layer_depth"][i - 1]
-
-    if num_layers > 1:
-        distance_between_layers[:] = 0.5 * (layer_thickness[:-1] + layer_thickness[1:])
-
-    interface_gradient = np.zeros(max(num_layers - 1, 0))
-    rhs_diffusive_flux_interface = np.zeros(max(num_layers - 1, 0))
-    interface_flux_downward = np.zeros(max(num_layers - 1, 0))
-    if num_layers > 1:
-        for i in range(num_layers - 1):
-            distance = max(distance_between_layers[i], 1.0e-12)
-            interface_gradient[i] = (soil_moisture[i] - soil_moisture[i + 1]) / distance
-
-            if rhs_diffusion_enabled:
-                raw_rhs_diff_flux = diffusivity[i] * interface_gradient[i]
-                if rhs_diffusion_limiter_enabled:
-                    rhs_diffusive_flux_interface[i] = _limit_rhs_diffusive_interface_flux(
-                        raw_rhs_diff_flux,
-                        i,
-                        i + 1,
-                        soil_moisture,
-                        sm_min_bound,
-                        sm_max_bound,
-                        layer_thickness,
-                        time_step,
-                        rhs_diffusion_abs_cap,
-                    )
-                else:
-                    rhs_diffusive_flux_interface[i] = raw_rhs_diff_flux
-
-            interface_flux_downward[i] = conductivity[i] + rhs_diffusive_flux_interface[i]
-
-    drainage_soil_bot = float(np.clip(
-        soil_properties["drainage_slope"] * conductivity[-1],
-        soil_properties["drainage_lower_limit"],
-        soil_properties["drainage_upper_limit"],
-    ))
-
-    for i in range(num_layers):
-        if i == 0:
-            mat_left1[i] = 0.0
-            if num_layers > 1:
-                mat_left3[i] = -diffusivity[i] / (distance_between_layers[i] * layer_thickness[i])
-                mat_left2[i] = -mat_left3[i]
-                flux_to_below = interface_flux_downward[i]
-            else:
-                mat_left3[i] = 0.0
-                mat_left2[i] = 0.0
-                flux_to_below = drainage_soil_bot
-
-            mat_right[i] = (
-                boundary_fluxes["infiltration"]
-                - boundary_fluxes["evapotranspiration"][i]
-                - flux_to_below
-            ) / layer_thickness[i]
-
-        elif i < num_layers - 1:
-            mat_left1[i] = -diffusivity[i - 1] / (distance_between_layers[i - 1] * layer_thickness[i])
-            mat_left3[i] = -diffusivity[i] / (distance_between_layers[i] * layer_thickness[i])
-            mat_left2[i] = -(mat_left1[i] + mat_left3[i])
-
-            flux_from_above = interface_flux_downward[i - 1]
-            flux_to_below = interface_flux_downward[i]
-            mat_right[i] = (
-                flux_from_above
-                - flux_to_below
-                - boundary_fluxes["evapotranspiration"][i]
-            ) / layer_thickness[i]
-
-        else:
-            mat_left1[i] = -diffusivity[i - 1] / (distance_between_layers[i - 1] * layer_thickness[i])
-            mat_left3[i] = 0.0
-            mat_left2[i] = -mat_left1[i]
-
-            drainage_soil_bot = soil_properties["drainage_slope"] * conductivity[i]
-            drainage_soil_bot = min(drainage_soil_bot, soil_properties["drainage_upper_limit"])
-            drainage_soil_bot = max(drainage_soil_bot, soil_properties["drainage_lower_limit"])
-
-            flux_from_above = interface_flux_downward[i - 1]
-            mat_right[i] = (
-                flux_from_above
-                - drainage_soil_bot
-                - boundary_fluxes["evapotranspiration"][i]
-            ) / layer_thickness[i]
-
-    return {
-        "mat_left1": mat_left1,
-        "mat_left2": mat_left2,
-        "mat_left3": mat_left3,
-        "mat_right": mat_right,
-        "drainage_soil_bot": drainage_soil_bot,
-        "interface_gradient": interface_gradient,
-        "rhs_diffusive_flux_interface": rhs_diffusive_flux_interface,
-        "interface_flux_downward": interface_flux_downward,
-    }
-
-
-def matrix_solver_tri_diagonal(A, B, C, D, ind_top_layer=0, num_layers=5):
-    """
-    Solve the Noah-MP-style tridiagonal matrix system used by the SWB layers.
-
-    `A`, `B`, and `C` are the lower, main, and upper diagonals, and `D` is the
-    right-hand side. The function returns the solution vector over
-    `num_layers`, starting at `ind_top_layer`.
-    """
-    P = np.zeros_like(B)
-    delta = np.zeros_like(B)
-
-    C[num_layers - 1] = 0.0
-
-    P[ind_top_layer] = -C[ind_top_layer] / B[ind_top_layer]
-    delta[ind_top_layer] = D[ind_top_layer] / B[ind_top_layer]
-
-    for k in range(ind_top_layer + 1, num_layers):
-        P[k] = -C[k] * (1.0 / (B[k] + A[k] * P[k - 1]))
-        delta[k] = (D[k] - A[k] * delta[k - 1]) * (1.0 / (B[k] + A[k] * P[k - 1]))
-
-    P[num_layers - 1] = delta[num_layers - 1]
-
-    for k in range(ind_top_layer + 1, num_layers):
-        kk = (num_layers - 1) - k + ind_top_layer
-        P[kk] = P[kk] * P[kk + 1] + delta[kk]
-
-    return P
-
-
-def thomas_solve_tridiagonal_matrix(a, b, c, d):
-    """
-    Solve a general tridiagonal linear system using the Thomas algorithm.
-
-    This standalone helper preserves the clearer legacy utility interface:
-    `a`, `b`, and `c` are lower, main, and upper diagonal arrays, and `d` is
-    the right-hand-side vector. Inputs are copied before elimination.
-    """
-    n = len(d)
-    a_c = np.asarray(a, dtype=float).copy()
-    b_c = np.asarray(b, dtype=float).copy()
-    c_c = np.asarray(c, dtype=float).copy()
-    d_c = np.asarray(d, dtype=float).copy()
-    x = np.zeros(n, dtype=float)
-
-    for i in range(1, n):
-        factor = a_c[i] / b_c[i - 1]
-        b_c[i] = b_c[i] - factor * c_c[i - 1]
-        d_c[i] = d_c[i] - factor * d_c[i - 1]
-
-    x[n - 1] = d_c[n - 1] / b_c[n - 1]
-    for i in range(n - 2, -1, -1):
-        x[i] = (d_c[i] - c_c[i] * x[i + 1]) / b_c[i]
-
-    return x
-
-
-def solve_soil_moisture(soil_moisture, matrix_coeffs, time_step, soil_properties):
-    num_layers = len(soil_moisture)
-
-    porosity = np.asarray(soil_properties["porosity"], dtype=float)
-    sm_max_bound = np.asarray(soil_properties.get("sm_max_bound", porosity), dtype=float)
-    sm_min_bound = np.asarray(soil_properties.get("sm_min_bound", 0.0), dtype=float)
-    if sm_max_bound.ndim == 0:
-        sm_max_bound = np.full_like(porosity, float(sm_max_bound))
-    if sm_min_bound.ndim == 0:
-        sm_min_bound = np.full_like(porosity, float(sm_min_bound))
-    sm_min_bound = np.minimum(sm_min_bound, sm_max_bound)
-    thickness = np.asarray(soil_properties["layer_thickness"], dtype=float)
-
-    a = matrix_coeffs["mat_left1"] * time_step
-    b = 1 + matrix_coeffs["mat_left2"] * time_step
-    c = matrix_coeffs["mat_left3"] * time_step
-    d = matrix_coeffs["mat_right"] * time_step
-
-    delta_moisture = matrix_solver_tri_diagonal(
-        a,
-        b,
-        c,
-        d,
-        ind_top_layer=0,
-        num_layers=num_layers,
-    )
-
-    new_soil_moisture = soil_moisture + delta_moisture
-
-    for i in range(0, num_layers - 1):
-        excess = max(0.0, new_soil_moisture[i] - sm_max_bound[i])
-        if excess > 0.0:
-            new_soil_moisture[i] = sm_max_bound[i]
-            incr_next = excess * (thickness[i] / thickness[i + 1])
-            new_soil_moisture[i + 1] += incr_next
-
-    overflow_mm = max(0.0, new_soil_moisture[-1] - sm_max_bound[-1]) * thickness[-1]
-    new_soil_moisture[-1] = min(new_soil_moisture[-1], sm_max_bound[-1])
-    storage_before_floor = float(np.sum(new_soil_moisture * thickness))
-
-    sm_min_relax_tau_days = float(soil_properties.get("sm_min_relax_tau_days", 3.0))
-    sm_min_relax_trigger_factor = float(soil_properties.get("sm_min_relax_trigger_factor", 1.25))
-    if not np.isfinite(sm_min_relax_trigger_factor):
-        sm_min_relax_trigger_factor = 1.25
-    sm_min_relax_trigger_factor = max(sm_min_relax_trigger_factor, 1.0)
-    if np.isfinite(sm_min_relax_tau_days) and sm_min_relax_tau_days > 0.0:
-        prev_for_relax = np.maximum(soil_moisture, sm_min_bound)
-        decay = np.exp(-time_step / sm_min_relax_tau_days)
-        relaxed_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
-        relax_trigger = sm_min_bound * sm_min_relax_trigger_factor
-        relax_mask = prev_for_relax <= relax_trigger
-        below_min = new_soil_moisture < sm_min_bound
-        apply_relax = below_min & relax_mask
-        new_soil_moisture[apply_relax] = np.maximum(
-            new_soil_moisture[apply_relax],
-            relaxed_floor[apply_relax],
-        )
-        hard_clamp = below_min & (~relax_mask)
-        new_soil_moisture[hard_clamp] = sm_min_bound[hard_clamp]
-    else:
-        new_soil_moisture = np.maximum(new_soil_moisture, sm_min_bound)
-
-    new_soil_moisture = np.maximum(new_soil_moisture, 0.0)
-
-    return {
-        "soil_moisture": new_soil_moisture,
-        "drainage_soil_bot": matrix_coeffs["drainage_soil_bot"] * time_step,
-        "overflow_mm": overflow_mm,
-        "storage_adjustment_mm": float(np.sum(new_soil_moisture * thickness)) - storage_before_floor,
-    }
 
 
 def _resolve_root_depth_from_ndvi(soil_properties):
@@ -443,7 +188,8 @@ def _compute_root_distribution_beta(
 
     if beta is None:
         beta = float(soil_properties.get("root_beta", 0.961))
-    beta = min(max(beta, 0.90), 0.995)
+    if not np.isfinite(beta) or not .90 <= beta <= .995:
+        raise ValueError("root_beta must be between 0.9 and 0.995")
 
     if max_root_depth_mm is None:
         max_root_depth_mm = soil_properties.get("max_root_depth", None)
@@ -451,6 +197,8 @@ def _compute_root_distribution_beta(
         max_root_depth_mm = _resolve_root_depth_from_ndvi(soil_properties)
     if max_root_depth_mm is not None:
         max_root_depth_mm = float(max_root_depth_mm)
+        if not np.isfinite(max_root_depth_mm) or max_root_depth_mm <= 0:
+            raise ValueError("Maximum root depth must be finite and positive")
 
     layer_bot_cm = layer_depth_mm / 10.0
     layer_top_cm = np.concatenate(([0.0], layer_bot_cm[:-1]))
@@ -472,241 +220,57 @@ def _compute_root_distribution_beta(
     return root_frac
 
 
-def _as_layer_factor(value, num_layers, name):
-    arr = np.asarray(value, dtype=float)
-    if arr.ndim == 0:
-        return np.full(num_layers, float(arr))
-    if arr.shape != (num_layers,):
-        raise ValueError(f"{name} must be scalar or length {num_layers}.")
-    return arr
-
-
-def _resolve_sm_bounds(soil_properties):
-    porosity = np.asarray(soil_properties["porosity"], dtype=float)
-    wilting_point = np.asarray(soil_properties["wilting_point"], dtype=float)
-    layer_depth = np.asarray(soil_properties["layer_depth"], dtype=float)
-    num_layers = porosity.size
-
-    if layer_depth.size != num_layers:
-        raise ValueError("layer_depth length must match porosity/wilting_point length.")
-
-    sm_max_factor = _as_layer_factor(
-        soil_properties.get("sm_max_factor", 1.0),
-        num_layers,
-        "sm_max_factor",
-    )
-    sm_min_factor = _as_layer_factor(
-        soil_properties.get("sm_min_factor", 1.0),
-        num_layers,
-        "sm_min_factor",
-    )
-    sm_min_factor_max_depth_mm = float(soil_properties.get("sm_min_factor_max_depth_mm", 150.0))
-
-    sm_max_bound = porosity * sm_max_factor
-    sm_min_bound = wilting_point.copy()
-    shallow_mask = layer_depth <= sm_min_factor_max_depth_mm
-    sm_min_bound[shallow_mask] = wilting_point[shallow_mask] * sm_min_factor[shallow_mask]
-    return sm_min_bound, sm_max_bound
-
-
-def soil_water_balance_1d(
-    precip_data,
-    et_data,
-    soil_properties,
-    time,
-    time_step=1.0,
-    initial_soil_moisture=None,
-    evap_fraction=None,
-    diff_factor=1e3,
-    transpiration_data=None,
-    state_timing="start",
-):
-    """Advance layered soil moisture using ET_a and optional E_t forcing.
-
-    E_s = ET_a - E_t. Requested surface uptake is E_s plus the surface
-    root fraction of E_t; deeper uptake follows the E_t root fractions.
-    The returned actual_et budget sums water-limited layer extraction.
-    Separate actual E_s/E_t budgets are not diagnosed.
+def matrix_solver_tri_diagonal(A, B, C, D, ind_top_layer=0, num_layers=5):
     """
-    if isinstance(precip_data, pd.DataFrame):
-        precip_values = precip_data.iloc[:, 0].values
-    elif isinstance(precip_data, pd.Series):
-        precip_values = precip_data.values
-    else:
-        precip_values = np.array(precip_data).flatten()
+    Solve the Noah-MP-style tridiagonal matrix system used by the SWB layers.
 
-    if isinstance(et_data, pd.DataFrame):
-        et_values = et_data.iloc[:, 0].values
-    elif isinstance(et_data, pd.Series):
-        et_values = et_data.values
-    else:
-        et_values = np.array(et_data).flatten()
+    `A`, `B`, and `C` are the lower, main, and upper diagonals, and `D` is the
+    right-hand side. The function returns the solution vector over
+    `num_layers`, starting at `ind_top_layer`.
+    """
+    P = np.zeros_like(B)
+    delta = np.zeros_like(B)
 
-    if transpiration_data is not None:
-        if isinstance(transpiration_data, pd.DataFrame):
-            transp_values = transpiration_data.iloc[:, 0].values
-        elif isinstance(transpiration_data, pd.Series):
-            transp_values = transpiration_data.values
-        else:
-            transp_values = np.array(transpiration_data).flatten()
-    else:
-        transp_values = None
+    C[num_layers - 1] = 0.0
 
-    if not np.isfinite(time_step) or time_step <= 0:
-        raise ValueError("time_step must be finite and positive.")
-    if state_timing not in {"start", "end"}:
-        raise ValueError("state_timing must be 'start' or 'end'.")
-    bottoms = layer_bottoms(soil_properties["layer_depth"])
-    if not np.allclose(np.diff(np.r_[0., bottoms]), soil_properties["layer_thickness"]):
-        raise ValueError("Layer thickness and bottom depths disagree.")
-    time_index = pd.DatetimeIndex(time)
-    if not len(time_index) or time_index.hasnans or time_index.has_duplicates or not time_index.is_monotonic_increasing:
-        raise ValueError("Time must be non-empty, unique and increasing.")
-    if len(time_index) > 1 and not np.allclose(np.diff(time_index.to_numpy(dtype="datetime64[ns]")) / np.timedelta64(1, "D"), time_step):
-        raise ValueError("Time coordinate cadence must match time_step.")
-    assert len(precip_values) == len(et_values), (
-        "Effective precipitation and ET data must have the same length"
-    )
-    assert len(time_index) == len(precip_values), (
-        "Time index must have the same length as effective precipitation and ET data"
-    )
-    if transp_values is not None:
-        assert len(transp_values) == len(et_values), (
-            "Transpiration and ET data must have the same length"
-        )
+    P[ind_top_layer] = -C[ind_top_layer] / B[ind_top_layer]
+    delta[ind_top_layer] = D[ind_top_layer] / B[ind_top_layer]
 
-    num_layers = len(soil_properties["layer_depth"])
-    num_times = len(precip_values)
+    for k in range(ind_top_layer + 1, num_layers):
+        P[k] = -C[k] * (1.0 / (B[k] + A[k] * P[k - 1]))
+        delta[k] = (D[k] - A[k] * delta[k - 1]) * (1.0 / (B[k] + A[k] * P[k - 1]))
 
-    sm_min_bound, sm_max_bound = _resolve_sm_bounds(soil_properties)
-    soil_props = dict(soil_properties)
-    soil_props["sm_min_bound"] = sm_min_bound
-    soil_props["sm_max_bound"] = sm_max_bound
+    P[num_layers - 1] = delta[num_layers - 1]
 
-    soil_moisture_array = np.zeros((num_times, num_layers))
+    for k in range(ind_top_layer + 1, num_layers):
+        kk = (num_layers - 1) - k + ind_top_layer
+        P[kk] = P[kk] * P[kk + 1] + delta[kk]
 
-    root_distribution = _compute_root_distribution_beta(
-        soil_props,
-        beta=soil_props.get("root_beta", None),
-        max_root_depth_mm=soil_props.get("max_root_depth", None),
-        use_ndvi_root_depth=bool(soil_props.get("use_ndvi_root_depth", False)),
-    )
+    return P
 
-    if initial_soil_moisture is None:
-        current_soil_moisture = np.zeros(num_layers)
-        for l in range(num_layers):
-            current_soil_moisture[l] = sm_min_bound[l] + 0.5 * (sm_max_bound[l] - sm_min_bound[l])
-    else:
-        current_soil_moisture = np.array(initial_soil_moisture)
 
-    initial_state = current_soil_moisture.copy()
-    if initial_state.shape != (num_layers,) or not np.all(np.isfinite(initial_state)):
-        raise ValueError("Initial soil moisture must contain one finite value per layer.")
-    if np.any(initial_state < 0) or np.any(initial_state > sm_max_bound):
-        raise ValueError("Initial soil moisture is outside the configured storage bounds.")
-    budget_names = ("infiltration", "actual_et", "drainage", "overflow", "storage_adjustment", "storage_change", "balance_residual")
-    budget = {name: np.full(num_times, np.nan) for name in budget_names}
-    forcing_valid = np.zeros(num_times, dtype=bool)
+def thomas_solve_tridiagonal_matrix(a, b, c, d):
+    """
+    Solve a general tridiagonal linear system using the Thomas algorithm.
 
-    for t_idx in range(num_times):
-        eff_precip_t = precip_values[t_idx]
-        evapotranspiration_daily = et_values[t_idx]
-        transpiration_input_daily = transp_values[t_idx] if transp_values is not None else np.nan
+    This standalone helper preserves the clearer legacy utility interface:
+    `a`, `b`, and `c` are lower, main, and upper diagonal arrays, and `d` is
+    the right-hand-side vector. Inputs are copied before elimination.
+    """
+    n = len(d)
+    a_c = np.asarray(a, dtype=float).copy()
+    b_c = np.asarray(b, dtype=float).copy()
+    c_c = np.asarray(c, dtype=float).copy()
+    d_c = np.asarray(d, dtype=float).copy()
+    x = np.zeros(n, dtype=float)
 
-        soil_moisture_array[t_idx, :] = current_soil_moisture
-        if not (np.isfinite(eff_precip_t) and np.isfinite(evapotranspiration_daily) and
-                (transp_values is None or np.isfinite(transpiration_input_daily))):
-            # Retain the state but leave fluxes missing and expose an explicit QC flag.
-            continue
-        forcing_valid[t_idx] = True
-        storage_before = float(np.sum(current_soil_moisture * soil_props["layer_thickness"]))
+    for i in range(1, n):
+        factor = a_c[i] / b_c[i - 1]
+        b_c[i] = b_c[i] - factor * c_c[i - 1]
+        d_c[i] = d_c[i] - factor * d_c[i - 1]
 
-        eff_precip_t = max(0.0, float(eff_precip_t))
-        evapotranspiration_daily = max(0.0, float(evapotranspiration_daily))
-        if transp_values is not None:
-            transpiration_daily = float(np.clip(transpiration_input_daily, 0.0, evapotranspiration_daily))
-            soil_evaporation_daily = evapotranspiration_daily - transpiration_daily
-        else:
-            evap_frac = 0.3 if evap_fraction is None else float(evap_fraction)
-            evap_frac = min(max(evap_frac, 0.0), 1.0)
-            soil_evaporation_daily = evapotranspiration_daily * evap_frac
-            transpiration_daily = evapotranspiration_daily - soil_evaporation_daily
+    x[n - 1] = d_c[n - 1] / b_c[n - 1]
+    for i in range(n - 2, -1, -1):
+        x[i] = (d_c[i] - c_c[i] * x[i + 1]) / b_c[i]
 
-        # Requested layer sinks: E_s + root_fraction[0] * E_t at the surface,
-        # root_fraction[i] * E_t below. Only total water-limited actual_et is diagnosed.
-        et_by_layer = np.zeros(num_layers)
-        et_by_layer[0] = soil_evaporation_daily
-        transp_by_layer = transpiration_daily * root_distribution
-        et_by_layer += transp_by_layer
-
-        sm_min_relax_tau_days = float(soil_props.get("sm_min_relax_tau_days", 3.0))
-        sm_min_relax_trigger_factor = float(soil_props.get("sm_min_relax_trigger_factor", 1.25))
-        if not np.isfinite(sm_min_relax_trigger_factor):
-            sm_min_relax_trigger_factor = 1.25
-        sm_min_relax_trigger_factor = max(sm_min_relax_trigger_factor, 1.0)
-        if np.isfinite(sm_min_relax_tau_days) and sm_min_relax_tau_days > 0.0:
-            decay = np.exp(-time_step / sm_min_relax_tau_days)
-            prev_for_relax = np.maximum(current_soil_moisture, sm_min_bound)
-            relaxed_floor = sm_min_bound + (prev_for_relax - sm_min_bound) * decay
-            relax_trigger = sm_min_bound * sm_min_relax_trigger_factor
-            relax_mask = prev_for_relax <= relax_trigger
-            et_floor = np.where(relax_mask, relaxed_floor, sm_min_bound)
-        else:
-            et_floor = sm_min_bound
-
-        for layer_idx in range(num_layers):
-            available_for_et = max(
-                0,
-                (current_soil_moisture[layer_idx] - et_floor[layer_idx])
-                * soil_props["layer_thickness"][layer_idx],
-            )
-            et_by_layer[layer_idx] = min(et_by_layer[layer_idx], available_for_et / time_step)
-
-        boundary_fluxes = {
-            "infiltration": eff_precip_t,
-            "evapotranspiration": et_by_layer,
-        }
-
-        matrix_coeffs = setup_richards_matrix(
-            current_soil_moisture,
-            soil_props,
-            boundary_fluxes,
-            diff_factor=diff_factor,
-            time_step=time_step,
-        )
-
-        result = solve_soil_moisture(
-            current_soil_moisture,
-            matrix_coeffs,
-            time_step,
-            soil_props,
-        )
-
-        current_soil_moisture = result["soil_moisture"]
-
-        if state_timing == "end":
-            soil_moisture_array[t_idx, :] = current_soil_moisture
-        budget["infiltration"][t_idx] = eff_precip_t * time_step
-        budget["actual_et"][t_idx] = float(np.sum(et_by_layer)) * time_step
-        budget["drainage"][t_idx] = result["drainage_soil_bot"]
-        budget["overflow"][t_idx] = result["overflow_mm"]
-        budget["storage_adjustment"][t_idx] = result["storage_adjustment_mm"]
-        budget["storage_change"][t_idx] = float(np.sum(current_soil_moisture * soil_props["layer_thickness"])) - storage_before
-        expected_change = (budget["infiltration"][t_idx] - budget["actual_et"][t_idx]
-                           - budget["drainage"][t_idx] - budget["overflow"][t_idx]
-                           + budget["storage_adjustment"][t_idx])
-        budget["balance_residual"][t_idx] = budget["storage_change"][t_idx] - expected_change
-
-    layer_columns = [f"layer_{i + 1}" for i in range(num_layers)]
-    soil_moisture_df = pd.DataFrame(
-        soil_moisture_array,
-        index=time_index,
-        columns=layer_columns,
-    )
-    soil_moisture_df.attrs.update(
-        state_timing=state_timing, initial_state=initial_state,
-        final_state=current_soil_moisture.copy(),
-        final_state_time=time_index[-1] + pd.Timedelta(days=time_step),
-        water_balance=budget, forcing_valid=forcing_valid,
-    )
-    return soil_moisture_df
+    return x

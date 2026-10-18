@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -31,10 +31,10 @@ def load_config(path):
     if unknown:
         raise ValueError(f"Unknown configuration sections: {sorted(unknown)}")
     run = config.setdefault("run", {})
-    required = {"name", "root", "start", "end", "extent"}
+    required = {"name", "root", "start", "end"}
     if required - set(run):
         raise ValueError(f"Missing run configuration: {sorted(required - set(run))}")
-    allowed = required | {"resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start", "aoi_bounds", "aoi_crs"}
+    allowed = required | {"extent", "center", "chip_size_m", "resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start", "aoi_bounds", "aoi_crs"}
     if set(run) - allowed:
         raise ValueError(f"Unknown run settings: {sorted(set(run) - allowed)}")
     if Path(run["name"]).name != run["name"] or run["name"] in {".", ".."}:
@@ -45,13 +45,25 @@ def load_config(path):
         raise ValueError("Run end precedes start.")
     from pysweb.ssebop.api import _validate_extent
 
-    run["extent"] = _validate_extent(run["extent"])
     run.setdefault("workers", 1)
     run.setdefault("grid_mode", "legacy" if "resolution" in run else "native")
     if run["grid_mode"] not in {"native", "legacy"}:
         raise ValueError("run.grid_mode must be native or legacy")
     if run["grid_mode"] == "native" and "resolution" in run:
         raise ValueError("Native output uses Landsat's grid; remove run.resolution")
+    if ("center" in run) == ("extent" in run):
+        raise ValueError('Provide exactly one of run.center or run.extent')
+    if "center" in run:
+        if run['grid_mode'] != 'native' or 'aoi_bounds' in run or 'aoi_crs' in run:
+            raise ValueError('run.center requires native mode without explicit aoi_bounds/aoi_crs')
+        from pysweb.io.grids import chip_extent
+        run.setdefault('chip_size_m', 5100.0)
+        run['extent'] = chip_extent(run['center'], run['chip_size_m'])
+        run['center'] = [float(value) for value in run['center']]
+        run['chip_size_m'] = float(run['chip_size_m'])
+    elif "chip_size_m" in run:
+        raise ValueError('chip_size_m requires run.center')
+    run["extent"] = _validate_extent(run["extent"])
     if ('aoi_bounds' in run) != ('aoi_crs' in run):
         raise ValueError('Provide run.aoi_bounds and run.aoi_crs together')
     if 'aoi_bounds' in run:
@@ -105,10 +117,16 @@ def load_config(path):
     from pysweb.soil.api import validate_soil_source
 
     validate_soil_source(soil.get("source", "openlandmap"))
+    from pysweb.swb.formulation import reject_legacy
+    reject_legacy(config.get("model", {}))
+    reject_legacy(config.get("calibration", {}))
+    if config.get("model", {}).get("reference_file"):
+        reference = Path(config["model"]["reference_file"]).expanduser()
+        config["model"]["reference_file"] = str(reference if reference.is_absolute() else (path.parent/reference).resolve())
     allowed_model = {
+        "reference_file",
+        "max_root_depth",
         "diff_factor",
-        "sm_max_factor",
-        "sm_min_factor",
         "root_beta",
         "drainage_slope",
         "drainage_upper_limit",
@@ -130,8 +148,6 @@ def load_config(path):
         "surface_depth",
         "sm_res",
         "diff_bounds",
-        "sm_max_bounds",
-        "sm_min_bounds",
         "beta_bounds",
         "objective",
         "solver_backend",
@@ -324,6 +340,8 @@ def run_config(config, stages=STAGES, *, dry_run=False):
         options.setdefault("objective", "domain_mean")
         # The calibration and final simulation must use the same process switches.
         for key in (
+            "reference_file",
+            "max_root_depth",
             "drainage_slope",
             "drainage_upper_limit",
             "drainage_lower_limit",

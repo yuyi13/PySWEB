@@ -3,7 +3,7 @@ Script: core.py
 Objective: Provide reusable SWB forcing and soil-input helpers for package-owned run and calibration workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: NetCDF forcing paths, soil-property NetCDF paths, and layer metadata or user-supplied layer depths.
 Outputs: Loaded xarray DataArrays, resolved soil-path mappings, numpy soil-property grids, and validation errors.
 Usage: import pysweb.swb.core
@@ -158,8 +158,9 @@ def prepare_soil_property_grids(
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
-    sm_max_factor: float,
-    sm_min_factor: float,
+    dry_reference_factor: float = 1.,
+    wet_reference_factor: float = 1.,
+    max_root_depth: float = 1000.,
 ) -> Dict[str, np.ndarray]:
     sample = soil_arrays["porosity"]
     if "layer" not in sample.dims:
@@ -196,9 +197,9 @@ def prepare_soil_property_grids(
         "drainage_slope": np.full((lat_count, lon_count), drainage_slope, dtype=float),
         "drainage_upper_limit": np.full((lat_count, lon_count), drainage_upper_limit, dtype=float),
         "drainage_lower_limit": np.full((lat_count, lon_count), drainage_lower_limit, dtype=float),
-        "sm_max_factor": np.full((lat_count, lon_count), sm_max_factor, dtype=float),
-        "sm_min_factor": np.full((lat_count, lon_count), sm_min_factor, dtype=float),
     }
+    for key, value in dict(dry_reference_factor=dry_reference_factor, wet_reference_factor=wet_reference_factor, max_root_depth=max_root_depth).items():
+        soil_grids[key] = np.full((lat_count, lon_count), value, dtype=float)
     return soil_grids
 
 

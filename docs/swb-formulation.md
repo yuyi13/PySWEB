@@ -1,0 +1,41 @@
+# Conservative two-parameter SWB
+
+Formulation: `swb-conservative-2p-v1`. Reference schema: `gssm-native-p01-p99-v1`.
+
+The revised water balance separates physical storage, empirical surface-moisture references and root-extraction limits. Only the diffusivity scale `diff_factor` (10–10,000 mm) and the beta root-distribution coefficient `root_beta` (0.9–0.995) are calibrated. Physical saturation water content θs, wilting point WP, field capacity FC, saturated conductivity Ksat and the hydraulic exponent b remain fixed. The model layers end at 50, 150, 300, 600 and 1,000 mm. Layer 1 represents 0–5 cm and directly matches the GSSM observation depth.
+
+## Frozen GSSM references
+
+For each admitted native GSSM cell, temporal p01 and p99 are calculated over 2011–2020 using the linear quantile method and finite volumetric observations. Complete-cell spherical areas then weight the cell quantiles. Each cell requires at least 99% temporal coverage; missing days remain missing. The artifact records per-cell quantiles, areas, valid counts and missing dates, together with the input hashes. The reference period is independent of the Landsat simulation and calibration dates.
+
+Layer-1 hydraulic fields are calculated at the native soil-predictor cells before spatial averaging. Exact spherical overlap areas integrate these fields over the same union of complete GSSM cells. The implementation rejects incomplete native hydraulic coverage and invalid hydraulic values. This reference calculation preserves the nonlinear order of the pedotransfer calculation. Existing coarse and fine simulation soils retain their established preparation pathway; their spatial aggregation approximation remains a transfer limitation.
+
+Let Gd and Gw denote the area means of the native-cell p01 and p99. The fixed scalars are `c_d = min(1, Gd / mean(WP_1))` and `c_w = max(1, Gw / mean(θs_1))`. Shallow references are `d_i = c_d WP_i` and `w_i = c_w θs_i` for the first two layers. Deeper layers retain their unadjusted hydraulic references. Direct evaporation draws from layer 1; layer 2 supplies water through the hydraulic interface. The wet reference supports diagnostics and leaves physical storage capacity unchanged. A surface-derived scalar applied to layer 2 is an explicit shallow extrapolation.
+
+The JSON artifact is hashed over its complete canonical content. Set `[model].reference_file` in a configured workflow, or pass `reference_file` to calibration and simulation. Default and calibrated runs, initialisation checks and coarse-to-fine transfer use the same artifact. Native configured preparation retains the artifact's frozen complete-cell population and rejects loss of a member through invalid forcing or soil. Generic component runs without an artifact use the explicitly identified `physical-unadjusted` reference, with dry/wet factors of one.
+
+## Storage, hydraulic fluxes and extraction
+
+Physical state bounds are `0 ≤ θ_i ≤ θs_i`. Initialisation uses `FC = WP + available_water_capacity`. An initially dry layer receives no floor-restoration water. Root fractions integrate the beta profile over the actual rooted portion of each layer, using depth in centimetres and the fixed maximum root depth (1,000 mm by default). Fractions sum to one over the rooted profile, with no compensatory uptake.
+
+At each numerical substep h in days, `r = -expm1(-h/τ)`, with fixed `τ = 3 days`. The surface evaporation supply cap is `dz_1 θ_1²/(θ_1+d_1) r` in mm. Actual evaporation is the minimum of that cap and requested surface evaporation multiplied by h. The cap is zero at zero water and has a continuous limit when the dry reference is zero. Root extraction in layer i is bounded by both `root_fraction_i × requested_transpiration × h` and `dz_i max(θ_i−WP_i, 0) r`. WP constrains root extraction; evaporation and hydraulic redistribution can continue below WP and the dry reference. The closure is an empirical supply cap. Physiological interpretation requires additional evidence.
+
+Hydraulic saturation ratio is `S = θ/θs`, including the zero-water limit. Conductivity is `K = Ksat S^(2b+3)` in mm day⁻¹ and diffusivity is `D = diff_factor Ksat S^(b+2)` in mm² day⁻¹. The inherited interface discretisation uses the upper-layer coefficients: downward flux is `K_i + D_i(θ_i−θ_(i+1))/distance`. Bottom drainage is the smaller of the fixed drainage-slope times bottom-layer K and the fixed drainage upper limit. The lower drainage limit must be zero. An exactly empty upper layer has zero interface coefficients under this inherited discretisation; upward replenishment in that limiting state requires subsequent wetting. This is a structural limitation to retain in scientific interpretation.
+
+The finite-volume update shares each donor's water across all proposed transfers and E/T sinks. Incoming hydraulic transfers share the receiver's pre-step capacity. A limited interface volume is applied with equal magnitude and opposite sign to neighbouring layers. Rainfall excess passes conservatively through successive saturated layers and leaves the bottom as separately reported overflow. Overflow represents the profile storage constraint; catchment routing is outside this model.
+
+Substeps are bounded by the versioned maximum duration and a hydraulic stability restriction based on local diffusion and the derivative of the gravity flux. The CFL factor is 0.4. The maximum duration is 1/768 day (112.5 seconds), selected after the initial 1/24-day setting failed the predeclared wet-period convergence tolerance. The validation receipt records refinement against shorter substeps. Direct column calls permit explicit substep and τ overrides for numerical experiments. Neither setting appears in the optimizer vector. The interpreted and Numba backends execute the same conservative algorithm; the accelerated path executes a compiled kernel without silent fallback.
+
+## Outputs and calibration identity
+
+Every interval retains requested and actual E/T, unmet E/T, bottom drainage, saturation overflow, profile and layer mass residuals, signed interface transfers, layer transpiration and numerical substep counts. Exposure diagnostics integrate substep duration below WP and outside the shallow d/w reference envelope. The empirical Gd/Gw envelope is distinct from the transferred d/w references and can be evaluated using the frozen artifact. The compatibility field `storage_adjustment` is identically zero.
+
+The profile identity is `ΔW = P_eff − E_actual − T_actual − drainage − overflow`. Layer identities use the same interface volumes on either side. Missing forcing holds the state, sets the forcing-validity flag to zero and leaves interval budgets missing. Start/end state timestamps and the final restart state are retained.
+
+Calibration preserves the area-weighted native GSSM cell–day RMSE, fixed support, initialisation exclusion and coarse-to-fine transfer semantics. Seeds, optimizer populations, polishing, CSV output and downstream loading use exactly two fitted coefficients. Calibration CSVs and cache identities include formulation version, reference identity and fixed numerical settings. Four-parameter and unversioned calibrations raise explicit migration errors. Migration requires freezing the reference and recalibrating with this formulation; previous fits cannot be relabelled.
+
+## Validation and interpretation
+
+Validation combines independent analytical drydown limits, physical bounds, layer/profile mass balances, extreme forcing, timestep refinement, fixed-τ sensitivity, actual compiled execution, restarts, missing forcing and optimizer execution. Software validation and bounded real-forcing checks establish numerical behaviour within their tested cases. Production calibration and complete fine-grid reruns require separate execution and acceptance, including the existing complete-forcing and wet/dry convergence gates.
+
+GSSM supplies reference statistics and calibration targets. In-situ observations support evaluation only. Previously inspected 2021–2025 observations provide retrospective evaluation of this revision. Native-cell estimates, point observations and fine-grid soil columns have distinct supports; successful numerical checks do not establish observational skill or hydraulic identifiability.

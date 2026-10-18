@@ -4,7 +4,7 @@ Script: test_core.py
 Objective: Verify reusable SWB core helpers load forcing and soil inputs consistently for package-owned workflows.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-05-03
+Last updated: 2026-10-18
 Inputs: Temporary NetCDF fixtures and in-memory xarray DataArrays created by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_core.py
@@ -274,8 +274,8 @@ def test_prepare_soil_property_grids_extracts_cell_values_and_flags_invalid_soil
         drainage_slope = 0.25,
         drainage_upper_limit = 14.0,
         drainage_lower_limit = 1.5,
-        sm_max_factor = 1.1,
-        sm_min_factor = 0.85,
+        dry_reference_factor = 0.85,
+        wet_reference_factor = 1.1,
     )
     props = swb_core.extract_soil_properties_for_cell(soil_grids, 1, 0)
 
@@ -284,7 +284,7 @@ def test_prepare_soil_property_grids_extracts_cell_values_and_flags_invalid_soil
     np.testing.assert_allclose(props["porosity"], np.array([0.42, 0.38], dtype=np.float32))
     assert props["root_beta"] == pytest.approx(0.93)
     assert props["drainage_slope"] == pytest.approx(0.25)
-    assert props["sm_max_factor"] == pytest.approx(1.1)
+    assert props["wet_reference_factor"] == pytest.approx(1.1)
     assert swb_core.has_invalid_soil_values(props) is False
 
     invalid_props = dict(props)

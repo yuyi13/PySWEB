@@ -3,7 +3,7 @@ Script: evaluation.py
 Objective: Extract configured observation operators and score explicit paired support.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Consolidated SWB products, fixed site/depth rules and observed daily series.
 Outputs: Point series, cumulative-validity flags and annual/pooled paired metrics.
 Usage: from pysweb.evaluation import extract_point, evaluate_series
@@ -193,9 +193,13 @@ def validate_simulation(path, mask, *, development_end, closure_tolerance=1e-4,
                 if selected.any():
                     development &= valid[selected].all(axis=0)
                 states=block[f'rzsm_{scenario}'].transpose('time','layer',*spatial).values
-                upper=ds.soil_porosity.transpose('layer',*spatial).values*float(ds.attrs[f'sm_max_factor_{scenario}'])
-                lower=ds.soil_wilting_point.transpose('layer',*spatial).values.copy()
-                lower[:2] *= float(ds.attrs[f'sm_min_factor_{scenario}'])
+                from pysweb.swb.formulation import FORMULATION_VERSION
+                if ds.attrs.get('formulation_version') != FORMULATION_VERSION:
+                    raise ValueError('Legacy output requires its pinned legacy evaluation code')
+                upper=ds.soil_porosity.transpose('layer',*spatial).values
+                lower=np.zeros_like(upper)
+                if np.any(block[f'storage_adjustment_{scenario}'].values[valid] != 0):
+                    violations += 1
                 bad=~np.isfinite(states) | (states>upper[None]+bound_tolerance) | (states<lower[None]-bound_tolerance)
                 violations += int((bad & valid[:,None]).sum())
                 profile=np.sum(states*thickness[None,:,None,None],axis=1)
@@ -217,4 +221,4 @@ def validate_simulation(path, mask, *, development_end, closure_tolerance=1e-4,
                 complete_trajectory_cells=int(continuous.sum()),state_or_finite_violations=violations,
                 maximum_exported_closure_mm=maximum_closure,maximum_profile_reconstruction_mm=maximum_profile)
     return dict(passed=all(r['passed'] for r in reports.values()),scenarios=reports,
-        interpretation='Arithmetic closure includes numerical floor additions; it does not establish precipitation-only physical closure')
+        interpretation='Conservative physical storage balance; no floor-restoration source. Forcing and hydraulic assumptions require separate scientific evaluation.')

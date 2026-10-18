@@ -4,7 +4,7 @@ Script: calibrate.py
 Objective: Calibrate domain SWB parameters against reference surface soil moisture.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
 Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
 Usage: pysweb swb-calibrate --help
@@ -32,6 +32,8 @@ from pysweb.components import (
 )
 
 from pysweb.swb.solver import soil_water_balance_1d
+from pysweb.swb.formulation import (PARAMETER_NAMES, settings_identity, reference_properties,
+    load_calibration, reject_legacy)
 from pysweb.swb.core import ensure_matching_grid, infer_layer_bottoms
 from pysweb.contracts import geographic_weights, layer_bottoms
 from pysweb.io.provenance import input_manifest, atomic_json, save_output_manifest
@@ -117,8 +119,6 @@ def _extract_props_from_arrays(
     drainage_slope: float,
     drainage_upper_limit: float,
     drainage_lower_limit: float,
-    sm_max_factor: float,
-    sm_min_factor: float,
     use_ndvi_root_depth: bool,
 ) -> Dict[str, np.ndarray]:
     layer_bottoms = np.asarray(layer_bottoms_mm, dtype=float)
@@ -135,8 +135,6 @@ def _extract_props_from_arrays(
         "drainage_slope": float(drainage_slope),
         "drainage_upper_limit": float(drainage_upper_limit),
         "drainage_lower_limit": float(drainage_lower_limit),
-        "sm_max_factor": float(sm_max_factor),
-        "sm_min_factor": float(sm_min_factor),
         "use_ndvi_root_depth": bool(use_ndvi_root_depth),
     }
     if bool(use_ndvi_root_depth) and np.isfinite(ndvi_value):
@@ -248,7 +246,9 @@ def _compute_rmse(
     spinup_days=0,
     observation_context=None,
 ) -> Tuple[float, int]:
-    diff_factor, sm_max_factor, sm_min_factor, root_beta = params
+    if len(params) != 2:
+        raise ValueError("Revised SWB requires exactly two fitted parameters")
+    diff_factor, root_beta = params
     model_col = f"layer_{surface_layer_idx + 1}"
 
     if observation_context is None:
@@ -292,11 +292,10 @@ def _compute_rmse(
                 drainage_slope,
                 drainage_upper_limit,
                 drainage_lower_limit,
-                sm_max_factor,
-                sm_min_factor,
                 use_ndvi_root_depth,
             )
 
+            soil_props.update(observation_context.get("fixed_properties", {}))
             try:
                 simulated = solver(
                     effective_precip_vals[:, lat_idx, lon_idx],
@@ -435,6 +434,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-unconverged", action="store_true", help="Explicitly retain a non-converged candidate with its status recorded.")
     parser.add_argument("--max-iter", type=int, default=30, help="Maximum iterations for optimization.")
     parser.add_argument("--surface-depth", type=float, default=50.0, help="Depth of surface observation (mm).")
+    parser.add_argument("--reference-file", help="Frozen versioned GSSM reference JSON; shared by default and calibrated runs.")
+    parser.add_argument("--max-root-depth", type=float, default=1000., help="Fixed maximum root depth in mm.")
     parser.add_argument("--root-beta", type=float, default=0.961, help="Initial root_beta value for optimizer seeding.")
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
@@ -449,20 +450,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=(10, 1e4),
         help="Bounds for diff_factor (mm).",
-    )
-    parser.add_argument(
-        "--sm-max-bounds",
-        nargs=2,
-        type=float,
-        default=(1.0, 1.25),
-        help="Bounds for sm_max_factor (multiplier on porosity).",
-    )
-    parser.add_argument(
-        "--sm-min-bounds",
-        nargs=2,
-        type=float,
-        default=(0.75, 1.0),
-        help="Bounds for sm_min_factor (multiplier on wilting point).",
     )
     parser.add_argument(
         "--beta-bounds",
@@ -566,7 +553,12 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
     parameters. ``polish_file`` requires a converged DE file with identical
     input/software identity; failed polishing retains that accepted DE vector.
     """
+    reject_legacy(kwargs)
     args = _namespace_from_kwargs(kwargs)
+    fixed_settings = {k: getattr(args, k) for k in ("max_root_depth", "drainage_slope", "drainage_upper_limit", "drainage_lower_limit")}
+    formulation = settings_identity(args.reference_file, **fixed_settings)
+    for key, value in formulation.items():
+        setattr(args, key, value)
     if args.workers < 1:
         raise ValueError("workers must be >= 1")
 
@@ -746,8 +738,6 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
     print(
         "  bounds: "
         f"diff_factor={tuple(args.diff_bounds)}, "
-        f"sm_max_factor={tuple(args.sm_max_bounds)}, "
-        f"sm_min_factor={tuple(args.sm_min_bounds)}, "
         f"root_beta={tuple(args.beta_bounds)}",
         flush=True,
     )
@@ -759,11 +749,9 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
 
     bounds = [
         tuple(args.diff_bounds),
-        tuple(args.sm_max_bounds),
-        tuple(args.sm_min_bounds),
         tuple(args.beta_bounds),
     ]
-    de_x0 = np.array([1e3, 1.0, 1.0, float(args.root_beta)], dtype=float)
+    de_x0 = np.array([1e3, float(args.root_beta)], dtype=float)
     for idx, (low, high) in enumerate(bounds):
         x0_i = float(np.clip(de_x0[idx], low, high))
         if np.isfinite(low) and np.isfinite(high) and high > low:
@@ -784,8 +772,7 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
     print(f"  objective: area-weighted {args.objective} RMSE", flush=True)
     print(
         f"  optimizer seed x0: diff_factor={de_x0[0]:.17g}, "
-        f"sm_max_factor={de_x0[1]:.17g}, sm_min_factor={de_x0[2]:.17g}, "
-        f"root_beta={de_x0[3]:.17g}",
+        f"root_beta={de_x0[1]:.17g}",
         flush=True,
     )
 
@@ -796,6 +783,13 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
     observation_context = _prepare_observation_context(
         effective_precip_vals, et_vals, transpiration_vals, reference_vals,
         soil_valid, cell_weights, args.spinup_days, args.solver_backend, args.objective)
+    observation_context["fixed_properties"] = {**reference_properties(args.reference_file), "max_root_depth": args.max_root_depth}
+    if args.reference_file:
+        from pysweb.swb.references import frozen_mask
+        from pysweb.swb.formulation import load_reference
+        frozen = frozen_mask(effective_precip.isel(time=0, drop=True), load_reference(args.reference_file))
+        if not np.array_equal(observation_context["obs_mask"].any(axis=0), frozen.values):
+            raise ValueError("Calibration support differs from the frozen GSSM reference artifact")
     objective_arguments = (
             effective_precip_vals,
             et_vals,
@@ -818,6 +812,8 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
         )
     paths = [args.effective_precip,args.et,args.transpiration,args.reference_ssm]
     paths += [str(soil_dir / name) for name in SOIL_FILE_STEMS.values()]
+    if args.reference_file:
+        paths.append(args.reference_file)
     if args.ndvi:
         paths.append(args.ndvi)
     manifest = input_manifest(vars(args), paths) if benchmark_output is not None or polish_file is not None else None
@@ -844,7 +840,7 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
         if original['fingerprint'] != manifest['fingerprint'] or original['output']['sha256'] != sha256(polish_file):
             raise ValueError('Serial polishing inputs, settings, software or DE output changed')
         row = pd.read_csv(polish_file).iloc[0]
-        initial = row[['diff_factor','sm_max_factor','sm_min_factor','root_beta']].to_numpy(float)
+        initial = np.array(list(load_calibration(polish_file, args.reference_file, **fixed_settings).values()))
         started = time.perf_counter()
         polished = minimize(_objective_function, initial, args=objective_arguments,
                             method='L-BFGS-B', bounds=bounds)
@@ -911,25 +907,25 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
     fd, temporary_name = tempfile.mkstemp(dir=output_path.parent, prefix=".calibration-", suffix=".csv")
     with os.fdopen(fd, "w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["diff_factor", "sm_max_factor", "sm_min_factor", "root_beta", "rmse", "n_obs"])
+        writer.writerow([*PARAMETER_NAMES, "rmse", "n_obs", *formulation])
         writer.writerow(
             [
                 f"{best_params[0]:.17g}",
                 f"{best_params[1]:.17g}",
-                f"{best_params[2]:.17g}",
-                f"{best_params[3]:.17g}",
                 f"{final_rmse:.17g}",
                 str(int(n_obs)),
+                *formulation.values(),
             ]
         )
 
+    manifest["formulation"] = formulation
     manifest["calibration"] = {"converged":converged, "message":str(getattr(result,"message","")),
                                "n_observations":n_obs,"rmse":final_rmse,"objective":args.objective,
-                               "parameters":dict(zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),best_params.tolist())),
+                               "parameters":dict(zip(PARAMETER_NAMES,best_params.tolist())),
                                "spatial_weighting":"regular geographic cell area", "seed":args.seed,
-                               "bounds":dict(zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),bounds)),
+                               "bounds":dict(zip(PARAMETER_NAMES,bounds)),
                                "bound_hits":{key:bool(np.isclose(value,low,rtol=0,atol=1e-8*(high-low)) or np.isclose(value,high,rtol=0,atol=1e-8*(high-low)))
-                                   for key,value,(low,high) in zip(("diff_factor","sm_max_factor","sm_min_factor","root_beta"),best_params,bounds)},
+                                   for key,value,(low,high) in zip(PARAMETER_NAMES,best_params,bounds)},
                                "nit":int(getattr(result,"nit",0)),"nfev":int(getattr(result,"nfev",0))}
     if polish_record is not None:
         manifest['calibration']['serial_polish'] = polish_record

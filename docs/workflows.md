@@ -53,7 +53,7 @@ Run `pysweb demo` first to generate those synthetic source files. `sm_res` is in
 
 Calibration is opt-in. Set its dates, random seed and spin-up exclusion in `[calibration]`. A non-converged optimizer fails unless `allow_unconverged=true` is explicit; the saved manifest records convergence, objective, sample count and optimizer status. The native workflow uses GSSM cell-day errors. Individual legacy calibration calls retain optional `sm_res` block coarsening and `objective="domain_mean"` for deliberate reproduction; these options are not the native workflow defaults.
 
-The workflow automatically supplies the calibrated CSV to the run. Its checksum is included in run provenance. The calibrated parameters are `diff_factor`, `sm_max_factor`, `sm_min_factor` and `root_beta`. Bounds and units are available in CLI help. Defaults are research starting values, and independent validation remains necessary.
+The workflow automatically supplies the calibrated CSV to the run. Its checksum is included in run provenance. The calibrated parameters are `diff_factor` and `root_beta`. Bounds and units are available in CLI help. Defaults are research starting values, and independent validation remains necessary.
 
 NetCDF products are written to temporary files, read back and atomically promoted. Run manifests validate code, configuration and source checksums before reuse. Earth Engine downloads use checksums and readable raster/CRS checks before reuse; incomplete downloads fail the stage. Multi-collection same-day collisions retain the first successful collection in configured order, recorded in the download manifest.
 
@@ -64,3 +64,5 @@ Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` 
 ## Native-grid configured runs
 
 The current example uses the [native-grid workflow](native-grids.md): retain original download grids, calibrate on native GSSM cells, and simulate default/calibrated SWB on one Landsat UTM grid shared with the final SEB output. Its calibration scoring interval must be inside the continuous run interval. The earlier independent-window behavior described above remains the explicit legacy workflow for configurations with `run.resolution`.
+
+The [revised SWB contract](swb-formulation.md) defines fixed GSSM references, physical storage limits and explicit rejection of old four-parameter fits.

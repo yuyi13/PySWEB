@@ -3,7 +3,7 @@ Script: workflow_protocol.py
 Objective: Connect configured support, initialization and evaluation gates to native runs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Native prepared directories, paired workflow paths and scientific protocol settings.
 Outputs: Frozen support, explicit initialization files, convergence receipts and evaluation.
 Usage: Internal orchestration for pysweb.workflow_native.
@@ -130,7 +130,7 @@ def initialized_forcing(record, directory, *, workers, state_timing, projected=F
     return result
 
 
-def convergence_gate(directory, record, mask, parameters, config, label, model_options=None):
+def convergence_gate(directory, record, mask, parameters, config, label, model_options=None, workers=1):
     from pysweb.swb.spinup import verify_convergence
     directory = Path(directory)
     stop = pd.Timestamp(record["scoring_start"])-pd.Timedelta(days=1)
@@ -147,7 +147,7 @@ def convergence_gate(directory, record, mask, parameters, config, label, model_o
     gate, differences = verify_convergence(xr.Dataset(fields), soil, mask, parameters,
         scoring_start=record["scoring_start"], development_end=record["development_end"],
         tolerance=config["tolerance"], minimum_fraction=config["minimum_fraction"],
-        solver_backend=config.get("solver_backend", "numba"), model_options=model_options)
+        solver_backend=config.get("solver_backend", "numba"), model_options=model_options, workers=workers)
     atomic_json(directory/"initialized"/f"{label}_convergence.json", gate)
     atomic_netcdf(differences, directory/"initialized"/f"{label}_convergence.nc")
     if not gate["passed"]:
@@ -204,7 +204,7 @@ def evaluate_product(product, config, destination, mask=None):
 def default_parameters(model):
     from pysweb.swb.run import _parser_defaults
     defaults = _parser_defaults()
-    return {k: float(model.get(k, defaults[k])) for k in ('diff_factor', 'sm_max_factor', 'sm_min_factor', 'root_beta')}
+    return {k: float(model.get(k, defaults[k])) for k in ('diff_factor', 'root_beta')}
 
 
 def calibration_identity(config, directory):
@@ -216,6 +216,13 @@ def calibration_identity(config, directory):
     paths += [folder/'development_support.nc' for folder in [directory, *peers]]
     settings = {key: value for key,value in config.items() if key != 'evaluation'}
     settings['run'] = {key:value for key,value in config['run'].items() if key != 'workers'}
+    from pysweb.swb.formulation import settings_identity
+    reference = config.get("model", {}).get("reference_file")
+    settings["formulation"] = settings_identity(reference, **{
+        k: v for k, v in config.get("model", {}).items()
+        if k in ("max_root_depth", "drainage_slope", "drainage_upper_limit", "drainage_lower_limit")})
+    if reference:
+        paths.append(Path(reference))
     return input_manifest(settings, paths)
 
 

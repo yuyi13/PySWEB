@@ -43,11 +43,11 @@ For runtime dependencies only, install `python -m pip install .`. Plotting is av
 
 ## Configured workflow
 
-[examples/workflow.toml](examples/workflow.toml) centralizes paths, dates, extent, soil source, calibration and model settings. Copy it to a study configuration and edit the values. Relative paths resolve from the configuration file's directory. The example extent is illustrative.
+[examples/workflow.toml](examples/workflow.toml) centralizes paths, dates, location, soil source, calibration and model settings. Copy it to a study configuration and edit the values. Relative paths resolve from the configuration file's directory. Set `run.center = [longitude, latitude]` for a default 5.1 km square, selected as exactly 170 × 170 native 30 m pixels. The example location is illustrative. Explicit geographic `run.extent` and projected AOIs remain available for custom areas.
 
 ```bash
 pysweb workflow --config examples/workflow.toml --dry-run
-# After setting a real study extent and Earth Engine project:
+# After setting a real study location and Earth Engine project:
 pysweb workflow --config study.toml
 ```
 
@@ -58,10 +58,10 @@ The five stages share one implementation in `pysweb.workflow`:
 | `prepare` | Download Landsat, ERA5-Land and NASADEM; stack meteorology | Earth Engine authentication and your project |
 | `ssebop` | Estimate daily ET and partition E_s/E_t | Prepared satellite, meteorology and DEM files |
 | `preprocess` | Align forcing and soil properties; calculate effective rain | Full calendar-month rain; local or online soil inputs |
-| `calibrate` | Fit four domain parameters to reference surface soil moisture | Enabled explicitly; local reference or configured Earth Engine asset |
+| `calibrate` | Fit two domain parameters to reference surface soil moisture | Enabled explicitly; local reference or configured Earth Engine asset |
 | `run` | Simulate independent soil columns | Prepared forcing and hydraulic properties |
 
-Select stages with `--stages preprocess,calibrate,run`. The default workflow preserves source download grids, fits on native GSSM cells, and writes both final products on one selected Landsat 30 m UTM grid. Landsat 8/9 are enabled by default; 5/7 are optional. Calibration is skipped when `calibration.enabled = false`. Its scoring window lies within the continuous simulation window, with earlier days available for initialization. Set `run.holdout_start` to protect an independent test period. See [native grids and output contracts](docs/native-grids.md). Optional [configured acceptance protocols](docs/configured-protocols.md) integrate validated L7 donors, development-only spin-up, paired support, benchmark timing and site-specific evaluation. See [the workflow guide](docs/workflows.md) for offline operation, HPC execution and individual APIs.
+Select stages with `--stages preprocess,calibrate,run`. The default workflow preserves source download grids, fits on native GSSM cells, and writes both final products on one selected Landsat 30 m UTM grid. It runs only Landsat 8/9 by default, for dates from 2013 onwards. Earlier missions require explicit `run.sensors = ["LT05", "LE07", "LC08", "LC09"]`; no second sensor pathway is launched automatically. For an 8/9 run beginning in 2013, calibration starts on 2014-01-01 by default, reserving the available 2013 record for initialisation. Set `calibration.start` to override this choice. Actual source coverage and spin-up convergence still require verification. Calibration is skipped when `calibration.enabled = false`. Its scoring window lies within the continuous simulation window. Set `run.holdout_start` to protect an independent test period. See [native grids and output contracts](docs/native-grids.md). Optional [configured acceptance protocols](docs/configured-protocols.md) integrate validated L7 donors, development-only spin-up, paired support, benchmark timing and site-specific evaluation. See [the workflow guide](docs/workflows.md) for offline operation, HPC execution and individual APIs.
 
 Every configured run writes `resolved-config.json`. Model output manifests record input SHA-256 checksums, configuration, code identity and output checksums. `skip_existing` validates the model output against this identity before reuse. Unmanifested older outputs require regeneration. Generated data and environments stay outside version control.
 
@@ -123,3 +123,5 @@ https://github.com/yuyi13/PySWEB [include the commit used].
 The code is distributed under the [MIT licence](LICENSE). Dataset licences remain those of their providers. For development checks and contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` (transpiration fraction). See the [notation migration and legacy-input policy](docs/migration.md#component-notation-migration-11-october-2026).
+
+The [conservative two-parameter SWB formulation](docs/swb-formulation.md) calibrates diffusivity and root beta, uses fixed versioned GSSM references and records separate actual/unmet E/T with conservative water budgets. Existing four-parameter calibrations require recalibration.
