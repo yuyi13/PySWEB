@@ -68,6 +68,8 @@ def test_water_budget_closes_for_dry_wet_and_saturated_profiles(n, rain, et):
 
 @pytest.mark.parametrize("backend", ["reference", "numba"])
 def test_state_timing_and_restart_are_consistent(backend):
+    if backend == "numba":
+        pytest.importorskip("numba")
     soil_water_balance_1d = import_module("pysweb.swb." + ("solver" if backend == "reference" else "accelerated")).soil_water_balance_1d
     time = pd.date_range("2024-01-01", periods=4)
     start = soil_water_balance_1d([10, 0, 0, 3], [2] * 4, properties(), time)

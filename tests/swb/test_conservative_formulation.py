@@ -30,6 +30,7 @@ def props(n=5, **overrides):
 def test_drydown_zero_reference_has_exact_exponential_limit(backend):
     solver = soil_water_balance_1d
     if backend == "numba":
+        pytest.importorskip("numba")
         from pysweb.swb.accelerated import soil_water_balance_1d as solver
     # With d=0, no hydraulics and ample demand, storage decays exactly as exp(-t/tau).
     output = solver(np.zeros(15), np.full(15, 100.), props(1, dry_reference_factor=0.),
@@ -68,6 +69,7 @@ def test_physical_fc_initialisation_and_partial_root_geometry():
 def test_daily_transfer_matches_one_independent_balance(backend):
     solver = soil_water_balance_1d
     if backend == "numba":
+        pytest.importorskip("numba")
         from pysweb.swb.accelerated import soil_water_balance_1d as solver
     p = props(2, porosity=np.full(2, .5), b_coefficient=np.ones(2),
               conductivity_sat=np.ones(2), drainage_slope=0.)

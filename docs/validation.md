@@ -10,6 +10,8 @@ Yanco used 276 actual warm-up days from 2013-03-31, and Narrabri used 251 from 2
 
 The earlier subcycled production jobs were cancelled at the user's request. No production calibration, full fine-grid rerun or new observational-skill assessment was performed for this revision. Conservation and bounds checks do not establish equivalence to the subcycled equations, within-day flux accuracy, or independence from the assumed field-capacity start. Earlier calibration coefficients require refitting.
 
+Post-push CI exposed unconditional imports of optional Numba in three tests. Those cases now skip when the optional dependency is absent, while a Linux CI job explicitly installs the `speed` extra and runs the compiled backend. The other Linux and macOS jobs continue to check the base installation. This correction changes test dependency handling, not model calculations.
+
 ## Native grids and paired products, 17 October 2026
 
 The revision was exercised on Gadi with the existing Python 3.12.12 geospatial runtime, under explicit PBS CPU, memory and storage allocations.
