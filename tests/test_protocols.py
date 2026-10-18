@@ -200,6 +200,40 @@ def test_wet_dry_convergence_and_missing_history():
             development_end='2014-12-31',tolerance=.005,minimum_fraction=.99,solver_backend=SOLVER_BACKEND)
 
 
+def test_field_capacity_cycle_comparison_preserves_real_prefix(monkeypatch):
+    """The longer comparison repeats artificial weather, never the real prefix."""
+    from types import SimpleNamespace
+    import pysweb.swb.solver as solver
+    dates = pd.date_range('2012-01-02', periods=370)
+    data = xr.DataArray(np.arange(370, dtype=float)[:, None, None],
+        dims=('time','y','x'),coords=dict(time=dates,y=[0],x=[0]))
+    forcing = xr.Dataset(dict(effective_precip=data,et=data*0+3,E_t=data*0+2))
+    soil = xr.Dataset({k: xr.DataArray(np.full((2,1,1),v),dims=('layer','y','x'),
+        coords=dict(layer=[1,2],y=[0],x=[0])) for k,v in dict(porosity=.45,wilting_point=.12,
+        available_water_capacity=.2,b_coefficient=4.5,conductivity_sat=8.).items()})
+    soil = soil.assign_coords(layer_depth=('layer',[50.,200.]))
+    mask = data[0].drop_vars('time').astype(bool) | True
+    calls = []
+    def capture(precip, et, props, times, **kwargs):
+        calls.append((precip.copy(), times, kwargs['initial_soil_moisture']))
+        return SimpleNamespace(attrs=dict(forcing_valid=np.ones(len(times),bool),final_state=np.array([.2,.3])))
+    monkeypatch.setattr(solver, 'soil_water_balance_1d', capture)
+    arguments = dict(scoring_start=str((dates[-1]+pd.Timedelta(days=1)).date()),
+        development_end='2014-12-31',tolerance=.005,minimum_fraction=.99,solver_backend='reference',
+        mode='field_capacity_cycles',cycle_days=365)
+    gate, difference = verify_convergence(forcing,soil,mask,dict(diff_factor=1000.,root_beta=.96),**arguments)
+    assert gate['passed'] and gate['mode'] == 'field_capacity_cycles'
+    assert calls[0][2] is None and calls[1][2] is None
+    np.testing.assert_array_equal(calls[0][0], np.arange(370))
+    np.testing.assert_array_equal(calls[1][0], np.r_[np.arange(365),np.arange(370)])
+    assert calls[0][1][-1] == calls[1][1][-1]
+    assert len(calls[1][1]) == 735
+    assert (difference == 0).all()
+    with pytest.raises(ValueError, match='cycle_days'):
+        verify_convergence(forcing,soil,mask,dict(diff_factor=1000.,root_beta=.96),
+            **{**arguments,'cycle_days':364})
+
+
 def test_l7_file_gate_and_receipt_reject_mutation(tmp_path):
     import rasterio
     from rasterio import Affine

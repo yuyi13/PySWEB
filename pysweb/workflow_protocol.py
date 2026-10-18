@@ -147,11 +147,13 @@ def convergence_gate(directory, record, mask, parameters, config, label, model_o
     gate, differences = verify_convergence(xr.Dataset(fields), soil, mask, parameters,
         scoring_start=record["scoring_start"], development_end=record["development_end"],
         tolerance=config["tolerance"], minimum_fraction=config["minimum_fraction"],
-        solver_backend=config.get("solver_backend", "numba"), model_options=model_options, workers=workers)
+        solver_backend=config.get("solver_backend", "numba"), model_options=model_options, workers=workers,
+        mode=config.get("convergence_mode", "wet_dry"),
+        cycle_days=(pd.Timestamp(record["actual_start"])-pd.Timestamp(record["simulation_start"])).days)
     atomic_json(directory/"initialized"/f"{label}_convergence.json", gate)
     atomic_netcdf(differences, directory/"initialized"/f"{label}_convergence.nc")
     if not gate["passed"]:
-        raise ValueError("Wet/dry convergence failed; extend development-only cycles and refit")
+        raise ValueError(f"Initialization convergence failed ({gate['mode']}); extend development-only cycles and refit")
     return gate
 
 

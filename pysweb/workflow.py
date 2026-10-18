@@ -185,7 +185,7 @@ def load_config(path):
             raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
     for section, keys in {
         "landsat": {"manifest_file", "sensor_windows", "wrs", "gapfill"},
-        "spinup": {"source_year", "repeats", "tolerance", "minimum_fraction", "solver_backend"},
+        "spinup": {"source_year", "repeats", "tolerance", "minimum_fraction", "solver_backend", "convergence_mode"},
         "forcing": {"peer_runs", "reconstruction", "precipitation_qc", "retrieval"},
         "evaluation": {"longitude", "latitude", "depth_interval_mm", "observations_file", "regimes_file",
                        "regime_column", "pairs", "phases", "scoring_start"},

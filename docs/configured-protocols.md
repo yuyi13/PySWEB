@@ -37,6 +37,8 @@ solver_backend = "numba"
 
 A source year must be complete, non-leap and inside development. Its repeated days rotate to finish immediately before the actual start's calendar phase. Artificial reference observations remain missing. Wet and dry initial states are simulated through the day before scoring; every layer must agree within tolerance in the required fraction of admitted cells. The gate runs for default and calibrated parameters on both coarse and fine grids. Failure requires extending development-only initialization and refitting. Repetition establishes numerical convergence, not the true historical state.
 
+Normal simulations initialize each layer at physical field capacity (wilting point plus available water capacity). The default `spinup.convergence_mode = "wet_dry"` tests independence from empty and saturated initial profiles. An explicitly selected `convergence_mode = "field_capacity_cycles"` instead compares field-capacity starts after N and 2N repeated years, followed by the identical real initialization prefix. It retains the configured layer tolerance, admitted-cell fraction and coarse/fine default/calibrated gates. This narrower test assesses warm-up length under the chosen field-capacity initialization; passing does **not** establish independence from extreme initial states. Receipts identify the mode and its interpretation. The production trajectory still uses N repeats.
+
 Only initialization dates are removed from final products. An `initial_history_valid_<scenario>` field preserves their validity, so evaluation still requires a continuous trajectory. Actual states continue through the development/holdout boundary without resetting.
 
 ## Benchmark, fit and verify

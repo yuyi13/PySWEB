@@ -69,7 +69,8 @@ def prepend_cycles(source, destination, actual_start, actual_end, *, source_year
 
 def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
                        development_end, tolerance, minimum_fraction,
-                       solver_backend="numba", model_options=None, workers=1):
+                       solver_backend="numba", model_options=None, workers=1,
+                       mode="wet_dry", cycle_days=None):
     """Run wet and dry histories through the day before scoring on every cell.
 
     forcing has effective_precip, et and E_t, plus optional ndvi. Soil variables
@@ -93,6 +94,12 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
     times = pd.DatetimeIndex(history.time.values)
     if not len(times) or not times.equals(pd.date_range(times[0], stop)):
         raise ValueError("Complete daily initialization history required")
+    if mode not in {"wet_dry", "field_capacity_cycles"}:
+        raise ValueError("Unknown initialization convergence mode")
+    if mode == "field_capacity_cycles" and (
+            not isinstance(cycle_days, int) or isinstance(cycle_days, bool)
+            or cycle_days < 365 or cycle_days % 365 or cycle_days > len(times)):
+        raise ValueError("Field-capacity comparison requires complete repeated-year cycle_days")
     spatial = mask.dims
     if len(spatial) != 2 or not bool(mask.any()):
         raise ValueError("Nonempty two-dimensional admitted mask required")
@@ -116,7 +123,7 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
     cells = list(zip(*np.where(mask.values)))
     effective_workers = min(workers, len(cells))
     context = (values, soils, bottoms, ndvi, options, parameters, times,
-               solver_backend, reference_properties(options.get("reference_file")))
+               solver_backend, reference_properties(options.get("reference_file")), mode, cycle_days)
     if effective_workers == 1:
         for cell in cells:
             y, x, value = _convergence_cell(cell, context)
@@ -137,6 +144,9 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
         cells=int(mask.sum()), initialization_days=len(times), scoring_start=str(scoring_start),
         max_by_layer=admitted.max(axis=1).tolist(), p99_by_layer=np.quantile(admitted, .99, axis=1).tolist(),
         workers=effective_workers,
+        mode=mode, cycle_days=cycle_days,
+        interpretation=("Empty versus saturated initial states" if mode == "wet_dry" else
+            "Field-capacity starts with N versus 2N repeated years; does not establish independence from extreme initial states"),
         formulation=settings_identity(options.get("reference_file"),
             max_root_depth=options.get("max_root_depth", 1000.),
             **{k: options[k] for k in ("drainage_slope", "drainage_upper_limit", "drainage_lower_limit")}),
@@ -158,7 +168,7 @@ def _convergence_cell(cell, context=None):
     from pysweb.swb.calibrate import _extract_props_from_arrays
     from pysweb.swb.solver import _resolve_sm_bounds, soil_water_balance_1d
     context = context if context is not None else _CONVERGENCE_CONTEXT
-    values, soils, bottoms, ndvi, options, parameters, times, backend, references = context
+    values, soils, bottoms, ndvi, options, parameters, times, backend, references, mode, cycle_days = context
     if backend == "numba":
         from pysweb.swb.accelerated import soil_water_balance_1d
     y, x = cell
@@ -169,10 +179,17 @@ def _convergence_cell(cell, context=None):
     props.update(references)
     props["max_root_depth"] = options.get("max_root_depth", 1000.)
     final = []
-    for initial in _resolve_sm_bounds(props):
-        result = soil_water_balance_1d(values["effective_precip"][:, y, x],
-            values["et"][:, y, x], props, times, initial_soil_moisture=initial,
-            diff_factor=parameters["diff_factor"], transpiration_data=values["E_t"][:, y, x],
+    initial_states = _resolve_sm_bounds(props) if mode == "wet_dry" else (None, None)
+    for index, initial in enumerate(initial_states):
+        series = {key: values[key][:, y, x] for key in ("effective_precip", "et", "E_t")}
+        dates = times
+        if mode == "field_capacity_cycles" and index == 1:
+            # Duplicate only the artificial prefix; append the real prefix once.
+            series = {key: np.concatenate([value[:cycle_days], value]) for key, value in series.items()}
+            dates = pd.date_range(end=times[-1], periods=len(times)+cycle_days)
+        result = soil_water_balance_1d(series["effective_precip"],
+            series["et"], props, dates, initial_soil_moisture=initial,
+            diff_factor=parameters["diff_factor"], transpiration_data=series["E_t"],
             state_timing="start")
         if not np.all(result.attrs["forcing_valid"]):
             raise ValueError("Solver rejected initialization forcing")

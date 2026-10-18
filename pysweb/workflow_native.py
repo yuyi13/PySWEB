@@ -90,6 +90,8 @@ def native_plan(config, stages):
         cycle_indices(pd.date_range(start, end), start, spinup['repeats'], spinup['source_year'], boundary)
         if not 0 < spinup['tolerance'] or not 0 < spinup['minimum_fraction'] <= 1:
             raise ValueError('Invalid spin-up acceptance thresholds')
+        if spinup.get('convergence_mode', 'wet_dry') not in {'wet_dry', 'field_capacity_cycles'}:
+            raise ValueError('Invalid spin-up convergence_mode')
         if run['state_timing'] != 'start':
             raise ValueError('Verified spin-up workflow requires start-of-day states')
     landsat = config.get('landsat', {})
