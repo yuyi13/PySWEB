@@ -336,7 +336,7 @@ def run_native(config, stages, dry_run=False):
             else:
                 pysweb.swb.calibrate(**args,reference_ssm=reference_path,output=str(calibration_file),**options)
             if spinup:
-                parameters = pd.read_csv(calibration_file).iloc[0]
+                parameters = pd.read_csv(calibration_file, float_precision="round_trip").iloc[0]
                 values = {k:float(parameters[k]) for k in ('diff_factor','root_beta')}
                 convergence_gate(coarse,record,mask,values,spinup,'calibrated',model,workers=run['workers'])
             if protocol:
@@ -369,7 +369,7 @@ def run_native(config, stages, dry_run=False):
                 defaults = default_parameters(model)
                 convergence_gate(fine,record,mask,defaults,spinup,'default',model,workers=run['workers'])
                 if enabled:
-                    parameters = pd.read_csv(calibration_file).iloc[0]
+                    parameters = pd.read_csv(calibration_file, float_precision="round_trip").iloc[0]
                     values = {k:float(parameters[k]) for k in defaults}
                     convergence_gate(fine,record,mask,values,spinup,'calibrated',model,workers=run['workers'])
         output = run_default_and_calibrated(**args,**model, precip=rain,output_dir=str(products),

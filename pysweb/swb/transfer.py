@@ -3,7 +3,7 @@ Script: transfer.py
 Objective: Assess coarse-to-fine parameter transfer using development observations only.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 Inputs: Final default/calibrated SWB, native GSSM reference and scoring dates.
 Outputs: Area-weighted development diagnostics without any further parameter tuning.
 Usage: from pysweb.swb.transfer import evaluate_transfer
@@ -39,7 +39,7 @@ def evaluate_transfer(product, reference, calibration_file, start, end, output, 
             count += int(valid.sum())
             for key,field in fields.items():
                 sums[key] += float(((field-obs)**2*weights).where(valid,0).sum())
-    calibration = pd.read_csv(calibration_file).iloc[0]
+    calibration = pd.read_csv(calibration_file, float_precision="round_trip").iloc[0]
     report = {'scoring_start':start,'scoring_end':end,'surface_layer':int(layer_index+1),
               'objective':'area-weighted cell-day RMSE', 'n_cell_days':count,
               'coarse_fit_rmse':float(calibration['rmse']),

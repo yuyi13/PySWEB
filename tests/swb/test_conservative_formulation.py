@@ -4,7 +4,7 @@ Objective: Independently verify physical storage, analytical limits, conservativ
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
 Last updated: 2026-10-18
-Inputs: Synthetic columns with known limits and extreme forcing.
+Inputs: Synthetic columns, extreme forcing and fitted float64 coefficient fixtures.
 Outputs: Numerical assertions for the revised SWB contract.
 Usage: python -m pytest tests/swb/test_conservative_formulation.py
 Dependencies: numpy, pandas, pytest; pysweb
@@ -142,3 +142,19 @@ def test_wet_reference_is_diagnostic_and_legacy_inputs_fail(tmp_path):
         load_calibration(path)
     pd.DataFrame([dict(diff_factor=1000, root_beta=.96, **settings_identity())]).to_csv(path, index=False)
     assert load_calibration(path) == dict(diff_factor=1000., root_beta=.96)
+
+
+@pytest.mark.parametrize("diff_factor,root_beta", [
+    (9609.49560311022, 0.9352476318927986),
+    (108.24431434733798, 0.9006237327166058),
+])
+def test_calibration_csv_preserves_exact_optimized_coefficients(tmp_path, diff_factor, root_beta):
+    # These fitted values exposed a few-ulp shift with pandas' default parser.
+    # Exact restoration matters when a rejected polish must retain the DE fit.
+    expected = dict(diff_factor=diff_factor, root_beta=root_beta)
+    path = tmp_path/"calibration.csv"
+    pd.DataFrame([{**expected, **settings_identity()}]).to_csv(
+        path, index=False, float_format="%.17g")
+    restored = load_calibration(path)
+    assert {key:value.hex() for key,value in restored.items()} == {
+        key:value.hex() for key,value in expected.items()}

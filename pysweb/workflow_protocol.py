@@ -250,7 +250,7 @@ def reproduce_calibration(directory, record, mask, arguments, model, calibration
         observed=reference.reference_ssm.sel(time=simulated.time).load()
         weights=geographic_weights(observed,*mask.dims)
         result=cell_day_objective(simulated,observed,mask,weights)
-    fitted=pd.read_csv(calibration_file).iloc[0]
+    fitted=pd.read_csv(calibration_file, float_precision="round_trip").iloc[0]
     result.update(fitted_rmse=float(fitted.rmse),absolute_difference=abs(result['rmse']-float(fitted.rmse)),
         same_pair_count=result['n_cell_days']==int(fitted.n_obs),calibration_sha256=sha256(calibration_file),
         numerical=numerical,coarse_product=str(product),scoring_start=record['scoring_start'],

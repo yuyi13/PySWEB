@@ -78,7 +78,9 @@ def reference_properties(reference_file=None):
 
 def load_calibration(path, reference_file=None, **fixed_settings):
     """Never reinterpret a four-parameter or unversioned fit as the revised model."""
-    table = pd.read_csv(path)
+    # The daily trajectory can distinguish neighbouring float64 coefficients.
+    # Preserve exactly the values written by calibration's 17-digit CSV export.
+    table = pd.read_csv(path, float_precision="round_trip")
     reject_legacy(table.columns)
     if len(table) != 1:
         raise ValueError("Calibration CSV must contain exactly one parameter row")

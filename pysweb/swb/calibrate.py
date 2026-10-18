@@ -839,7 +839,7 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
             raise ValueError('Serial polishing requires converged DE')
         if original['fingerprint'] != manifest['fingerprint'] or original['output']['sha256'] != sha256(polish_file):
             raise ValueError('Serial polishing inputs, settings, software or DE output changed')
-        row = pd.read_csv(polish_file).iloc[0]
+        row = pd.read_csv(polish_file, float_precision="round_trip").iloc[0]
         initial = np.array(list(load_calibration(polish_file, args.reference_file, **fixed_settings).values()))
         started = time.perf_counter()
         polished = minimize(_objective_function, initial, args=objective_arguments,
