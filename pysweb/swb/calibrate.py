@@ -307,6 +307,8 @@ def _compute_rmse(
                     diff_factor=diff_factor,
                     transpiration_data=transpiration_vals[:, lat_idx, lon_idx],
                     state_timing=state_timing,
+                    **({"spinup": observation_context["spinup"]}
+                       if "spinup" in observation_context else {}),
                 )
             except (ValueError, FloatingPointError, ArithmeticError):
                 # Penalise this candidate instead of changing its calibration population.
@@ -431,6 +433,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Area-weighted cell-day RMSE (default), or legacy RMSE of daily domain means.")
     parser.add_argument("--state-timing", choices=("start", "end"), default="start", help="Model state convention matched to reference observations.")
     parser.add_argument("--spinup-days", type=int, default=0, help="Initial simulated days excluded from the objective.")
+    parser.add_argument("--spinup-source-years", nargs="+", type=int, help="Complete initial years repeated before scoring.")
+    parser.add_argument("--spinup-repeats", type=int, default=1, help="Total passes including the retained source block.")
     parser.add_argument("--allow-unconverged", action="store_true", help="Explicitly retain a non-converged candidate with its status recorded.")
     parser.add_argument("--max-iter", type=int, default=30, help="Maximum iterations for optimization.")
     parser.add_argument("--surface-depth", type=float, default=50.0, help="Depth of surface observation (mm).")
@@ -784,6 +788,15 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
         effective_precip_vals, et_vals, transpiration_vals, reference_vals,
         soil_valid, cell_weights, args.spinup_days, args.solver_backend, args.objective)
     observation_context["fixed_properties"] = {**reference_properties(args.reference_file), "max_root_depth": args.max_root_depth}
+    if args.spinup_source_years is not None:
+        from pysweb.swb.spinup import source_block
+        spinup = dict(source_years=args.spinup_source_years, repeats=args.spinup_repeats)
+        count, _ = source_block(time_index, spinup)
+        if args.spinup_days < count:
+            raise ValueError("Calibration must exclude the entire retained spin-up source block")
+        observation_context["spinup"] = spinup
+    elif args.spinup_repeats != 1:
+        raise ValueError("spinup_repeats requires spinup_source_years")
     if args.reference_file:
         from pysweb.swb.references import frozen_mask
         from pysweb.swb.formulation import load_reference

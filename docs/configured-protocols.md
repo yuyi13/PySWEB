@@ -22,6 +22,10 @@ The padding table contains `primary_bounds`, `comparison_bounds`, their `crs`, `
 
 ## Paired support and initialization
 
+For complete multi-year blocks, use the [calendar-block spin-up interface](multiyear-spinup.md).
+It keeps source forcing and output dates unexpanded. The `source_year` interface
+below remains available with its original artificial-prefix semantics.
+
 The usual Landsat 8/9 workflow runs alone. `forcing.peer_runs` is optional and should be set only for an explicitly requested comparison. For runs beginning in 2013, the default calibration scoring start is 2014-01-01, so available 2013 forcing supplies initialisation. Both calibration and normal runs (including `calibration.enabled = false`) start at physical field capacity, run the available 2013 record once and carry its state into 2014 without resetting. Resolved plans record the initialization and analysis windows; final SWB products preserve the actual calendar and mark warm-up days with `is_warmup`. Configured evaluation defaults to the analysis start. Omit `[spinup]` for this default pathway: there are no artificial years or mandatory repeated-cycle gates. Incomplete calendar-year coverage is acceptable when the available daily prefix is complete from the chosen start. This is an initial-state assumption, not a claim of convergence from arbitrary profiles. See [the actual-2013 warm-up example](../examples/2013-warmup.toml). The repeated-year protocol below is an additional explicit option with its own complete-year and convergence requirements.
 
 `forcing.peer_runs` lists the other run directories for a paired comparison. **Preprocess both runs before calibrating either.** Each run writes its own complete development forcing/physical-soil mask on both preparation grids. Initialization intersects corresponding masks with exact coordinates and CRS, preserving missing holdout forcing without using it to select cells. OpenLandMap's optional `soil.maximum_organic_matter_percent` also rejects hydraulic estimates outside the configured pedotransfer applicability domain.

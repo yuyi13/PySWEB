@@ -3,7 +3,7 @@ Script: workflow_native.py
 Objective: Orchestrate native downloads, GSSM calibration and shared Landsat-grid products.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Validated workflow configuration and selected execution stages.
 Outputs: Two final NetCDFs, coarse calibration inputs, parameters and grid checks.
 Usage: pysweb workflow --config examples/workflow.toml
@@ -83,15 +83,29 @@ def native_plan(config, stages):
     if config.get('model',{}).get('nan_to_zero'):
         raise ValueError('Native workflow preserves missing forcing; nan_to_zero would change calibration/run semantics')
     spinup = config.get('spinup')
+    compact = bool(spinup and 'source_years' in spinup)
+    compact_metadata = None
     if spinup:
         from pysweb.swb.spinup import cycle_indices
         if not boundary:
             raise ValueError('Configured spin-up requires an explicit development boundary')
-        cycle_indices(pd.date_range(start, end), start, spinup['repeats'], spinup['source_year'], boundary)
+        if compact:
+            from pysweb.swb.spinup import source_block
+            _, compact_metadata = source_block(pd.date_range(start, end), spinup)
+            if not enabled and 'start' not in calibration:
+                first = pd.Timestamp(compact_metadata['scoring_start_minimum'])
+            if first < pd.Timestamp(compact_metadata['scoring_start_minimum']):
+                raise ValueError('Scoring must begin after the retained spin-up source block')
+            if pd.Timestamp(compact_metadata['scoring_start_minimum']) > boundary:
+                raise ValueError('Spin-up source years must precede the development boundary')
+        else:
+            cycle_indices(pd.date_range(start, end), start, spinup['repeats'], spinup['source_year'], boundary)
         if not 0 < spinup['tolerance'] or not 0 < spinup['minimum_fraction'] <= 1:
             raise ValueError('Invalid spin-up acceptance thresholds')
         if spinup.get('convergence_mode', 'wet_dry') not in {'wet_dry', 'field_capacity_cycles'}:
             raise ValueError('Invalid spin-up convergence_mode')
+        if spinup.get('convergence_action', 'require') not in {'require', 'record'}:
+            raise ValueError('Invalid spin-up convergence_action')
         if run['state_timing'] != 'start':
             raise ValueError('Verified spin-up workflow requires start-of-day states')
     landsat = config.get('landsat', {})
@@ -99,16 +113,25 @@ def native_plan(config, stages):
         raise ValueError('L7 gap-fill donors must end within development')
     if config.get('forcing') and not boundary:
         raise ValueError('Forcing support requires a development boundary')
-    analysis_start = first if enabled else default_scoring_start
+    analysis_start = first if enabled or compact else default_scoring_start
     warmup_end = min(end, analysis_start-pd.Timedelta(days=1))
     warmup = [str(start.date()), str(warmup_end.date())] if warmup_end >= start else None
     initialization = dict(initial_state='physical_field_capacity',
-        mode='repeated_year' if spinup else 'actual_forcing_prefix',
+        mode='repeated_source_block' if compact else ('repeated_year' if spinup else 'actual_forcing_prefix'),
         actual_start=str(start.date()), warmup_window=warmup,
         analysis_start=str(analysis_start.date()),
         actual_warmup_days=max(0, (warmup_end-start).days+1),
-        artificial_warmup_days=365*spinup['repeats'] if spinup else 0,
+        artificial_warmup_days=(compact_metadata['artificial_days'] if compact
+                               else (365*spinup['repeats'] if spinup else 0)),
         interpretation='Field-capacity assumption; actual prefix alone does not establish initial-state independence')
+    if compact:
+        initialization['repeated_source_block'] = compact_metadata
+    if spinup:
+        initialization['convergence_action'] = spinup.get('convergence_action', 'require')
+        initialization['interpretation'] = (
+            'Fixed-duration initialization experiment; inspect convergence receipts before interpreting results'
+            if spinup.get('convergence_action') == 'record' else
+            'Repeated forcing; convergence must pass the explicitly selected diagnostic')
     base = Path(run['root'])/run['name']
     return {'stages':list(stages),'run_directory':str(base), 'windows':[[run['start'],run['end']]],
             'calibration_scoring_window':[str(first.date()),str(last.date())] if enabled else None,
@@ -373,11 +396,11 @@ def run_native(config, stages, dry_run=False):
                     values = {k:float(parameters[k]) for k in defaults}
                     convergence_gate(fine,record,mask,values,spinup,'calibrated',model,workers=run['workers'])
         output = run_default_and_calibrated(**args,**model, precip=rain,output_dir=str(products),
-            output_file='SWEB_with_spinup.nc' if spinup else 'SWEB_RZSM.nc',
+            output_file='SWEB_with_spinup.nc' if spinup and 'source_years' not in spinup else 'SWEB_RZSM.nc',
             calibration_file=calibration_file if enabled else None,
             initialization=plan['initialization'],
             auxiliary_inputs={'soil_evaporation_forcing':evaporation})
-        if spinup:
+        if spinup and 'source_years' not in spinup:
             from pysweb.workflow_protocol import trim_initialization
             output = trim_initialization(output, products/'SWEB_RZSM.nc', start)
         if protocol:

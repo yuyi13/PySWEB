@@ -39,7 +39,8 @@ def _resolve_sm_bounds(soil_properties):
 
 def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
            initial_soil_moisture=None, evap_fraction=None, diff_factor=1e3,
-           transpiration_data=None, state_timing="start", *, kernel=column_kernel):
+           transpiration_data=None, state_timing="start", *, kernel=column_kernel,
+           spinup=None):
     """Validate once outside either numerical backend; retain missing-forcing states."""
     props = dict(soil_properties)
     reject_legacy(props)
@@ -100,6 +101,23 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
     tau = float(props.get("supply_tau_days", TAU_DAYS))
     if not (np.isfinite(tau) and tau > 0) or not np.isfinite(slope) or slope < 0 or not np.isfinite(upper) or upper < 0:
         raise ValueError("Invalid drainage or fixed closure settings")
+    original_initial = initial.copy()
+    spinup_metadata = None
+    if spinup is not None:
+        from pysweb.swb.spinup import source_block
+        if time_step != 1.:
+            raise ValueError("Repeated calendar spin-up requires daily forcing")
+        count, spinup_metadata = source_block(times, spinup)
+        for _ in range(spinup_metadata["repeats"] - 1):
+            _, _, warm_valid, initial = kernel(
+                rain[:count], et[:count], tr[:count], initial.copy(), por, wp, b, ks,
+                thick, dry, wet, roots, float(diff_factor), float(time_step),
+                slope, upper, tau, False)
+            if not np.all(warm_valid):
+                raise ValueError("Repeated spin-up forcing contains invalid values")
+        if not (np.isfinite(rain[:count]).all() and np.isfinite(et[:count]).all()
+                and np.isfinite(tr[:count]).all()):
+            raise ValueError("Repeated spin-up forcing contains invalid values")
     states, budgets, valid, final = kernel(rain, et, tr, initial.copy(), por, wp, b, ks,
         thick, dry, wet, roots, float(diff_factor), float(time_step), slope, upper,
         tau, state_timing == "end")
@@ -109,15 +127,18 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
         formulation_version=FORMULATION_VERSION, supply_tau_days=tau, time_integration=TIME_INTEGRATION, time_step_days=float(time_step),
         water_balance={key: budgets[:, i] for i, key in enumerate(budget_names(len(bottoms)))},
         forcing_valid=valid, dry_reference=dry, wet_reference=wet)
+    if spinup_metadata is not None:
+        result.attrs.update(spinup=spinup_metadata, pre_spinup_initial_state=original_initial)
     return result
 
 
 def soil_water_balance_1d(precip_data, et_data, soil_properties, time, time_step=1.,
                           initial_soil_moisture=None, evap_fraction=None, diff_factor=1e3,
-                          transpiration_data=None, state_timing="start"):
+                          transpiration_data=None, state_timing="start", spinup=None):
     """One conservative update per interval; daily by default, initialised at FC."""
     return _solve(precip_data, et_data, soil_properties, time, time_step,
-        initial_soil_moisture, evap_fraction, diff_factor, transpiration_data, state_timing)
+        initial_soil_moisture, evap_fraction, diff_factor, transpiration_data,
+        state_timing, spinup=spinup)
 
 _DEFAULT_NDVI_ROOT_QUANTILES = (0.2, 0.4, 0.6, 0.8, 1.0)
 _DEFAULT_NDVI_ROOT_DEPTHS_CM = (5.0, 15.0, 30.0, 60.0, 100.0)

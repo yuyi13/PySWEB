@@ -128,6 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
     parser.add_argument("--solver-backend", choices=["reference", "numba"], default="reference", help="Optional verified accelerator for the standard solver equations.")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for spatial SWEB simulation.")
+    parser.add_argument("--spinup-source-years", nargs="+", type=int, help="Complete initial years repeated before scoring.")
+    parser.add_argument("--spinup-repeats", type=int, default=1, help="Total passes including the retained source block.")
     return parser
 
 
@@ -239,6 +241,7 @@ def _compute_row_soil_moisture(
     emit_warnings: bool = True,
     state_timing: str = "start",
     solver_backend: str = "reference",
+    spinup=None,
 ) -> np.ndarray:
     solver = soil_water_balance_1d
     if solver_backend == "numba":
@@ -293,6 +296,7 @@ def _compute_row_soil_moisture(
                 diff_factor = diff_factor,
                 transpiration_data = transpiration_series,
                 state_timing = state_timing,
+                **({"spinup": spinup} if spinup is not None else {}),
             )
         except Exception as exc:  # pragma: no cover - diagnostic output
             if emit_warnings:
@@ -324,6 +328,7 @@ def _init_process_run_worker(
     use_ndvi_root_depth: bool,
     state_timing: str,
     solver_backend: str = "reference",
+    spinup=None,
 ) -> None:
     global _PROCESS_RUN_STATE
     _PROCESS_RUN_STATE = {
@@ -339,6 +344,7 @@ def _init_process_run_worker(
         "use_ndvi_root_depth": bool(use_ndvi_root_depth),
         "state_timing": state_timing,
         "solver_backend": solver_backend,
+        "spinup": spinup,
     }
 
 
@@ -372,6 +378,7 @@ def _run_model_for_lat_process(lat_idx: int) -> tuple[int, np.ndarray]:
         emit_warnings = True,
         state_timing = state["state_timing"],
         solver_backend = state["solver_backend"],
+        spinup = state["spinup"],
     )
     return lat_idx, row_soil_moisture
 
@@ -390,6 +397,11 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         raise ValueError("Daily SWB forcing requires time_step=1 day.")
     if args.workers < 1:
         raise ValueError("workers must be >= 1")
+    spinup = None
+    if args.spinup_source_years is not None:
+        spinup = dict(source_years=args.spinup_source_years, repeats=args.spinup_repeats)
+    elif args.spinup_repeats != 1:
+        raise ValueError("spinup_repeats requires spinup_source_years")
 
     out_dir = Path(args.output_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -432,6 +444,9 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
     except ValueError as exc:
         raise ValueError("Forcing grids must match exactly; preprocess onto one grid first.") from exc
     precip, effective_precip, et, transpiration = aligned[:4]
+    if spinup is not None:
+        from pysweb.swb.spinup import source_block
+        source_block(effective_precip.time.values, spinup)
     ndvi = aligned[4] if ndvi is not None else None
 
     precip = precip.transpose("time", args.lat_dim, args.lon_dim)
@@ -557,6 +572,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 use_ndvi_root_depth = args.use_ndvi_root_depth,
                 state_timing = args.state_timing,
                 solver_backend = args.solver_backend,
+                spinup = spinup,
             )
             soil_moisture[:, :, lat_idx, :], final_soil_moisture[:, lat_idx, :], budget_values[:, :, lat_idx, :], forcing_valid[:, lat_idx, :] = row_soil_moisture
             processed_cells += n_lon
@@ -591,6 +607,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
                 args.use_ndvi_root_depth,
                 args.state_timing,
                 args.solver_backend,
+                spinup,
             ),
         ) as executor:
             futures = {executor.submit(_run_model_for_lat_process, lat_idx) for lat_idx in range(n_lat)}

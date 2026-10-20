@@ -3,7 +3,7 @@ Script: workflow_protocol.py
 Objective: Connect configured support, initialization and evaluation gates to native runs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Native prepared directories, paired workflow paths and scientific protocol settings.
 Outputs: Frozen support, explicit initialization files, convergence receipts and evaluation.
 Usage: Internal orchestration for pysweb.workflow_native.
@@ -64,6 +64,13 @@ def initialize_inputs(directory, start, end, scoring_start, development_end,
                       spinup=None, peer_directories=()):
     """Freeze support and retain actual forcing; prepend cycles only when requested."""
     from pysweb.swb.spinup import prepend_cycles
+    compact = bool(spinup and "source_years" in spinup)
+    compact_metadata = None
+    if compact:
+        from pysweb.swb.spinup import source_block
+        _, compact_metadata = source_block(pd.date_range(start, end), spinup)
+        if pd.Timestamp(scoring_start) < pd.Timestamp(compact_metadata["scoring_start_minimum"]):
+            raise ValueError("Scoring must exclude the retained spin-up source block")
     directory = Path(directory)
     masks = []
     for folder in [directory, *map(Path, peer_directories)]:
@@ -84,12 +91,12 @@ def initialize_inputs(directory, start, end, scoring_start, development_end,
     actual_tag = f'{start.replace("-", "")}_{end.replace("-", "")}'
     simulation_start = start
     mapping = {}
-    if spinup:
+    if spinup and not compact:
         simulation_start = str((pd.Timestamp(start)-pd.Timedelta(days=365*spinup["repeats"])).date())
     for name, (stem, variable) in FORCING_FILES.items():
         source = directory/f"{stem}_daily_{actual_tag}.nc"
         destination = prepared/source.name
-        if spinup:
+        if spinup and not compact:
             prepend_cycles(source, destination, start, end, source_year=spinup["source_year"],
                 repeats=spinup["repeats"], development_end=development_end)
         else:
@@ -98,7 +105,7 @@ def initialize_inputs(directory, start, end, scoring_start, development_end,
     reference = directory/f"reference_ssm_daily_{actual_tag}.nc"
     if reference.exists():
         destination = prepared/reference.name
-        if spinup:
+        if spinup and not compact:
             prepend_cycles(reference, destination, start, end, source_year=spinup["source_year"],
                 repeats=spinup["repeats"], development_end=development_end,
                 reference=True, scoring_start=scoring_start)
@@ -109,8 +116,9 @@ def initialize_inputs(directory, start, end, scoring_start, development_end,
         scoring_start=scoring_start, development_end=development_end,
         spinup_days=(pd.Timestamp(scoring_start)-pd.Timestamp(simulation_start)).days,
         spinup=spinup, initial_state="physical_field_capacity",
-        initialization_mode="repeated_year" if spinup else "actual_forcing_prefix",
-        artificial_warmup_days=(pd.Timestamp(start)-pd.Timestamp(simulation_start)).days,
+        initialization_mode="repeated_source_block" if compact else ("repeated_year" if spinup else "actual_forcing_prefix"),
+        artificial_warmup_days=(compact_metadata["artificial_days"] if compact else
+                               (pd.Timestamp(start)-pd.Timestamp(simulation_start)).days),
         cells=int(mask.sum()), peers=list(map(str, peer_directories)), files=mapping)
     sources = [directory/f'{stem}_daily_{actual_tag}.nc' for stem, _ in FORCING_FILES.values()]
     sources += [directory/name for name in SOIL_FILE_STEMS.values()]
@@ -130,6 +138,9 @@ def initialized_forcing(record, directory, *, workers, state_timing, projected=F
         state_timing=state_timing, lat_dim="y" if projected else "lat", lon_dim="x" if projected else "lon")
     for name, argument in keys.items():
         result[argument], result[argument+"_var"] = record["files"][name]
+    if record.get("initialization_mode") == "repeated_source_block":
+        result.update(spinup_source_years=record["spinup"]["source_years"],
+                      spinup_repeats=record["spinup"]["repeats"])
     return result
 
 
@@ -147,16 +158,28 @@ def convergence_gate(directory, record, mask, parameters, config, label, model_o
     soil = xr.Dataset(arrays).assign_coords(layer_depth=("layer", infer_layer_bottoms(arrays, None)))
     # Dataset alignment expands the other histories to NDVI's calendar; verification
     # explicitly selects the initialization prefix again.
+    options = dict(model_options or {})
+    if record.get("initialization_mode") == "repeated_source_block":
+        options["spinup"] = record["spinup"]
     gate, differences = verify_convergence(xr.Dataset(fields), soil, mask, parameters,
         scoring_start=record["scoring_start"], development_end=record["development_end"],
         tolerance=config["tolerance"], minimum_fraction=config["minimum_fraction"],
-        solver_backend=config.get("solver_backend", "numba"), model_options=model_options, workers=workers,
+        solver_backend=config.get("solver_backend", "numba"), model_options=options, workers=workers,
         mode=config.get("convergence_mode", "wet_dry"),
         cycle_days=(pd.Timestamp(record["actual_start"])-pd.Timestamp(record["simulation_start"])).days)
+    action = config.get("convergence_action", "require")
+    if action not in {"require", "record"}:
+        raise ValueError("Invalid spin-up convergence_action")
+    gate["convergence_action"] = action
+    if action == "record":
+        gate["failure_action"] = "Retain fixed-duration experiment with failed convergence explicitly reported; no convergence endorsement"
     atomic_json(directory/"initialized"/f"{label}_convergence.json", gate)
     atomic_netcdf(differences, directory/"initialized"/f"{label}_convergence.nc")
-    if not gate["passed"]:
+    if not gate["passed"] and action == "require":
         raise ValueError(f"Initialization convergence failed ({gate['mode']}); extend development-only cycles and refit")
+    if not gate["passed"]:
+        import warnings
+        warnings.warn(f"{label} initialization did not converge; retaining explicitly configured fixed-duration experiment", RuntimeWarning)
     return gate
 
 

@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -185,7 +185,8 @@ def load_config(path):
             raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
     for section, keys in {
         "landsat": {"manifest_file", "sensor_windows", "wrs", "gapfill"},
-        "spinup": {"source_year", "repeats", "tolerance", "minimum_fraction", "solver_backend", "convergence_mode"},
+        "spinup": {"source_year", "source_years", "repeats", "tolerance", "minimum_fraction",
+                   "solver_backend", "convergence_mode", "convergence_action"},
         "forcing": {"peer_runs", "reconstruction", "precipitation_qc", "retrieval"},
         "evaluation": {"longitude", "latitude", "depth_interval_mm", "observations_file", "regimes_file",
                        "regime_column", "pairs", "phases", "scoring_start"},
