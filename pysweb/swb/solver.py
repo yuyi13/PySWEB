@@ -3,7 +3,7 @@ Script: solver.py
 Objective: Solve daily soil-water balances and vertical redistribution for a layered soil column.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Daily forcing, per-layer hydraulic properties, initial states and solver settings.
 Outputs: Layer moisture and final states, hydraulic coefficients, water-budget terms and quality flags.
 Usage: import pysweb.swb.solver
@@ -16,7 +16,7 @@ import pandas as pd
 
 from pysweb.contracts import layer_bottoms
 
-from pysweb.swb.formulation import (FORMULATION_VERSION, TAU_DAYS, TIME_INTEGRATION, budget_names, reject_legacy)
+from pysweb.swb.formulation import (DEFAULT_ROOT_BETA, FORMULATION_VERSION, TAU_DAYS, TIME_INTEGRATION, budget_names, reject_legacy)
 from pysweb.swb.conservative import column_kernel
 
 
@@ -185,7 +185,7 @@ def _compute_root_distribution_beta(
     num_layers = len(layer_depth_mm)
 
     if beta is None:
-        beta = float(soil_properties.get("root_beta", 0.961))
+        beta = float(soil_properties.get("root_beta", DEFAULT_ROOT_BETA))
     if not np.isfinite(beta) or not .90 <= beta <= .995:
         raise ValueError("root_beta must be between 0.9 and 0.995")
 

@@ -3,7 +3,7 @@ Script: test_conservative_formulation.py
 Objective: Independently verify physical storage, analytical limits, conservative budgets and migration.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Synthetic columns, extreme forcing and fitted float64 coefficient fixtures.
 Outputs: Numerical assertions for the revised SWB contract.
 Usage: python -m pytest tests/swb/test_conservative_formulation.py
@@ -63,6 +63,31 @@ def test_physical_fc_initialisation_and_partial_root_geometry():
     expected = np.diff(1-.96**np.array([0., 5., 15., 23., 23., 23.]))/(1-.96**23.)
     np.testing.assert_allclose(roots, expected, atol=1e-15)
     assert roots[-1] == roots[-2] == 0
+
+
+@pytest.mark.parametrize("beta_source", ["omitted", "soil_property", "argument"])
+def test_root_beta_default_and_overrides_follow_expected_profile(beta_source):
+    p = props(max_root_depth=1000.)
+    p.pop("root_beta")
+    expected_beta = .96 if beta_source == "omitted" else .93
+    kwargs = {}
+    if beta_source == "soil_property":
+        p["root_beta"] = expected_beta
+    elif beta_source == "argument":
+        p["root_beta"] = .98
+        kwargs["beta"] = expected_beta
+    roots = _compute_root_distribution_beta(p, **kwargs)
+    cumulative = 1 - expected_beta**np.array([0., 5., 15., 30., 60., 100.])
+    np.testing.assert_allclose(roots, np.diff(cumulative)/cumulative[-1], rtol=0, atol=1e-15)
+
+
+def test_run_and_workflow_use_the_same_default_root_profile():
+    from pysweb.swb.run import _parser_defaults
+    from pysweb.workflow_protocol import default_parameters
+
+    assert _parser_defaults()["root_beta"] == .96
+    assert default_parameters({})["root_beta"] == .96
+    assert default_parameters({"root_beta": .93})["root_beta"] == .93
 
 
 @pytest.mark.parametrize("backend", ["reference", "numba"])

@@ -2,7 +2,7 @@
 
 Formulation: `swb-daily-conservative-2p-v2`. Reference schema: `gssm-native-p01-p99-v1`.
 
-The revised water balance separates physical storage, empirical surface-moisture references and root-extraction limits. Only the diffusivity scale `diff_factor` (10–10,000 mm) and the beta root-distribution coefficient `root_beta` (0.9–0.995) are calibrated. Physical saturation water content θs, wilting point WP, field capacity FC, saturated conductivity Ksat and the hydraulic exponent b remain fixed. The model layers end at 50, 150, 300, 600 and 1,000 mm. Layer 1 represents 0–5 cm and directly matches the GSSM observation depth.
+The revised water balance separates physical storage, empirical surface-moisture references and root-extraction limits. Only the diffusivity scale `diff_factor` (10–10,000 mm) and the beta root-distribution coefficient `root_beta` (0.9–0.995) are calibrated. Root beta defaults to **0.96** in normal runs, the low-level root-distribution helper and the initial calibration seed; explicit values override this default. Physical saturation water content θs, wilting point WP, field capacity FC, saturated conductivity Ksat and the hydraulic exponent b remain fixed. The model layers end at 50, 150, 300, 600 and 1,000 mm. Layer 1 represents 0–5 cm and directly matches the GSSM observation depth.
 
 ## Frozen GSSM references
 

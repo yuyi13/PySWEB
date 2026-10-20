@@ -3,7 +3,7 @@ Script: formulation.py
 Objective: Define the versioned two-parameter SWB contract and reject incompatible calibrations.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Fixed reference artifacts, model settings and calibration CSV files.
 Outputs: Validated fixed settings, artifact identities and fitted coefficients.
 Usage: import pysweb.swb.formulation
@@ -22,6 +22,7 @@ TIME_INTEGRATION = "single-bounded-update"
 REFERENCE_COMPATIBLE_FORMULATIONS = {"swb-conservative-2p-v1", FORMULATION_VERSION}
 REFERENCE_VERSION = "gssm-native-p01-p99-v1"
 PARAMETER_NAMES = ("diff_factor", "root_beta")
+DEFAULT_ROOT_BETA = 0.96
 TAU_DAYS = 3.0
 LEGACY_KEYS = {"sm_max_factor", "sm_min_factor", "sm_max_bounds", "sm_min_bounds",
                "sm_min_bound", "sm_max_bound", "sm_min_relax_tau_days",

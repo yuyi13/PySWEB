@@ -4,7 +4,7 @@ Script: run.py
 Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
 Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
 Usage: pysweb swb-run --help
@@ -40,7 +40,7 @@ from pysweb.swb.core import (
     prepare_soil_property_grids,
 )
 from pysweb.swb.solver import soil_water_balance_1d
-from pysweb.swb.formulation import (budget_names, settings_identity, reference_properties,
+from pysweb.swb.formulation import (DEFAULT_ROOT_BETA, budget_names, settings_identity, reference_properties,
     load_calibration, reject_legacy)
 from pysweb.contracts import daily_data
 from pysweb.io.provenance import input_manifest, atomic_netcdf, save_output_manifest, validate_existing_output
@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--reference-file", help="Frozen GSSM reference JSON; required to reuse its calibrated coefficients.")
     parser.add_argument("--max-root-depth", type=float, default=1000., help="Fixed maximum root depth in mm.")
-    parser.add_argument("--root-beta", type=float, default=0.96, help="Root distribution beta parameter.")
+    parser.add_argument("--root-beta", type=float, default=DEFAULT_ROOT_BETA, help="Root distribution beta parameter.")
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")

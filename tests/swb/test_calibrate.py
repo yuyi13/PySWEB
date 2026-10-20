@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Script: test_calibrate.py
-Objective: Verify calibration argument validation, daily time alignment and rejection of invalid fit metrics.
+Objective: Verify calibration arguments, optimizer seeds, daily time alignment and rejection of invalid fit metrics.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Package calibration parser construction and CLI argument parsing under pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/swb/test_calibrate.py
@@ -145,7 +145,8 @@ def test_calibrate_domain_rejects_requested_window_with_no_overlapping_timesteps
         )
 
 
-def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_path: Path):
+@pytest.mark.parametrize("root_beta", [None, 0.93])
+def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_path: Path, root_beta):
     data_by_path = {
         "effective.nc": _forcing_cube("effective_precipitation", ["2024-01-01 12:00:00", "2024-01-02 12:00:00"]),
         "et.nc": _forcing_cube("et", ["2024-01-01 12:00:00", "2024-01-02 12:00:00"]),
@@ -162,13 +163,13 @@ def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_pat
 
     monkeypatch.setattr(calibrate_module, "_load_single_variable", lambda path, var = None, **kwargs: data_by_path[path.name])
     monkeypatch.setattr(calibrate_module, "_load_soil_arrays", lambda soil_dir: soil_arrays)
-    monkeypatch.setattr(
-        calibrate_module,
-        "_get_differential_evolution",
-        lambda: (
-            lambda *args, **kwargs: type("FakeResult", (), {"x": np.array([1000.0, 0.96], dtype=float), "success": True})()
-        ),
-    )
+    optimizer_seeds = []
+
+    def fake_de(*args, x0, **kwargs):
+        optimizer_seeds.append(x0.copy())
+        return type("FakeResult", (), {"x": x0.copy(), "success": True})()
+
+    monkeypatch.setattr(calibrate_module, "_get_differential_evolution", lambda: fake_de)
     monkeypatch.setattr(calibrate_module, "_compute_rmse", lambda *args, **kwargs: (0.42, 2))
 
     # Keep real input files available to the provenance writer; only optimization is mocked.
@@ -178,6 +179,7 @@ def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_pat
     for name, da in soil_arrays.items():
         da.to_netcdf(tmp_path / "soil" / f"soil_{name}.nc")
     output_path = tmp_path / "calibration.csv"
+    parameter_options = {} if root_beta is None else {"root_beta": root_beta}
     calibrate_module.calibrate_domain(
         effective_precip = str(tmp_path / "effective.nc"),
         et            = str(tmp_path / "et.nc"),
@@ -187,9 +189,11 @@ def test_calibrate_domain_accepts_noon_stamped_daily_inputs(monkeypatch, tmp_pat
         date_range    = ["2024-01-01", "2024-01-02"],
         output        = str(output_path),
         sm_res        = None,
+        **parameter_options,
     )
 
     assert output_path.exists()
+    np.testing.assert_array_equal(optimizer_seeds, [[1000., .96 if root_beta is None else root_beta]])
 
 
 def test_calibrate_domain_rejects_invalid_rmse_outputs(monkeypatch, tmp_path: Path):

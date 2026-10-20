@@ -4,7 +4,7 @@ Script: calibrate.py
 Objective: Calibrate domain SWB parameters against reference surface soil moisture.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
 Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
 Usage: pysweb swb-calibrate --help
@@ -32,7 +32,7 @@ from pysweb.components import (
 )
 
 from pysweb.swb.solver import soil_water_balance_1d
-from pysweb.swb.formulation import (PARAMETER_NAMES, settings_identity, reference_properties,
+from pysweb.swb.formulation import (DEFAULT_ROOT_BETA, PARAMETER_NAMES, settings_identity, reference_properties,
     load_calibration, reject_legacy)
 from pysweb.swb.core import ensure_matching_grid, infer_layer_bottoms
 from pysweb.contracts import geographic_weights, layer_bottoms
@@ -436,7 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--surface-depth", type=float, default=50.0, help="Depth of surface observation (mm).")
     parser.add_argument("--reference-file", help="Frozen versioned GSSM reference JSON; shared by default and calibrated runs.")
     parser.add_argument("--max-root-depth", type=float, default=1000., help="Fixed maximum root depth in mm.")
-    parser.add_argument("--root-beta", type=float, default=0.961, help="Initial root_beta value for optimizer seeding.")
+    parser.add_argument("--root-beta", type=float, default=DEFAULT_ROOT_BETA, help="Initial root_beta value for optimizer seeding.")
     parser.add_argument("--drainage-slope", type=float, default=0.5, help="Drainage slope parameter.")
     parser.add_argument("--drainage-upper-limit", type=float, default=25.0, help="Upper limit for drainage (mm day-1).")
     parser.add_argument("--drainage-lower-limit", type=float, default=0.0, help="Lower limit for drainage (mm day-1).")
