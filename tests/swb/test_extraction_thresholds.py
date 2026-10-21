@@ -106,3 +106,27 @@ def test_zero_dry_reference_retains_the_third_layer_midpoint(solve):
     p["dry_reference_factor"] = 0.
     result = solve([0.], [0.], p, ["2020-01-01"])
     np.testing.assert_array_equal(result.attrs["extraction_threshold"], [0., 0., .1, .25, .3])
+
+
+def test_repeated_and_disabled_initialization_preserve_revised_physics(solve):
+    """Combine the two branches against explicitly expanded daily forcing."""
+    p = properties()
+    p['conductivity_sat'] = np.full(5, 10.)
+    dates = pd.date_range('2014-01-01', '2016-12-31')
+    t = np.arange(len(dates))
+    rain = np.where(t % 11 == 0, 20., 0.)
+    et = 3. + np.sin(t / 50.)
+    tr = .8 * et
+    settings = dict(enabled=True, source_years=[2014, 2015], repeats=10)
+    compact = solve(rain, et, p, dates, transpiration_data=tr, spinup=settings)
+    expanded = [np.r_[np.tile(v[:730], 9), v] for v in (rain, et, tr)]
+    explicit = solve(expanded[0], expanded[1], p,
+        pd.date_range(end=dates[-1], periods=len(expanded[0])), transpiration_data=expanded[2])
+    np.testing.assert_allclose(compact, explicit.iloc[6570:], atol=1e-12, rtol=0)
+    np.testing.assert_allclose(compact.attrs['extraction_threshold'], [.06, .072, .14, .25, .30], atol=1e-16)
+    ordinary = solve(rain, et, p, dates, transpiration_data=tr)
+    disabled = solve(rain, et, p, dates, transpiration_data=tr, spinup={**settings, 'enabled': False})
+    np.testing.assert_array_equal(ordinary, disabled)
+    for key, values in compact.attrs['water_balance'].items():
+        np.testing.assert_allclose(values, explicit.attrs['water_balance'][key][6570:], atol=1e-10, rtol=0)
+        np.testing.assert_array_equal(ordinary.attrs['water_balance'][key], disabled.attrs['water_balance'][key])
