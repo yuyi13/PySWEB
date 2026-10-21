@@ -3,7 +3,7 @@ Script: formulation.py
 Objective: Define the versioned two-parameter SWB contract and reject incompatible calibrations.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Fixed reference artifacts, model settings and calibration CSV files.
 Outputs: Validated fixed settings, artifact identities and fitted coefficients.
 Usage: import pysweb.swb.formulation
@@ -16,10 +16,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-FORMULATION_VERSION = "swb-daily-conservative-2p-v2"
+FORMULATION_VERSION = "swb-daily-depth-extraction-2p-v3"
 TIME_INTEGRATION = "single-bounded-update"
+EXTRACTION_PROFILE = "gssm-wp-depth-blend-0-150-300mm-v1"
 # These observation-derived scalars are independent of the integration scheme.
-REFERENCE_COMPATIBLE_FORMULATIONS = {"swb-conservative-2p-v1", FORMULATION_VERSION}
+REFERENCE_COMPATIBLE_FORMULATIONS = {
+    "swb-conservative-2p-v1", "swb-daily-conservative-2p-v2", FORMULATION_VERSION}
 REFERENCE_VERSION = "gssm-native-p01-p99-v1"
 PARAMETER_NAMES = ("diff_factor", "root_beta")
 DEFAULT_ROOT_BETA = 0.96
@@ -66,6 +68,8 @@ def settings_identity(reference_file=None, *, max_root_depth=1000., drainage_slo
                       drainage_upper_limit=25., drainage_lower_limit=0.):
     reference = load_reference(reference_file)
     return dict(formulation_version=FORMULATION_VERSION, tau_days=TAU_DAYS,
+                extraction_threshold_profile=EXTRACTION_PROFILE,
+                physical_upper_bound="hydraulic_porosity",
                 time_integration=TIME_INTEGRATION, time_step_days=1.,
                 reference_artifact_id=reference["artifact_id"],
                 max_root_depth_mm=float(max_root_depth), drainage_slope=float(drainage_slope),
@@ -75,6 +79,27 @@ def settings_identity(reference_file=None, *, max_root_depth=1000., drainage_slo
 def reference_properties(reference_file=None):
     record = load_reference(reference_file)
     return {k: float(record[k]) for k in ("dry_reference_factor", "wet_reference_factor")}
+
+
+def extraction_thresholds(wilting_point, bottoms_mm, dry_factor):
+    """Transfer the surface dry ratio by depth, without changing hydraulic WP.
+
+    Full adjustment applies through 150 mm, half adjustment from 150 to 300 mm,
+    and none below 300 mm. Layers crossing these boundaries use thickness-
+    weighted adjustment, preserving the same depth rule on other layer grids.
+    """
+    wp = np.asarray(wilting_point, dtype=float)
+    bottoms = np.asarray(bottoms_mm, dtype=float)
+    if (wp.ndim != 1 or not len(wp) or wp.shape != bottoms.shape
+            or not np.isfinite(wp).all() or np.any(wp < 0)
+            or not np.isfinite(bottoms).all() or np.any(np.diff(np.r_[0., bottoms]) <= 0)
+            or not np.isfinite(dry_factor) or not 0 <= dry_factor <= 1):
+        raise ValueError("Invalid depth-dependent extraction threshold inputs")
+    tops = np.r_[0., bottoms[:-1]]
+    full = np.maximum(0., np.minimum(bottoms, 150.) - tops)
+    half = np.maximum(0., np.minimum(bottoms, 300.) - np.maximum(tops, 150.))
+    weight = (full + .5 * half) / (bottoms - tops)
+    return wp * (1. - (1. - dry_factor) * weight)
 
 
 def load_calibration(path, reference_file=None, **fixed_settings):
@@ -110,5 +135,5 @@ def budget_names(layers):
             + tuple(f"transpiration_layer_{i+1}" for i in range(layers))
             + tuple(f"layer_residual_{i+1}" for i in range(layers))
             + tuple(f"below_wp_days_layer_{i+1}" for i in range(layers))
-            + tuple(f"below_reference_days_layer_{i+1}" for i in range(min(2, layers)))
+            + tuple(f"below_reference_days_layer_{i+1}" for i in range(layers))
             + tuple(f"above_reference_days_layer_{i+1}" for i in range(min(2, layers))))

@@ -124,4 +124,4 @@ The code is distributed under the [MIT licence](LICENSE). Dataset licences remai
 
 Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` (transpiration fraction). See the [notation migration and legacy-input policy](docs/migration.md#component-notation-migration-11-october-2026).
 
-The [conservative two-parameter SWB formulation](docs/swb-formulation.md) calibrates diffusivity and root beta, uses fixed versioned GSSM references and records separate actual/unmet E/T with conservative water budgets. Existing four-parameter calibrations require recalibration.
+The [conservative two-parameter SWB formulation](docs/swb-formulation.md) calibrates diffusivity and root beta, uses fixed versioned GSSM references and records separate actual/unmet E/T with conservative water budgets. V3 applies the GSSM/WP dry ratio to extraction thresholds in 0–15 cm, a half adjustment in 15–30 cm, and hydraulic WP below 30 cm. Continuous three-day relaxation and physical zero-to-porosity bounds are retained. Existing v2 and four-parameter calibrations require recalibration; immutable GSSM reference artifacts remain compatible.

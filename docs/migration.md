@@ -1,5 +1,13 @@
 # Migration to the maintained package
 
+## Depth-dependent extraction thresholds (21 October 2026)
+
+`swb-daily-depth-extraction-2p-v3` applies the frozen GSSM-to-WP dry ratio to extraction in 0–5 and 5–15 cm, uses the midpoint of adjusted and hydraulic WP in 15–30 cm, and retains WP below 30 cm. The continuous three-day supply relaxation, physical field-capacity initialisation, conservative flux update and zero-to-porosity physical bounds are retained. See the [equations, upper-bound assessment and limitations](swb-formulation.md).
+
+Use a new output directory and refit diffusivity and root beta. V2 fitted coefficients are rejected because the extraction equation changed. Existing immutable GSSM p01/p99 artifacts remain accepted without rewriting their hashes. Output diagnostics now include `below_reference_days_layer_*` for every layer, and calibration/product identities include `extraction_threshold_profile` and `physical_upper_bound`. The reference remains an empirical surface constraint; its depth transfer does not establish physiological validity or improved predictive skill.
+
+This development is independent of the multi-year spin-up branch. It does not enable repeated forcing or change initialization policy.
+
 ## September 2026 baseline
 
 GitHub and Gadi shared commit `e96879a`; the local checkout was four commits behind. Gadi additionally contained notebook/PBS improvements. Those two files were committed as `3fb0f23`, then GitHub, local and Gadi were fast-forwarded to that baseline before this update. This preserves the latest development rather than replacing it with an older checkout.
