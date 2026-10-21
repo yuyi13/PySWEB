@@ -3,7 +3,7 @@ Script: test_multiyear_spinup.py
 Objective: Verify compact repeated-year initialization against explicitly expanded histories.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-20
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Deterministic daily forcing and physical five-layer columns.
 Outputs: Regression assertions for states, budgets, calendars and rejected configurations.
 Usage: pytest tests/swb/test_multiyear_spinup.py
@@ -36,7 +36,7 @@ def test_compact_equals_explicit_history(backend, years, repeats, timing):
         pytest.importorskip("numba")
         from pysweb.swb.accelerated import soil_water_balance_1d as solve
     dates = pd.date_range(f"{years[0]}-01-01", f"{years[-1]+1}-02-17")
-    config = dict(source_years=years, repeats=repeats)
+    config = dict(enabled=True, source_years=years, repeats=repeats)
     count, metadata = source_block(dates, config)
     t = np.arange(len(dates))
     rain = np.where(t % 9 == 0, 19., .1)
@@ -75,7 +75,7 @@ def test_missing_spinup_forcing_is_not_silently_skipped():
     rain[42] = np.nan
     with pytest.raises(ValueError, match="invalid"):
         soil_water_balance_1d(rain, et, properties(), dates,
-                             spinup=dict(source_years=[2014, 2015], repeats=5))
+                             spinup=dict(enabled=True, source_years=[2014, 2015], repeats=5))
 
 
 def test_native_plan_excludes_source_years_from_scoring():
@@ -83,7 +83,7 @@ def test_native_plan_excludes_source_years_from_scoring():
     config = dict(run=dict(start="2014-01-01", end="2025-12-31", state_timing="start",
                            root="/tmp", name="fixture", holdout_start="2021-01-01"),
                   calibration=dict(enabled=True, start="2016-01-01", end="2020-12-31"),
-                  spinup=dict(source_years=[2014, 2015], repeats=5,
+                  spinup=dict(enabled=True, source_years=[2014, 2015], repeats=5,
                               tolerance=.005, minimum_fraction=.99))
     plan = native_plan(config, ["calibrate"])
     assert plan["initialization"]["artificial_warmup_days"] == 4 * 730
@@ -142,6 +142,7 @@ start = "2014-01-01"
 end = "2025-12-31"
 holdout_start = "2021-01-01"
 [spinup]
+enabled = true
 source_years = [2014, 2015]
 repeats = 10
 tolerance = 0.005
@@ -159,3 +160,50 @@ convergence_action = "record"
     arguments.update(precip="precip.nc", output_dir=str(tmp_path))
     args = _build_run_args(arguments)
     assert args.spinup_source_years == [2014, 2015] and args.spinup_repeats == 10
+
+
+@pytest.mark.parametrize("backend", ["reference", "numba"])
+@pytest.mark.parametrize("configuration", [None, {}, {"enabled": False},
+    {"source_years": [2014, 2015], "repeats": 10},
+    {"enabled": False, "source_years": [2014, 2015], "repeats": 10}])
+def test_disabled_and_default_spinup_preserve_exact_unrepeated_run(backend, configuration):
+    solve = soil_water_balance_1d
+    if backend == "numba":
+        pytest.importorskip("numba")
+        from pysweb.swb.accelerated import soil_water_balance_1d as solve
+    dates = pd.date_range("2016-04-01", periods=9)
+    rain, et = np.arange(9.), np.full(9, 2.)
+    baseline = solve(rain, et, properties(), dates)
+    disabled = solve(rain, et, properties(), dates, spinup=configuration)
+    np.testing.assert_array_equal(disabled, baseline)
+    np.testing.assert_array_equal(disabled.attrs["initial_state"], baseline.attrs["initial_state"])
+    np.testing.assert_array_equal(disabled.attrs["final_state"], baseline.attrs["final_state"])
+    for key, values in baseline.attrs["water_balance"].items():
+        np.testing.assert_array_equal(disabled.attrs["water_balance"][key], values)
+    assert "spinup" not in disabled.attrs
+
+
+@pytest.mark.parametrize("flag", ["false", "true", 0, 1, None])
+def test_spinup_switch_rejects_non_boolean_values(flag):
+    from pysweb.swb.spinup import enabled_spinup
+    with pytest.raises(ValueError, match="boolean"):
+        enabled_spinup({"enabled": flag})
+
+
+@pytest.mark.parametrize("table", ["", "[spinup]\n", "[spinup]\nenabled = false\n",
+    "[spinup]\nsource_years = [2014, 2015]\nrepeats = 10\n"])
+def test_disabled_toml_needs_no_source_years_or_development_boundary(tmp_path, table):
+    from pysweb.workflow import load_config
+    from pysweb.workflow_native import native_plan
+    path = tmp_path / "disabled.toml"
+    path.write_text('''[run]
+name = "fixture"
+root = "."
+extent = [146.2, -35.1, 146.3, -35.0]
+start = "2016-04-01"
+end = "2016-04-09"
+''' + table)
+    plan = native_plan(load_config(path), ["run"])
+    assert plan["initialization"]["repeated_spinup_enabled"] is False
+    assert plan["initialization"]["artificial_warmup_days"] == 0
+    assert plan["initialization"]["analysis_start"] == "2016-04-01"

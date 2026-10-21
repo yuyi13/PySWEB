@@ -3,7 +3,7 @@ Script: workflow_native.py
 Objective: Orchestrate native downloads, GSSM calibration and shared Landsat-grid products.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Validated workflow configuration and selected execution stages.
 Outputs: Two final NetCDFs, coarse calibration inputs, parameters and grid checks.
 Usage: pysweb workflow --config examples/workflow.toml
@@ -18,6 +18,7 @@ from pysweb.contracts import month_bounds
 from pysweb.io.grids import open_template, subset_template, centered_template
 from pysweb.io.products import crop_product, assert_identical_grids
 from pysweb.io.provenance import atomic_json
+from pysweb.swb.spinup import enabled_spinup
 
 
 def buffered_extent(extent, metres):
@@ -82,7 +83,7 @@ def native_plan(config, stages):
         raise ValueError('Native calibration requires the area-weighted cell-day objective')
     if config.get('model',{}).get('nan_to_zero'):
         raise ValueError('Native workflow preserves missing forcing; nan_to_zero would change calibration/run semantics')
-    spinup = config.get('spinup')
+    spinup = enabled_spinup(config.get('spinup'))
     compact = bool(spinup and 'source_years' in spinup)
     compact_metadata = None
     if spinup:
@@ -117,6 +118,7 @@ def native_plan(config, stages):
     warmup_end = min(end, analysis_start-pd.Timedelta(days=1))
     warmup = [str(start.date()), str(warmup_end.date())] if warmup_end >= start else None
     initialization = dict(initial_state='physical_field_capacity',
+        repeated_spinup_enabled=bool(spinup),
         mode='repeated_source_block' if compact else ('repeated_year' if spinup else 'actual_forcing_prefix'),
         actual_start=str(start.date()), warmup_window=warmup,
         analysis_start=str(analysis_start.date()),
@@ -150,6 +152,7 @@ def run_native(config, stages, dry_run=False):
     from pysweb.swb.paired import run_default_and_calibrated
 
     plan = native_plan(config, stages)
+    spinup = enabled_spinup(config.get('spinup'))
     if dry_run:
         return plan
     run, soil = config['run'], config.get('soil', {'source':'openlandmap'})
@@ -296,7 +299,7 @@ def run_native(config, stages, dry_run=False):
                 reference_file=str(reference),reference_var=soil.get('reference_var','reference_ssm'))
         pysweb.swb.preprocess(**common,end_date=end,grid_mode='landsat',grid_template=str(seb_final),
             grid_template_var='ET',output_dir=str(fine),skip_reference_ssm=True)
-        if config.get('spinup') or config.get('forcing'):
+        if spinup or config.get('forcing'):
             from pysweb.workflow_protocol import write_support
             if enabled:
                 write_support(coarse, start, fit_end, boundary)
@@ -313,8 +316,7 @@ def run_native(config, stages, dry_run=False):
             lat_dim='y' if projected else 'lat',lon_dim='x' if projected else 'lon',
             state_timing=run['state_timing'],workers=run['workers'])
 
-    protocol = bool(config.get('spinup') or config.get('forcing'))
-    spinup = config.get('spinup')
+    protocol = bool(spinup or config.get('forcing'))
     def initialize(directory, last, projected=False):
         from pysweb.workflow_protocol import initialize_inputs, initialized_forcing
         peers = [Path(p)/directory.name for p in config.get('forcing', {}).get('peer_runs', [])]

@@ -4,7 +4,7 @@ Script: run.py
 Objective: Run serial or parallel gridded SWB simulations using the shared soil-water solver.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Forcing and soil NetCDFs, simulation dates, model settings and optional calibration or parameter files.
 Outputs: A NetCDF of soil moisture, final states, water budgets and quality flags, plus a provenance manifest.
 Usage: pysweb swb-run --help
@@ -399,7 +399,7 @@ def run_swb_workflow(**workflow_kwargs) -> Path | None:
         raise ValueError("workers must be >= 1")
     spinup = None
     if args.spinup_source_years is not None:
-        spinup = dict(source_years=args.spinup_source_years, repeats=args.spinup_repeats)
+        spinup = dict(enabled=True, source_years=args.spinup_source_years, repeats=args.spinup_repeats)
     elif args.spinup_repeats != 1:
         raise ValueError("spinup_repeats requires spinup_source_years")
 

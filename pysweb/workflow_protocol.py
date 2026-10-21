@@ -3,7 +3,7 @@ Script: workflow_protocol.py
 Objective: Connect configured support, initialization and evaluation gates to native runs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Native prepared directories, paired workflow paths and scientific protocol settings.
 Outputs: Frozen support, explicit initialization files, convergence receipts and evaluation.
 Usage: Internal orchestration for pysweb.workflow_native.
@@ -63,7 +63,8 @@ def write_support(directory, start, end, development_end):
 def initialize_inputs(directory, start, end, scoring_start, development_end,
                       spinup=None, peer_directories=()):
     """Freeze support and retain actual forcing; prepend cycles only when requested."""
-    from pysweb.swb.spinup import prepend_cycles
+    from pysweb.swb.spinup import enabled_spinup, prepend_cycles
+    spinup = enabled_spinup(spinup)
     compact = bool(spinup and "source_years" in spinup)
     compact_metadata = None
     if compact:
@@ -116,6 +117,7 @@ def initialize_inputs(directory, start, end, scoring_start, development_end,
         scoring_start=scoring_start, development_end=development_end,
         spinup_days=(pd.Timestamp(scoring_start)-pd.Timestamp(simulation_start)).days,
         spinup=spinup, initial_state="physical_field_capacity",
+        repeated_spinup_enabled=bool(spinup),
         initialization_mode="repeated_source_block" if compact else ("repeated_year" if spinup else "actual_forcing_prefix"),
         artificial_warmup_days=(compact_metadata["artificial_days"] if compact else
                                (pd.Timestamp(start)-pd.Timestamp(simulation_start)).days),

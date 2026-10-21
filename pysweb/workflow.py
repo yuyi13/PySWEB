@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -185,7 +185,7 @@ def load_config(path):
             raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
     for section, keys in {
         "landsat": {"manifest_file", "sensor_windows", "wrs", "gapfill"},
-        "spinup": {"source_year", "source_years", "repeats", "tolerance", "minimum_fraction",
+        "spinup": {"enabled", "source_year", "source_years", "repeats", "tolerance", "minimum_fraction",
                    "solver_backend", "convergence_mode", "convergence_action"},
         "forcing": {"peer_runs", "reconstruction", "precipitation_qc", "retrieval"},
         "evaluation": {"longitude", "latitude", "depth_interval_mm", "observations_file", "regimes_file",
@@ -210,7 +210,9 @@ def load_config(path):
     for key, raw in retrieval.get('meteorology_files', {}).items():
         value = Path(raw).expanduser()
         retrieval['meteorology_files'][key] = str(value if value.is_absolute() else (path.parent/value).resolve())
-    if run['grid_mode'] == 'legacy' and any(config.get(k) for k in ('landsat','spinup','forcing','evaluation')):
+    from pysweb.swb.spinup import enabled_spinup
+    if run['grid_mode'] == 'legacy' and (enabled_spinup(config.get('spinup'))
+            or any(config.get(k) for k in ('landsat','forcing','evaluation'))):
         raise ValueError('Configured protocol integration requires grid_mode=native')
     if run['grid_mode'] == 'native':
         from pysweb.workflow_native import native_plan

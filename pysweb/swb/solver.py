@@ -3,7 +3,7 @@ Script: solver.py
 Objective: Solve daily soil-water balances and vertical redistribution for a layered soil column.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Daily forcing, per-layer hydraulic properties, initial states and solver settings.
 Outputs: Layer moisture and final states, hydraulic coefficients, water-budget terms and quality flags.
 Usage: import pysweb.swb.solver
@@ -103,6 +103,8 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
         raise ValueError("Invalid drainage or fixed closure settings")
     original_initial = initial.copy()
     spinup_metadata = None
+    from pysweb.swb.spinup import enabled_spinup
+    spinup = enabled_spinup(spinup)
     if spinup is not None:
         from pysweb.swb.spinup import source_block
         if time_step != 1.:

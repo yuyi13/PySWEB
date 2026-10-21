@@ -4,7 +4,7 @@ Script: calibrate.py
 Objective: Calibrate domain SWB parameters against reference surface soil moisture.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Forcing and soil NetCDFs, reference SSM, calibration dates, bounds and random seed.
 Outputs: A CSV of converged parameters and fit diagnostics, with a provenance manifest.
 Usage: pysweb swb-calibrate --help
@@ -790,7 +790,7 @@ def calibrate_domain(*, benchmark_output=None, polish_file=None, **kwargs):
     observation_context["fixed_properties"] = {**reference_properties(args.reference_file), "max_root_depth": args.max_root_depth}
     if args.spinup_source_years is not None:
         from pysweb.swb.spinup import source_block
-        spinup = dict(source_years=args.spinup_source_years, repeats=args.spinup_repeats)
+        spinup = dict(enabled=True, source_years=args.spinup_source_years, repeats=args.spinup_repeats)
         count, _ = source_block(time_index, spinup)
         if args.spinup_days < count:
             raise ValueError("Calibration must exclude the entire retained spin-up source block")

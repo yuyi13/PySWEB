@@ -1,5 +1,21 @@
 # Migration to the maintained package
 
+## Explicit repeated-spin-up switch (21 October 2026)
+
+Repeated forcing is disabled by default. Set `[spinup] enabled = true` to enable
+the existing single-year or multi-year protocol. An omitted or false `enabled`
+key leaves repetition disabled even when source years and a repetition count
+are present. This allows the settings to remain in a study configuration while
+the experiment is switched off. Actual run dates, physical field-capacity
+initialisation and explicit calibration windows remain unchanged.
+
+Update earlier repetition configurations by adding `enabled = true` when using
+this branch. Direct column calls likewise use
+`spinup={"enabled": True, "source_years": [2014, 2015], "repeats": 10}`.
+The existing component CLI/API `spinup_source_years` option is itself an explicit
+request to enable repetition. See [usage and disabled behaviour](multiyear-spinup.md).
+The daily physical equations and formulation identity are unchanged by this edit.
+
 ## September 2026 baseline
 
 GitHub and Gadi shared commit `e96879a`; the local checkout was four commits behind. Gadi additionally contained notebook/PBS improvements. Those two files were committed as `3fb0f23`, then GitHub, local and Gadi were fast-forwarded to that baseline before this update. This preserves the latest development rather than replacing it with an older checkout.

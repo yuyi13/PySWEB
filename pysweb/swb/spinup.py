@@ -3,7 +3,7 @@ Script: spinup.py
 Objective: Assemble development-only forcing cycles and verify initial-state convergence.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Daily forcing calendars, development boundary, hydraulic properties and parameters.
 Outputs: Explicit cycle mappings and wet/dry differences on fixed admitted cells.
 Usage: from pysweb.swb.spinup import cycle_indices, verify_convergence
@@ -12,6 +12,18 @@ Dependencies: numpy, pandas, xarray, pysweb
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+
+def enabled_spinup(configuration):
+    """Return an explicitly enabled configuration; repetition is off by default."""
+    if configuration is None:
+        return None
+    if not isinstance(configuration, dict):
+        raise ValueError("spinup must be a configuration mapping or None")
+    enabled = configuration.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("spinup.enabled must be a boolean")
+    return dict(configuration) if enabled else None
 
 
 def source_block(dates, configuration):
@@ -125,7 +137,7 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
         raise ValueError("Complete daily initialization history required")
     if mode not in {"wet_dry", "field_capacity_cycles"}:
         raise ValueError("Unknown initialization convergence mode")
-    compact = (model_options or {}).get("spinup")
+    compact = enabled_spinup((model_options or {}).get("spinup"))
     if compact:
         _, compact_metadata = source_block(times, compact)
     if mode == "field_capacity_cycles" and not compact and (
@@ -138,6 +150,7 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
     options = dict(drainage_slope=.5, drainage_upper_limit=25., drainage_lower_limit=0.,
                    use_ndvi_root_depth=False)
     options.update(model_options or {})
+    options["spinup"] = compact
     if options.get("nan_to_zero"):
         raise ValueError("Initialization cannot replace missing forcing with zero")
     values = {k: history[k].transpose("time", *spatial).values for k in ("effective_precip", "et", "E_t")}
