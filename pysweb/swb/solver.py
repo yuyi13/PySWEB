@@ -16,7 +16,8 @@ import pandas as pd
 
 from pysweb.contracts import layer_bottoms
 
-from pysweb.swb.formulation import (DEFAULT_ROOT_BETA, FORMULATION_VERSION, TAU_DAYS, TIME_INTEGRATION, budget_names, reject_legacy)
+from pysweb.swb.formulation import (DEFAULT_ROOT_BETA, EXTRACTION_PROFILE, FORMULATION_VERSION,
+    TAU_DAYS, TIME_INTEGRATION, budget_names, extraction_thresholds, reject_legacy)
 from pysweb.swb.conservative import column_kernel
 
 
@@ -87,9 +88,8 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
     wet_factor = float(props.get("wet_reference_factor", 1.))
     if not (np.isfinite(dry_factor) and 0 <= dry_factor <= 1 and np.isfinite(wet_factor) and wet_factor >= 1):
         raise ValueError("Invalid fixed dry/wet reference factors")
-    dry, wet = wp.copy(), por.copy()
+    dry, wet = extraction_thresholds(wp, bottoms, dry_factor), por.copy()
     shallow = bottoms <= 150.
-    dry[shallow] *= dry_factor
     wet[shallow] *= wet_factor
     roots = _compute_root_distribution_beta(props, beta=props.get("root_beta"),
         max_root_depth_mm=props.get("max_root_depth"), use_ndvi_root_depth=bool(props.get("use_ndvi_root_depth", False)))
@@ -128,7 +128,9 @@ def _solve(precip_data, et_data, soil_properties, time, time_step=1.,
         final_state=final, final_state_time=times[-1]+pd.Timedelta(days=time_step),
         formulation_version=FORMULATION_VERSION, supply_tau_days=tau, time_integration=TIME_INTEGRATION, time_step_days=float(time_step),
         water_balance={key: budgets[:, i] for i, key in enumerate(budget_names(len(bottoms)))},
-        forcing_valid=valid, dry_reference=dry, wet_reference=wet)
+        forcing_valid=valid, dry_reference=dry, wet_reference=wet,
+        extraction_threshold=dry.copy(), extraction_threshold_profile=EXTRACTION_PROFILE,
+        hydraulic_wilting_point=wp.copy(), physical_upper_bound="hydraulic_porosity")
     if spinup_metadata is not None:
         result.attrs.update(spinup=spinup_metadata, pre_spinup_initial_state=original_initial)
     return result

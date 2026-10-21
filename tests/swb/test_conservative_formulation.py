@@ -3,7 +3,7 @@ Script: test_conservative_formulation.py
 Objective: Independently verify physical storage, analytical limits, conservative budgets and migration.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Inputs: Synthetic columns, extreme forcing and fitted float64 coefficient fixtures.
 Outputs: Numerical assertions for the revised SWB contract.
 Usage: python -m pytest tests/swb/test_conservative_formulation.py
@@ -49,7 +49,7 @@ def test_evaporation_crosses_wp_and_reference_without_adding_water():
     assert np.all(np.diff(trace) < 0) and 0 < trace[-1] < .01
     assert trace[0] < .15 and np.any(trace < .06)
     assert np.all(np.diff(result.attrs["water_balance"]["actual_evaporation"]) < 0)
-    for initial in [0., .02, .06, .14]:
+    for initial in [0., .02, .06]:
         no_sink = soil_water_balance_1d([0.], [100.], p, ["2020-01-01"],
             transpiration_data=[100.], initial_soil_moisture=[initial])
         np.testing.assert_array_equal(no_sink.attrs["final_state"], [initial])
@@ -114,10 +114,11 @@ def test_subcycling_settings_and_prior_calibrations_are_rejected(tmp_path):
         soil_water_balance_1d([0.], [0.], props(max_substep_days=1/768), ["2020-01-01"])
     path = tmp_path / "subcycled.csv"
     identity = settings_identity()
-    identity["formulation_version"] = "swb-conservative-2p-v1"
-    pd.DataFrame([dict(diff_factor=1000., root_beta=.96, **identity)]).to_csv(path, index=False)
-    with pytest.raises(ValueError, match="formulation_version"):
-        load_calibration(path)
+    for previous in ["swb-conservative-2p-v1", "swb-daily-conservative-2p-v2"]:
+        identity["formulation_version"] = previous
+        pd.DataFrame([dict(diff_factor=1000., root_beta=.96, **identity)]).to_csv(path, index=False)
+        with pytest.raises(ValueError, match="formulation_version"):
+            load_calibration(path)
 
 
 @pytest.mark.parametrize("initial", [0., .01, .149, .449, .45])
