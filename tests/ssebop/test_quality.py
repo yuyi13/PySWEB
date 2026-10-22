@@ -4,7 +4,7 @@ Script: test_quality.py
 Objective: Verify Landsat QA retention, cloud rejection and scene processing with tiny GeoTIFFs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-16
-Last updated: 2026-10-16
+Last updated: 2026-10-22
 Inputs: Synthetic Collection 2 flags and temporary raw Landsat rasters.
 Outputs: Regression assertions for masks, zero-valued QA and NDVI exports.
 Usage: python -m pytest tests/ssebop/test_quality.py
@@ -65,7 +65,7 @@ def run_scene(path, monkeypatch, tmp_path, **kwargs):
     monkeypatch.setattr(api, "tcold_fano_simple_xr", lambda lst, ndvi, dt, **kw: lst)
     return api.process_landsat_scene(
         str(path), "ST_B10", "ndvi", "SR_B4", "SR_B5", False, None, dt,
-        template.rio.crs, str(tmp_path), str(tmp_path), **kwargs)
+        template.rio.crs, str(tmp_path), str(tmp_path), tcold_method="legacy", **kwargs)
 
 
 def test_scene_keeps_zero_saturation_and_masks_contaminated_ndvi(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@ Script: api.py
 Objective: Provide package-owned SSEBop input-preparation and model-run APIs.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: API parameters, optional Landsat config templates, local Landsat GeoTIFFs, meteorology NetCDFs, and DEM rasters.
 Outputs: Prepared inputs plus SSEBop ET GeoTIFF and NetCDF products in the requested output directory.
 Usage: import pysweb.ssebop.api
@@ -103,6 +103,7 @@ def prepare_inputs(
     dem_source: str = "nasadem",
     gee_config_template: str | None = None,
     sensors: tuple[str, ...] | list[str] = ("LC08", "LC09"),
+    landcover_file: str | None = None,
 ) -> None:
     gee_project = gee_project.strip()
     if not gee_project:
@@ -125,6 +126,13 @@ def prepare_inputs(
         gee_config_template = gee_config_template,
         sensors = sensors,
     )
+
+    from pysweb.io.acquisition import acquire_worldcover, worldcover_extent
+    from pysweb.ssebop.landcover import WORLDCOVER_FILENAME
+    if landcover_file is None or not Path(landcover_file).exists():
+        coverage = worldcover_extent(Path(landsat_dir).glob('*.tif'), extent)
+        acquire_worldcover(landcover_file or str(Path(dem_dir)/WORLDCOVER_FILENAME),
+                          coverage, gee_project=gee_project)
 
     month_start, month_end = month_bounds(start_date, end_date)
     era5land_download.download_era5land_daily(
@@ -513,6 +521,8 @@ def _process_landsat_scene_worker(tif_path: str) -> Tuple[np.datetime64, str, st
         water_mask = _SCENE_WORKER_CONTEXT["water_mask"],  # type: ignore[arg-type]
         dt_clim = _SCENE_WORKER_CONTEXT["dt_clim"],  # type: ignore[arg-type]
         tcold_config = _SCENE_WORKER_CONTEXT["tcold_config"],  # type: ignore[arg-type]
+        tcold_method = str(_SCENE_WORKER_CONTEXT["tcold_method"]),
+        landcover = _SCENE_WORKER_CONTEXT["landcover"],
         template_crs = _SCENE_WORKER_CONTEXT["template_crs"],  # type: ignore[arg-type]
         etf_dir = str(_SCENE_WORKER_CONTEXT["etf_dir"]),
         ndvi_dir = str(_SCENE_WORKER_CONTEXT["ndvi_dir"]),
@@ -539,7 +549,11 @@ def process_landsat_scene(
     output_template=None,
     meteorology_context=None,
     padding_protocol=None,
+    tcold_method: str = "worldcover_fano",
+    landcover: xr.DataArray | str | None = None,
 ) -> Tuple[np.datetime64, str, str]:
+    from pysweb.ssebop.fano import validate_method, worldcover_fano, FANO_VERSION
+    validate_method(tcold_method, landcover)
     date_str = parse_date_from_filename(tif_path)
     doy = datetime.fromisoformat(date_str).timetuple().tm_yday
     bands = read_geotiff_bands(tif_path)
@@ -605,12 +619,21 @@ def process_landsat_scene(
         dt = reproject_match(dt_clim.sel(dayofyear=doy), lst, resampling="bilinear")
     if tcold_config is None:
         tcold_config = LocalFanoConfig()
-    tcold = tcold_fano_simple_xr(lst, ndvi, dt, config=tcold_config)
+    fano = None
+    if tcold_method == 'worldcover_fano':
+        if isinstance(landcover, (str, Path)):
+            landcover = load_worldcover_landcover(landcover, template=lst)
+        fano = worldcover_fano(lst, ndvi, dt, landcover, config=tcold_config)
+        tcold = fano.tcold_K
+    else:
+        tcold = tcold_fano_simple_xr(lst, ndvi, dt, config=tcold_config)
     etf = et_fraction_xr(lst, tcold, dt).rename("etf")
     from pysweb.io.provenance import atomic_netcdf
     fields = {"lst_K": lst, "tcold_K": tcold, "dt_K": dt,
               "ndvi_observed": ndvi, "etf_observed": etf,
               "scene_valid": np.isfinite(etf).astype('uint8')}
+    if fano is not None:
+        fields.update({name: value for name, value in fano.data_vars.items() if name != 'tcold_K'})
     for name in ("QA_PIXEL", "QA_RADSAT"):
         if name in bands:
             fields[name] = bands[name]
@@ -630,11 +653,12 @@ def process_landsat_scene(
         if output_template is None:
             raise ValueError('Padding screening requires the actual preparation template')
         from pysweb.ssebop.scene_protocol import screened_fraction
-        accepted, diagnostics, padding_gate = screened_fraction(lst,ndvi,dt,output_template,tcold_config,padding_protocol)
+        accepted, diagnostics, padding_gate = screened_fraction(lst,ndvi,dt,output_template,tcold_config,padding_protocol,
+            landcover=landcover, tcold_method=tcold_method)
         fields['etf_observed'] = accepted
         fields.update(diagnostics)
     if output_template is not None:
-        flags = {'QA_PIXEL','QA_RADSAT','scan_gap_candidate'}
+        flags = {'QA_PIXEL','QA_RADSAT','scan_gap_candidate','worldcover_class','fano_reference_eligible'}
         fields = {name:align_to_grid(field,output_template,resampling='nearest' if name in flags or name.endswith(
             ('_provenance','_method','_window','_common_count')) else 'bilinear') for name,field in fields.items()}
         etf = fields['etf_observed']
@@ -653,6 +677,14 @@ def process_landsat_scene(
     auxiliary = xr.Dataset(fields)
     auxiliary.attrs.update(source_scene=str(Path(tif_path).resolve()),
                            source_crs=str(lst.rio.crs), source_transform=list(lst.rio.transform())[:6])
+    auxiliary.attrs.update(tcold_method=tcold_method,
+                           tcold_algorithm=FANO_VERSION if fano is not None else 'legacy-local-fano')
+    if fano is not None:
+        auxiliary.attrs.update(fano.attrs)
+        if padding_protocol:
+            # The retained temperature uses the primary window, so a scalar
+            # computed on the full download would misdescribe its fallback.
+            auxiliary.attrs.pop('tcold_scene_fallback_K', None)
     if padding_gate is not None:
         import json
         auxiliary.attrs['padding_gate_json'] = json.dumps(padding_gate)
@@ -781,6 +813,9 @@ def run_ssebop_workflow(
     ea_var = _cfg_value(cfg, args, "ea_var")
     dem_path = _cfg_value(cfg, args, "dem")
     landcover_path = _cfg_value(cfg, args, "landcover")
+    tcold_method = _cfg_value(cfg, args, "tcold_method", default="worldcover_fano")
+    from pysweb.ssebop.fano import validate_method, FANO_VERSION
+    validate_method(tcold_method, landcover_path)
     output_dir = _cfg_value(cfg, args, "output_dir")
     max_gap_days = int(_cfg_value(cfg, args, "max_gap_days", default=32))
     apply_water_mask = bool(_cfg_value(cfg, args, "apply_water_mask", default=False))
@@ -816,6 +851,8 @@ def run_ssebop_workflow(
         fine_scale_m=tcold_fine_scale_m,
         coarse_scale_m=tcold_coarse_scale_m,
         smooth_scale_m=tcold_smooth_scale_m,
+        smooth_resolution_m=float(_cfg_value(cfg, args, "tcold_smooth_resolution_m", default=90.0)),
+        smooth_radius_pixels=int(_cfg_value(cfg, args, "tcold_smooth_radius_pixels", default=5)),
     )
 
     if workers < 1:
@@ -862,8 +899,8 @@ def run_ssebop_workflow(
     template = next(iter(sample_bands.values()))
     buffer = 2 * float(template.rio.resolution()[0])
 
-    if landcover_path:
-        landcover = load_worldcover_landcover(landcover_path)
+    if landcover_path and apply_water_mask:
+        landcover = load_worldcover_landcover(landcover_path, template=template)
         landcover = reproject_match_crop_first(landcover, template, resampling="nearest", buffer=buffer)
         _, _, water_mask = worldcover_masks(landcover)
     else:
@@ -973,6 +1010,8 @@ def run_ssebop_workflow(
                     water_mask = water_mask,
                     dt_clim = dt_clim,
                     tcold_config = tcold_config,
+                    tcold_method = tcold_method,
+                    landcover = landcover_path,
                     template_crs = template_crs,
                     etf_dir = etf_dir,
                     ndvi_dir = ndvi_dir,
@@ -990,6 +1029,8 @@ def run_ssebop_workflow(
             "water_mask": water_mask,
             "dt_clim": dt_clim,
             "tcold_config": tcold_config,
+            "tcold_method": tcold_method,
+            "landcover": landcover_path,
             "template_crs": template_crs,
             "etf_dir": etf_dir,
             "ndvi_dir": ndvi_dir,
@@ -1115,6 +1156,8 @@ def run_ssebop_workflow(
             "f_t": transpiration_fraction_daily,
         }
     )
+    result.attrs.update(tcold_method=tcold_method,
+                        tcold_algorithm=FANO_VERSION if tcold_method == 'worldcover_fano' else 'legacy-local-fano')
     if reconstruction_flags is not None:
         for name, value in reconstruction_flags.data_vars.items():
             result[name] = value
@@ -1127,7 +1170,7 @@ def run_ssebop_workflow(
         if not auxiliary_path.exists():
             raise ValueError(f"Missing SSEBop scene auxiliaries: {auxiliary_path}")
         with xr.open_dataset(auxiliary_path, decode_coords='all') as source:
-            fields = {name: align_to_grid(da, template, resampling='nearest' if name in {'QA_PIXEL','QA_RADSAT','scene_valid','original_support','scan_gap_candidate'} or name.endswith(('_provenance','_method','_window','_common_count')) else 'bilinear')
+            fields = {name: align_to_grid(da, template, resampling='nearest' if name in {'QA_PIXEL','QA_RADSAT','scene_valid','original_support','scan_gap_candidate','worldcover_class','fano_reference_eligible'} or name.endswith(('_provenance','_method','_window','_common_count')) else 'bilinear')
                       for name, da in source.data_vars.items()}
             scene_records.append(xr.Dataset(fields).expand_dims(scene_time=[ts]))
     if scene_records:

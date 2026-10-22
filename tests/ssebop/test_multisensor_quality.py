@@ -4,7 +4,7 @@ Script: test_multisensor_quality.py
 Objective: Check sensor-specific band mappings, unused cirrus bits and Landsat 7 dropped-pixel handling.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: Independently specified Collection 2 bit-field fixtures.
 Outputs: pytest assertions.
 Usage: pytest tests/ssebop/test_multisensor_quality.py
@@ -44,7 +44,7 @@ def test_scene_auto_bands_preserve_the_same_physical_signal(sensor, tmp_path, mo
     monkeypatch.setattr(api, "reproject_match", lambda source, match, **kw: source)
     monkeypatch.setattr(api, "tcold_fano_simple_xr", lambda lst, ndvi, dt, **kw: lst - 4.)
     _, etf, ndvi = api.process_landsat_scene(str(path), "auto", "ndvi", "auto", "auto", False, None, dt,
-                                           template.rio.crs, str(tmp_path), str(tmp_path))
+                                           template.rio.crs, str(tmp_path), str(tmp_path), tcold_method="legacy")
     with rasterio.open(etf) as src: np.testing.assert_allclose(src.read(1), .5)
     with rasterio.open(ndvi) as src: np.testing.assert_allclose(src.read(1), .055/.205, rtol=1e-6)
 

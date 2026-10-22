@@ -55,8 +55,8 @@ The five stages share one implementation in `pysweb.workflow`:
 
 | Stage | Role | Inputs / requirements |
 |---|---|---|
-| `prepare` | Download Landsat, ERA5-Land and NASADEM; stack meteorology | Earth Engine authentication and your project |
-| `ssebop` | Estimate daily ET and partition E_s/E_t | Prepared satellite, meteorology and DEM files |
+| `prepare` | Download Landsat, ERA5-Land, NASADEM and WorldCover; stack meteorology | Earth Engine authentication and your project |
+| `ssebop` | Estimate daily ET with land-cover-aware FANO and partition E_s/E_t | Prepared satellite, meteorology, DEM and WorldCover files |
 | `preprocess` | Align forcing and soil properties; calculate effective rain | Full calendar-month rain; local or online soil inputs |
 | `calibrate` | Fit two domain parameters to reference surface soil moisture | Enabled explicitly; local reference or configured Earth Engine asset |
 | `run` | Simulate independent soil columns | Prepared forcing and hydraulic properties |

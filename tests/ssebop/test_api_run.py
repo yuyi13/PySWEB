@@ -4,7 +4,7 @@ Script: test_api_run.py
 Objective: Verify SSEBop dispatch, process fallbacks and preservation of observations during interpolation.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: Package API calls, temporary files, and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_api_run.py
@@ -223,6 +223,7 @@ def test_process_landsat_scene_uses_nonprojected_tcold_fallback(monkeypatch, tmp
     monkeypatch.setattr(ssebop_api, "tcold_fano_local_xr", fail_strict_local)
 
     ssebop_api.process_landsat_scene(
+        tcold_method="legacy",
         tif_path = "Landsat_2019-01-04.tif",
         lst_band = "ST_B10",
         ndvi_band = "ndvi",
@@ -331,6 +332,7 @@ def test_ssebop_parallel_scene_processing_falls_back_when_fork_unavailable(monke
     monkeypatch.setattr(provenance, "input_manifest", lambda config, paths: {
         "fingerprint": "executor-test", "software": {"code_sha256": "test"}})
     ssebop_api.run_ssebop_workflow(
+        tcold_method="legacy",
         date_range="2024-01-01 to 2024-01-02",
         landsat_dir=str(tmp_path),
         dem=str(tmp_path / "dem.tif"),

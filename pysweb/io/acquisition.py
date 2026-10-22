@@ -3,7 +3,7 @@ Script: acquisition.py
 Objective: Acquire exact native Landsat scenes and compact native meteorology with restart receipts.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: Audited scene manifest, geographic envelope and an existing Earth Engine project.
 Outputs: Original-grid rasters, explicit L7 optical masks and source metadata ledgers.
 Usage: from pysweb.io.acquisition import acquire_landsat_manifest, acquire_monthly_meteorology
@@ -162,6 +162,11 @@ def prepare_native_sources(manifest_file, protocol, *, gee_project, job_director
     catalogue=acquire_landsat_manifest(manifest_file,protocol['acquisition_extent'],gee_project=gee_project,sample=sample)
     if sample:
         return catalogue
+    landcover_file = protocol.get('landcover_file',
+        str(Path(protocol['dem_file']).parent/'worldcover_v200_2021.tif'))
+    if 'landcover_file' not in protocol or not Path(landcover_file).exists():
+        extent = worldcover_extent(catalogue['files'], protocol['acquisition_extent'])
+        acquire_worldcover(landcover_file, extent, gee_project=gee_project)
     raw_met=Path(protocol['meteorology_raw_dir'])
     acquire_monthly_meteorology(raw_met,protocol['meteorology_extent'],protocol['climatology_start'],
         protocol['meteorology_end'],gee_project=gee_project)
@@ -177,4 +182,40 @@ def prepare_native_sources(manifest_file, protocol, *, gee_project, job_director
     unpack_monthly_meteorology(raw_met,daily)
     stack_era5land_daily_inputs(daily,protocol['dem_file'],protocol['climatology_start'],
         protocol['meteorology_end'],protocol['meteorology_stack_dir'])
-    return dict(landsat=catalogue,meteorology=monthly,dem=protocol['dem_file'])
+    return dict(landsat=catalogue,meteorology=monthly,dem=protocol['dem_file'],landcover=landcover_file)
+
+
+def worldcover_extent(scene_files, requested_extent):
+    """Cover actual exported scene cells, including UTM bounding-box corners.
+
+    Native exports snap the requested geographic box to a projected rectangle;
+    its corners can extend outside that original box. Inspect metadata only.
+    """
+    import rasterio
+    from rasterio.warp import transform_bounds
+    left, bottom, right, top = requested_extent
+    for path in scene_files:
+        with rasterio.open(path) as source:
+            bounds = source.bounds
+            rx, ry = map(abs, source.res)
+            lo, bo, hi, to = transform_bounds(source.crs, 'EPSG:4326',
+                bounds.left-rx, bounds.bottom-ry, bounds.right+rx, bounds.top+ry, densify_pts=65)
+        left, bottom, right, top = min(left, lo), min(bottom, bo), max(right, hi), max(top, to)
+    return [left, bottom, right, top]
+
+
+def acquire_worldcover(output_file, extent, *, gee_project):
+    """Acquire a native categorical WorldCover v200 chip with a hash receipt.
+
+    This is a static 2021 classification, not a scene-year land-cover product.
+    The extent must cover the complete Landsat reference region, not just AOI.
+    """
+    import ee
+    from pysweb.ssebop.landcover import WORLDCOVER_ASSET
+    ee.Initialize(project=gee_project)
+    ee.data.setDeadline(180000)
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    image = ee.ImageCollection(WORLDCOVER_ASSET).first().select('Map')
+    return _download(image.toUint8(), output_file, ['Map'], extent,
+        dict(collection=WORLDCOVER_ASSET, year=2021, band='Map',
+             citation='Zanaga et al. (2022), doi:10.5281/zenodo.7254221', license='CC-BY-4.0'))

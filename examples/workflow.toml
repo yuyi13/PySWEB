@@ -12,7 +12,7 @@ center = [147.25, -35.05] # Default 5100 m square: 170 x 170 native 30 m pixels.
 # Repeated spin-up is disabled by default; enable it with [spinup] enabled = true.
 grid_mode = "native"
 sensors = ["LC08", "LC09"] # Add "LT05", "LE07" explicitly when needed.
-processing_buffer_m = 6000
+processing_buffer_m = 14400 # FANO regional neighbourhood; verify padding sensitivity.
 workers = 1
 gee_project = "your-gee-project"
 state_timing = "start"
@@ -33,6 +33,8 @@ diff_factor = 1000.0
 root_beta = 0.96
 
 [ssebop]
+tcold_method = "worldcover_fano"
+# landcover = "inputs/dem/worldcover_v200_2021.tif" # Optional override; prepare downloads it.
 landsat_qa = "required"
 lst_band = "auto"
 red_band = "SR_B4"

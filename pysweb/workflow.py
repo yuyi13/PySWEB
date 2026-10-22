@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -173,7 +173,6 @@ def load_config(path):
         "tmin",
         "rs",
         "ea",
-        "landcover",
     }
     for section, allowed_keys in [
         ("model", allowed_model),
@@ -194,7 +193,8 @@ def load_config(path):
         unknown = set(config.get(section, {})) - keys
         if unknown:
             raise ValueError(f"Unknown {section} settings: {sorted(unknown)}")
-    for section, keys in {"landsat": ["manifest_file"], "evaluation": ["observations_file", "regimes_file"]}.items():
+    for section, keys in {"landsat": ["manifest_file"], "evaluation": ["observations_file", "regimes_file"],
+                          "ssebop": ["landcover"]}.items():
         for key in keys:
             if key in config.get(section, {}):
                 value = Path(config[section][key]).expanduser()
@@ -203,7 +203,7 @@ def load_config(path):
         config["forcing"]["peer_runs"] = [str(Path(p) if Path(p).is_absolute() else (path.parent/p).resolve())
                                           for p in config["forcing"]["peer_runs"]]
     retrieval = config.get('forcing', {}).get('retrieval', {})
-    for key in ('meteorology_raw_dir','meteorology_stack_dir','dem_file','scene_cache_dir','template_file'):
+    for key in ('meteorology_raw_dir','meteorology_stack_dir','dem_file','scene_cache_dir','template_file','landcover_file'):
         if key in retrieval:
             value = Path(retrieval[key]).expanduser()
             retrieval[key] = str(value if value.is_absolute() else (path.parent/value).resolve())
@@ -273,6 +273,7 @@ def run_config(config, stages=STAGES, *, dry_run=False):
                 met_raw_dir=str(prepared / "met/era5land/raw"),
                 met_stack_dir=str(prepared / "met/era5land/stack"),
                 dem_dir=str(prepared / "dem"),
+                landcover_file=config.get('ssebop', {}).get('landcover'),
             )
         if "ssebop" in stages:
             options = {
@@ -282,6 +283,8 @@ def run_config(config, stages=STAGES, *, dry_run=False):
                 "ndvi_band": "ndvi",
             }
             options.update(config.get("ssebop", {}))
+            if options.get('tcold_method', 'worldcover_fano') == 'worldcover_fano':
+                options.setdefault('landcover', str(prepared/'dem/worldcover_v200_2021.tif'))
             pysweb.ssebop.run(
                 date_range=period,
                 landsat_dir=str(prepared / "landsat"),
