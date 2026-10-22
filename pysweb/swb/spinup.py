@@ -3,7 +3,7 @@ Script: spinup.py
 Objective: Assemble development-only forcing cycles and verify initial-state convergence.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-18
+Last updated: 2026-10-21
 Inputs: Daily forcing calendars, development boundary, hydraulic properties and parameters.
 Outputs: Explicit cycle mappings and wet/dry differences on fixed admitted cells.
 Usage: from pysweb.swb.spinup import cycle_indices, verify_convergence
@@ -12,6 +12,47 @@ Dependencies: numpy, pandas, xarray, pysweb
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+
+def enabled_spinup(configuration):
+    """Return an explicitly enabled configuration; repetition is off by default."""
+    if configuration is None:
+        return None
+    if not isinstance(configuration, dict):
+        raise ValueError("spinup must be a configuration mapping or None")
+    enabled = configuration.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("spinup.enabled must be a boolean")
+    return dict(configuration) if enabled else None
+
+
+def source_block(dates, configuration):
+    """Validate a complete initial calendar block; repetitions include its retained pass.
+
+    Only the first ``repeats - 1`` passes are discarded. The last pass remains
+    on its original dates and must be excluded from calibration/evaluation.
+    """
+    years = configuration.get("source_years")
+    repeats = configuration.get("repeats")
+    if "source_year" in configuration:
+        raise ValueError("Specify source_years or legacy source_year, not both")
+    if (not isinstance(years, (list, tuple)) or not years
+            or any(not isinstance(y, int) or isinstance(y, bool) for y in years)
+            or list(years) != list(range(years[0], years[-1] + 1))):
+        raise ValueError("source_years must be consecutive integer calendar years")
+    if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
+        raise ValueError("repeats must be a positive integer")
+    dates = pd.DatetimeIndex(dates)
+    expected = pd.date_range(f"{years[0]}-01-01", f"{years[-1]}-12-31")
+    if not dates[:len(expected)].equals(expected):
+        raise ValueError("Complete source years must form the initial daily forcing block")
+    return len(expected), dict(
+        source_years=list(years), repeats=repeats, cycle_days=len(expected),
+        initialization_days=len(expected) * repeats,
+        artificial_days=len(expected) * (repeats - 1),
+        scoring_start_minimum=f"{years[-1] + 1}-01-01",
+        repeat_count_includes_retained_source_block=True,
+        limitation="Repeated forcing initializes numerics; it does not reconstruct historical moisture")
 
 
 def cycle_indices(dates, actual_start, repeats, source_year, development_end):
@@ -96,7 +137,10 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
         raise ValueError("Complete daily initialization history required")
     if mode not in {"wet_dry", "field_capacity_cycles"}:
         raise ValueError("Unknown initialization convergence mode")
-    if mode == "field_capacity_cycles" and (
+    compact = enabled_spinup((model_options or {}).get("spinup"))
+    if compact:
+        _, compact_metadata = source_block(times, compact)
+    if mode == "field_capacity_cycles" and not compact and (
             not isinstance(cycle_days, int) or isinstance(cycle_days, bool)
             or cycle_days < 365 or cycle_days % 365 or cycle_days > len(times)):
         raise ValueError("Field-capacity comparison requires complete repeated-year cycle_days")
@@ -106,6 +150,7 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
     options = dict(drainage_slope=.5, drainage_upper_limit=25., drainage_lower_limit=0.,
                    use_ndvi_root_depth=False)
     options.update(model_options or {})
+    options["spinup"] = compact
     if options.get("nan_to_zero"):
         raise ValueError("Initialization cannot replace missing forcing with zero")
     values = {k: history[k].transpose("time", *spatial).values for k in ("effective_precip", "et", "E_t")}
@@ -151,6 +196,9 @@ def verify_convergence(forcing, soil, mask, parameters, *, scoring_start,
             max_root_depth=options.get("max_root_depth", 1000.),
             **{k: options[k] for k in ("drainage_slope", "drainage_upper_limit", "drainage_lower_limit")}),
         parameters=dict(parameters), failure_action="Extend development-only initialization and refit")
+    if compact:
+        record.update(repeated_source_block=compact_metadata,
+                      initialization_days=len(times)+compact_metadata["artificial_days"])
     data = xr.DataArray(difference, dims=("layer",)+spatial,
         coords={"layer": soil.layer, **{d: mask[d] for d in spatial}}, name="initialization_difference")
     data.attrs["units"] = "m3 m-3"
@@ -183,14 +231,17 @@ def _convergence_cell(cell, context=None):
     for index, initial in enumerate(initial_states):
         series = {key: values[key][:, y, x] for key in ("effective_precip", "et", "E_t")}
         dates = times
-        if mode == "field_capacity_cycles" and index == 1:
+        spinup = options.get("spinup")
+        if mode == "field_capacity_cycles" and index == 1 and spinup:
+            spinup = {**spinup, "repeats": 2 * spinup["repeats"]}
+        elif mode == "field_capacity_cycles" and index == 1:
             # Duplicate only the artificial prefix; append the real prefix once.
             series = {key: np.concatenate([value[:cycle_days], value]) for key, value in series.items()}
             dates = pd.date_range(end=times[-1], periods=len(times)+cycle_days)
         result = soil_water_balance_1d(series["effective_precip"],
             series["et"], props, dates, initial_soil_moisture=initial,
             diff_factor=parameters["diff_factor"], transpiration_data=series["E_t"],
-            state_timing="start")
+            state_timing="start", **({"spinup": spinup} if spinup else {}))
         if not np.all(result.attrs["forcing_valid"]):
             raise ValueError("Solver rejected initialization forcing")
         final.append(result.attrs["final_state"])

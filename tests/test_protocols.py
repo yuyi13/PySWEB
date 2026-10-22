@@ -3,7 +3,7 @@ Script: test_protocols.py
 Objective: Verify holdout isolation, donor restrictions, spin-up and evaluation contracts.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-18
+Last updated: 2026-10-21
 Inputs: Small deterministic synthetic scenes, forcing and observation arrays.
 Outputs: Scientific protocol regression assertions.
 Usage: python -m pytest tests/test_protocols.py
@@ -380,7 +380,8 @@ def test_screened_scene_workflow_offline(tmp_path):
             reconstruction=dict(acquisition_max_gap_days=64,boundary_carry=True),workers=1)
 
 
-def test_configured_spinup_products_and_endpoint_operator(tmp_path):
+@pytest.mark.parametrize("spinup_enabled", [True, False])
+def test_configured_spinup_products_and_endpoint_operator(tmp_path, spinup_enabled):
     """Run real orchestration, convergence, fitting, reproduction and extraction."""
     from tests.io.test_native_grids import raster
     from rasterio import Affine
@@ -427,18 +428,23 @@ def test_configured_spinup_products_and_endpoint_operator(tmp_path):
             no_polish=True,serial_polish=True,solver_backend=SOLVER_BACKEND,seed=0,diff_bounds=[1000.,1000.],
             beta_bounds=[.96,.96]),
         model=dict(solver_backend=SOLVER_BACKEND),forcing=dict(peer_runs=[]),
-        spinup=dict(source_year=2014,repeats=2,tolerance=.005,minimum_fraction=.99,solver_backend=SOLVER_BACKEND))
+        spinup=dict(enabled=spinup_enabled,source_year=2014,repeats=2,tolerance=.005,
+                    minimum_fraction=.99,solver_backend=SOLVER_BACKEND))
     run_native(config,['benchmark'])
     assert not (base/'calibration.csv').exists()
     benchmark=json.loads((base/'calibration-benchmark.json').read_text())
-    assert benchmark['cells']==4 and benchmark['simulated_days']==1095
+    assert benchmark['cells']==4 and benchmark['simulated_days']==(1095 if spinup_enabled else 365)
     run_native(config,['calibrate','run'])
     acceptance=json.loads((base/'calibration-acceptance.json').read_text())
     assert acceptance['passed'] and acceptance['same_pair_count']
     for folder in (coarse,fine):
         for label in ('default','calibrated'):
-            gate=json.loads((folder/'initialized'/f'{label}_convergence.json').read_text())
-            assert gate['passed'] and gate['initialization_days']==730
+            path=folder/'initialized'/f'{label}_convergence.json'
+            if spinup_enabled:
+                gate=json.loads(path.read_text())
+                assert gate['passed'] and gate['initialization_days']==730
+            else:
+                assert not path.exists()
     product=base/'products/SWEB_RZSM.nc'
     longitude,latitude=Transformer.from_crs(projected.rio.crs,4326,always_xy=True).transform(
         projected.x.values[0],projected.y.values[0])
@@ -446,7 +452,11 @@ def test_configured_spinup_products_and_endpoint_operator(tmp_path):
     assert len(table)==len(dates) and table.continuous_trajectory_valid.all()
     with xr.open_dataset(product) as ds:
         assert ds.sizes['time']==len(dates)
-        assert ds.initial_history_valid_default.astype(bool).all()
+        if spinup_enabled:
+            assert ds.initial_history_valid_default.astype(bool).all()
+        else:
+            assert 'initial_history_valid_default' not in ds
+            np.testing.assert_allclose(ds.rzsm_default.isel(time=0), .32, atol=1e-7)
         last=ds.rzsm_calibrated.isel(time=-1,y=0,x=0).values
         final=np.array([ds[f'final_sm_layer_{i}_calibrated'].isel(y=0,x=0).item() for i in (1,2)])
         assert table.storage_dailymean_mm.iloc[-1]==pytest.approx(((last+final)/2)@np.array([20.,150.]))

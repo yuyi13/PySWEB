@@ -3,7 +3,7 @@ Script: test_references.py
 Objective: Verify temporal-before-spatial GSSM quantiles, support integrity and artifact identity.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-18
+Last updated: 2026-10-21
 Inputs: Synthetic geographic cells with anticorrelated temporal moisture extremes.
 Outputs: Exact reference order, coverage and tamper-rejection assertions.
 Usage: python -m pytest tests/swb/test_references.py
@@ -61,12 +61,13 @@ def test_missing_soil_or_incomplete_reference_cannot_shrink_frozen_support():
         derive_reference(gssm, mask, hyd, site="fixture", sources=["synthetic"], hydraulic_provenance="fixture")
 
 
-def test_daily_model_reuses_unchanged_observation_reference(tmp_path):
+@pytest.mark.parametrize("previous", ["swb-conservative-2p-v1", "swb-daily-conservative-2p-v2"])
+def test_daily_model_reuses_unchanged_observation_reference(tmp_path, previous):
     from pysweb.swb.formulation import canonical_id
     gssm, mask, hyd = inputs()
     record = derive_reference(gssm, mask, hyd, site="fixture", sources=["synthetic"],
                               hydraulic_provenance="fixture")
-    record["formulation_version"] = "swb-conservative-2p-v1"
+    record["formulation_version"] = previous
     record["artifact_id"] = canonical_id(record)
     path = tmp_path / "reference.json"
     path.write_text(json.dumps(record))

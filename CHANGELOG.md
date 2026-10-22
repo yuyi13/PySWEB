@@ -1,5 +1,12 @@
 # Changelog
 
+## Repeated calendar-block spin-up — 2026-10-20
+
+- Add complete, consecutive `spinup.source_years` blocks to both solver backends, calibration and native workflows, retaining leap days and the original output calendar.
+- Count repetitions including the retained source block and exclude that block from scoring. Keep memory independent of repetition count by discarding each column's extra warm-up trajectories.
+- Retain mandatory convergence gates by default; support explicitly labelled fixed-duration experiments that preserve failed diagnostics without claiming convergence.
+- Validate compact histories against expanded histories and verify TOML/API integration; 480 offline tests passed in Gadi job 181730321.
+
 ## Daily two-parameter SWB — 2026-10-18
 
 - Use one conservative update per daily forcing record; retain donor/receiver limits, physical bounds and separate actual/unmet E/T budgets.

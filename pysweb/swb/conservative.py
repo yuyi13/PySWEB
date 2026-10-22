@@ -3,7 +3,7 @@ Script: conservative.py
 Objective: Advance a soil column with jointly limited conservative hydraulic fluxes and separate ET sinks.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-18
+Last updated: 2026-10-21
 Inputs: Validated float64 column properties, forcing and fixed closure settings.
 Outputs: States, interval budgets, interface fluxes, exposure durations and final state.
 Usage: Called by solver.py directly or compiled by accelerated.py.
@@ -25,7 +25,7 @@ def column_kernel(rain, et, tr, theta, por, wp, bcoef, ks, thick, dry, wet,
     """
     nt, nl = len(rain), len(theta)
     ns = min(2, nl)
-    count = 14 + nl - 1 + 3 * nl + 2 * ns
+    count = 14 + nl - 1 + 4 * nl + ns
     states = np.zeros((nt, nl))
     budgets = np.full((nt, count), np.nan)
     valid = np.zeros(nt, dtype=np.bool_)
@@ -43,7 +43,7 @@ def column_kernel(rain, et, tr, theta, por, wp, bcoef, ks, thick, dry, wet,
         qsum = np.zeros(max(0, nl-1))
         tsum = np.zeros(nl)
         below_wp = np.zeros(nl)
-        below_dry = np.zeros(ns)
+        below_dry = np.zeros(nl)
         above_wet = np.zeros(ns)
         esum, drainage, overflow = 0., 0., 0.
         h = dt
@@ -62,7 +62,9 @@ def column_kernel(rain, et, tr, theta, por, wp, bcoef, ks, thick, dry, wet,
         e = 0.
         if theta[0] > 0.:
             e = min(evap * h, thick[0] * theta[0] * theta[0] / (theta[0] + dry[0]) * release)
-        uptake = np.minimum(trans * roots * h, thick * np.maximum(theta - wp, 0.) * release)
+        # The continuous three-day supply relaxation now approaches the
+        # depth-dependent extraction threshold. WP remains a diagnostic.
+        uptake = np.minimum(trans * roots * h, thick * np.maximum(theta - dry, 0.) * release)
         drain = min(slope * cond[-1], dhigh) * h
         q = flux * h
         outgoing = uptake.copy()
@@ -97,9 +99,9 @@ def column_kernel(rain, et, tr, theta, por, wp, bcoef, ks, thick, dry, wet,
         for j in range(nl):
             if theta[j] < wp[j]:
                 below_wp[j] += h
-        for j in range(ns):
             if theta[j] < dry[j]:
                 below_dry[j] += h
+        for j in range(ns):
             if theta[j] > wet[j]:
                 above_wet[j] += h
         water -= uptake
@@ -146,6 +148,6 @@ def column_kernel(rain, et, tr, theta, por, wp, bcoef, ks, thick, dry, wet,
         offset += nl
         budgets[t, offset:offset+nl] = below_wp
         offset += nl
-        budgets[t, offset:offset+ns] = below_dry
-        budgets[t, offset+ns:offset+2*ns] = above_wet
+        budgets[t, offset:offset+nl] = below_dry
+        budgets[t, offset+nl:offset+nl+ns] = above_wet
     return states, budgets, valid, theta
