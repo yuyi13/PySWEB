@@ -1,5 +1,13 @@
 # Migration to the maintained package
 
+## WorldCover FANO default (22 October 2026)
+
+New SSEBop retrievals use `tcold_method="worldcover_fano"`, with a required ESA WorldCover v200 land-cover raster. Preparation downloads `dem/worldcover_v200_2021.tif`; configured native runs pass it automatically. Standalone runs need `--landcover`. Existing prepared inputs can acquire the additional raster through `pysweb.io.acquisition.acquire_worldcover`, using the complete scene/reference extent and the existing Earth Engine project.
+
+This changes reference selection, fine/coarse branch selection and smoothing, so it intentionally changes temperature and ET values. Recompute upstream forcing and recalibrate for new experiments. Keep previous outputs and parameter fits together. To reproduce the previous calculation, select `tcold_method="legacy"` explicitly. The existing `tcold_fano_local_xr` and `tcold_fano_simple_xr` numerical helpers retain their legacy behavior.
+
+The new diagnostic `cold_boundary_fallback_fraction` measures scene-scalar contribution after branch selection and smoothing, rather than the former coarse-hole indicator. Scene cache keys include the selected method/settings and land-cover contents. Native acquisition padding defaults to 14400 m (previously 6000 m); existing explicit padding remains honored and must be checked. [Methods](methods.md#land-cover-aware-fano-cold-boundary) documents the WorldCover crosswalk, 2021 epoch and differences from OpenET.
+
 ## Explicit repeated-spin-up switch (21 October 2026)
 
 Repeated forcing is disabled by default. Set `[spinup] enabled = true` to enable

@@ -4,7 +4,7 @@ Script: core.py
 Objective: Provide package-native SSEBop physics helpers for dT, ET fraction, Tcold estimation, climatology, and daily ET calculations.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: xarray temperature and geospatial arrays plus pandas ET series.
 Outputs: SSEBop helper DataArray and Series results.
 Usage: import pysweb.ssebop.core
@@ -85,6 +85,10 @@ class LocalFanoConfig:
     fine_scale_m: float = 240.0
     coarse_scale_m: float = 4800.0
     smooth_scale_m: float = 240.0
+    # WorldCover FANO uses a separate 90 m grid and square radius-five mean.
+    # smooth_scale_m is retained solely for legacy retrievals.
+    smooth_resolution_m: float = 90.0
+    smooth_radius_pixels: int = 5
 
 
 @dataclass(init=False)

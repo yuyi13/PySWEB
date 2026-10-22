@@ -51,6 +51,14 @@ Run `pysweb demo` first to generate those synthetic source files. `sm_res` is in
 
 ## Calibration and persistence
 
+### WorldCover FANO inputs
+
+SSEBop defaults to `tcold_method="worldcover_fano"`. `ssebop-prepare` downloads a native WorldCover v200 chip to `dem/worldcover_v200_2021.tif`, covering the same padded acquisition extent as Landsat. The native workflow passes this path automatically. For standalone execution, supply `--landcover <prepared>/dem/worldcover_v200_2021.tif`. Existing inputs without land cover require this additional preparation before retrieval.
+
+An optional `[ssebop] landcover = "path/to/worldcover_v200_2021.tif"` selects an existing raster (resolved relative to the TOML). In the configured scene workflow, `forcing.retrieval.landcover_file` is also supported; `[ssebop].landcover` takes precedence. Without either override, the prepared file is placed beside `forcing.retrieval.dem_file`. Preparation preserves explicitly supplied existing land-cover rasters. They must contain WorldCover v200 class codes and cover all valid pixels of every downloaded scene; the loader reads only the required spatial window. Acquisition follows the existing bounded direct-download contract; requests exceeding Earth Engine's download limits must be split into smaller study regions.
+
+Use `tcold_method="legacy"` explicitly when reproducing previous land-cover-unaware retrievals. `tcold_smooth_scale_m` applies only to that method. The new method retains the existing coefficient, NDVI threshold, fine-scale and coarse-scale options, and adds `tcold_smooth_resolution_m=90` and `tcold_smooth_radius_pixels=5`. Method/settings, code and land-cover contents participate in retrieval cache identity. Recompute SSEBop forcing and recalibrate after changing methods; do not treat old calibrated parameters as a fit to the new forcing. See [the algorithm and crosswalk](methods.md#land-cover-aware-fano-cold-boundary).
+
 Calibration is opt-in. Set its dates, random seed and spin-up exclusion in `[calibration]`. A non-converged optimizer fails unless `allow_unconverged=true` is explicit; the saved manifest records convergence, objective, sample count and optimizer status. The native workflow uses GSSM cell-day errors. Individual legacy calibration calls retain optional `sm_res` block coarsening and `objective="domain_mean"` for deliberate reproduction; these options are not the native workflow defaults.
 
 The workflow automatically supplies the calibrated CSV to the run. Its checksum is included in run provenance. The calibrated parameters are `diff_factor` and `root_beta`. Bounds and units are available in CLI help. Defaults are research starting values, and independent validation remains necessary.

@@ -3,7 +3,7 @@ Script: test_protocols.py
 Objective: Verify holdout isolation, donor restrictions, spin-up and evaluation contracts.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Inputs: Small deterministic synthetic scenes, forcing and observation arrays.
 Outputs: Scientific protocol regression assertions.
 Usage: python -m pytest tests/test_protocols.py
@@ -305,7 +305,7 @@ def test_l7_file_gate_and_receipt_reject_mutation(tmp_path):
     (tmp_path/'etf').mkdir()
     (tmp_path/'ndvi').mkdir()
     process_landsat_scene(records[0]['file'],'auto','ndvi','SR_B3','SR_B4',False,None,
-        delta,template.rio.crs,str(tmp_path/'etf'),str(tmp_path/'ndvi'),gapfill_product=outputs[records[0]['file']])
+        delta,template.rio.crs,str(tmp_path/'etf'),str(tmp_path/'ndvi'),gapfill_product=outputs[records[0]['file']],tcold_method='legacy')
     with xr.open_dataset(tmp_path/'etf/auxiliary_2014-02-01.nc') as ds:
         assert ds.lst_K_provenance.values[20,20] == 2
         assert ds.original_support.values[20,20] == 0
@@ -334,6 +334,8 @@ def test_calendar_climatology_requires_full_source_and_ignores_holdout():
 
 
 def test_screened_scene_workflow_offline(tmp_path):
+    import json
+    from pathlib import Path
     import rasterio
     from rasterio import Affine
     from rasterio.warp import transform_bounds
@@ -354,6 +356,8 @@ def test_screened_scene_workflow_offline(tmp_path):
         scenes.append(str(path))
     dem=tmp_path/'dem.tif'
     (source_grid*100).rio.to_raster(dem)
+    landcover=tmp_path/'worldcover.tif'
+    (source_grid*40).rio.to_raster(landcover)
     geographic=raster(np.ones((6,6)),Affine(.1,0,8.7,0,-.1,55.3),'EPSG:4326')
     dates=pd.date_range('2014-01-01','2014-12-31')
     files={}
@@ -364,7 +368,7 @@ def test_screened_scene_workflow_offline(tmp_path):
     padding=dict(primary_bounds=[497120,6097120,502880,6102880],comparison_bounds=list(source_grid.rio.bounds()),
         crs='EPSG:32632',maximum_fallback_fraction=1e-8,minimum_agreement=.99,maximum_p99_difference=.01)
     protocol=dict(development_end='2014-12-31',climatology_start='2014-01-01',climatology_end='2014-12-31',
-        meteorology_files=files,scene_cache_dir=str(tmp_path/'cache'),padding=padding)
+        meteorology_files=files,scene_cache_dir=str(tmp_path/'cache'),padding=padding,landcover_file=str(landcover))
     output=run_scene_workflow(date_range='2014-06-01 to 2014-06-05',scene_files=scenes,gapfill_products={},
         dem=str(dem),output_dir=tmp_path/'seb',extent=extent,protocol=protocol,
         reconstruction=dict(acquisition_max_gap_days=64,boundary_carry=True),workers=1)
@@ -373,6 +377,19 @@ def test_screened_scene_workflow_offline(tmp_path):
         assert ds.ET.notnull().any()
         assert {'original_supported','reconstructed','dt_K','cold_boundary_fallback_fraction'} <= set(ds)
         assert ds.rio.crs == source_grid.rio.crs
+        assert ds.attrs['tcold_method'] == 'worldcover_fano'
+        assert ds.worldcover_class.min() == 40
+    # Cached retrievals must invalidate when categorical input content changes,
+    # even if the replacement class has the same reference eligibility.
+    from pysweb.ssebop.scene_protocol import _retrieve_scene
+    receipt=tmp_path/'cache'/Path(scenes[0]).stem/'2014-06-01.json'
+    fingerprint=json.loads(receipt.read_text())['fingerprint']
+    original_mtime=receipt.stat().st_mtime_ns
+    _retrieve_scene(scenes[0])
+    assert receipt.stat().st_mtime_ns == original_mtime
+    (source_grid*30).rio.to_raster(landcover)
+    _retrieve_scene(scenes[0])
+    assert json.loads(receipt.read_text())['fingerprint'] != fingerprint
     with pytest.raises(ValueError,match='before first supported scene'):
         run_scene_workflow(date_range='2014-05-31 to 2014-06-05',scene_files=scenes,gapfill_products={},
             dem=str(dem),output_dir=tmp_path/'early',extent=extent,

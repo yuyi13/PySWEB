@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Script: cli_prepare.py
-Objective: Prepare Landsat, ERA5-Land, DEM, and stacked meteorology inputs for the first SSEBop step.
+Objective: Prepare Landsat, WorldCover, ERA5-Land, DEM and stacked meteorology for SSEBop.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: CLI arguments (--date-range, --extent, --met-source, --gee-project, --out-dir).
-Outputs: Package-managed Landsat, NASADEM, and meteorology inputs for the requested SSEBop run.
+Outputs: Package-managed Landsat, WorldCover, NASADEM and meteorology for the requested SSEBop run.
 Usage: pysweb ssebop-prepare --help
 Dependencies: Python standard library; pysweb
 """
@@ -24,7 +24,7 @@ from pysweb.ssebop.landsat import parse_extent  # noqa: E402
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Prepare Landsat, NASADEM, ERA5-Land daily downloads, and "
+            "Prepare Landsat, WorldCover v200, NASADEM, ERA5-Land daily downloads, and "
             "stacked ERA5-Land meteorology inputs for SSEBop."
         )
     )

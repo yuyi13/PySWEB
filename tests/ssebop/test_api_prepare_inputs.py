@@ -4,7 +4,7 @@ Script: test_api_prepare_inputs.py
 Objective: Verify the SSEBop package API orchestrates Landsat and meteorological input preparation steps.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: Temporary paths and monkeypatched package functions supplied by pytest.
 Outputs: Test assertions.
 Usage: python -m pytest tests/ssebop/test_api_prepare_inputs.py
@@ -13,6 +13,7 @@ Dependencies: pytest, PyYAML; pysweb
 from pathlib import Path
 import json
 import sys
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,6 +22,14 @@ if str(ROOT) not in sys.path:
 
 from pysweb.ssebop.api import prepare_inputs
 from pysweb.ssebop.landsat import update_gee_config
+
+
+@pytest.fixture(autouse=True)
+def worldcover_acquisition(monkeypatch):
+    calls = []
+    monkeypatch.setattr('pysweb.io.acquisition.acquire_worldcover',
+                        lambda *args, **kwargs: calls.append((args, kwargs)))
+    return calls
 
 
 def _load_config_payload(path: Path) -> dict:
@@ -32,7 +41,7 @@ def _load_config_payload(path: Path) -> dict:
     return yaml.safe_load(payload) or {}
 
 
-def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, tmp_path: Path):
+def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, tmp_path: Path, worldcover_acquisition):
     recorded = []
     monkeypatch.setattr(
         "pysweb.met.era5land.stack.native_download_extent",
@@ -69,6 +78,8 @@ def test_prepare_inputs_calls_landsat_era5land_dem_and_stack_steps(monkeypatch, 
         gee_project="workflow-project",
     )
 
+    assert worldcover_acquisition == [((str(tmp_path/'dem/worldcover_v200_2021.tif'),
+        [147.2, -35.1, 147.3, -35.0]), {'gee_project': 'workflow-project'})]
     assert recorded == [
         (
             "landsat",

@@ -3,7 +3,7 @@ Script: scene_protocol.py
 Objective: Retrieve padded native scenes using bounded development climatology and acceptance gates.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-17
+Last updated: 2026-10-22
 Inputs: Native meteorology, DEM, Landsat fields and configured padding/climatology rules.
 Outputs: Calendar-day dT, local-anchor fractions and independently screened retrievals.
 Usage: from pysweb.ssebop.scene_protocol import calendar_day_dt, screened_fraction
@@ -70,16 +70,23 @@ def _window(data, bounds, crs):
     return selected
 
 
-def screened_fraction(lst, ndvi, dt, template, config, protocol):
+def screened_fraction(lst, ndvi, dt, template, config, protocol, *, landcover=None,
+                      tcold_method='worldcover_fano'):
     """Compare fixed padding windows after excluding cold-anchor fallback."""
+    from pysweb.ssebop.fano import validate_method, worldcover_fano
+    validate_method(tcold_method, landcover)
     fractions, fallback, cold_fields = {}, {}, {}
     for label in ("primary", "comparison"):
         temperature = _window(lst, protocol[label+"_bounds"], protocol["crs"])
         vegetation = ndvi.sel(x=temperature.x, y=temperature.y)
         delta = dt.sel(x=temperature.x, y=temperature.y)
-        cold = tcold_fano_local_xr(temperature, vegetation, delta, config=config)
+        if tcold_method == 'worldcover_fano':
+            diagnostic = worldcover_fano(temperature, vegetation, delta, landcover, config=config)
+            cold, weight = diagnostic.tcold_K, diagnostic.cold_boundary_fallback_fraction
+        else:
+            cold = tcold_fano_local_xr(temperature, vegetation, delta, config=config)
+            weight = fallback_fraction(vegetation, np.isfinite(temperature) & np.isfinite(vegetation) & np.isfinite(delta), config)
         fraction = et_fraction_xr(temperature, cold, delta)
-        weight = fallback_fraction(vegetation, np.isfinite(temperature) & np.isfinite(vegetation) & np.isfinite(delta), config)
         fallback[label] = align_to_grid(weight, template, resampling="bilinear")
         fractions[label] = align_to_grid(fraction, template, resampling="bilinear").where(
             fallback[label] <= protocol["maximum_fallback_fraction"])
@@ -116,10 +123,12 @@ def _retrieve_scene(path):
     for sub in ('etf','ndvi'):
         (folder/sub).mkdir(parents=True,exist_ok=True)
     paths = [path, context['meteorology']['dem'], *context['met_paths']]
+    if context['landcover']:
+        paths.append(context['landcover'])
     gapfill = context['gapfill_products'].get(str(Path(path).resolve()))
     if gapfill:
         paths.append(gapfill)
-    config = dict(padding=context['padding'], climatology_start=context['meteorology']['start'],
+    config = dict(tcold=context['tcold_options'], padding=context['padding'], climatology_start=context['meteorology']['start'],
                   climatology_end=context['meteorology']['end'], template=context['template_identity'])
     manifest = input_manifest(config, paths)
     outputs = [folder/'etf'/f'auxiliary_{date}.nc', folder/'etf'/f'etf_{date}.tif', folder/'ndvi'/f'ndvi_{date}.tif']
@@ -128,10 +137,12 @@ def _retrieve_scene(path):
     if previous.get('fingerprint') == manifest['fingerprint'] and all(
             p.exists() and previous.get('outputs', {}).get(str(p)) == sha256(p) for p in outputs):
         return np.datetime64(date, 'ns'), str(outputs[1]), str(outputs[2])
-    from pysweb.ssebop.core import LocalFanoConfig
+    from pysweb.ssebop.fano import config_from_options
     result = process_landsat_scene(str(path), 'auto', 'ndvi', 'SR_B4', 'SR_B5', False, None,
         None, context['template'].rio.crs, str(folder/'etf'), str(folder/'ndvi'),
-        tcold_config=LocalFanoConfig(), gapfill_product=gapfill, output_template=context['template'],
+        tcold_config=config_from_options(context['tcold_options']),
+        tcold_method=context['tcold_options']['tcold_method'], landcover=context['landcover'],
+        gapfill_product=gapfill, output_template=context['template'],
         meteorology_context=context['meteorology'], padding_protocol=context['padding'])
     atomic_json(receipt, {**manifest, 'outputs': {str(p): sha256(p) for p in outputs}})
     return result
@@ -156,7 +167,7 @@ def scene_support_calendar(fractions, support_aoi=None):
 
 
 def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
-                       output_dir, extent, protocol, reconstruction, workers=1):
+                       output_dir, extent, protocol, reconstruction, workers=1, tcold_options=None):
     """Configured bounded-memory retrieval with persistent shared scene caching.
 
     The meteorology files explicitly cover the climatology and actual model
@@ -171,6 +182,10 @@ def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
     from pysweb.io.provenance import input_manifest, atomic_netcdf, save_output_manifest, atomic_json
     from pysweb.forcing import reconstruct
     from pysweb.ssebop.core import et_from_fraction
+    from pysweb.ssebop.fano import validate_method, FANO_VERSION
+    tcold_options = {'tcold_method': 'worldcover_fano', **(tcold_options or {})}
+    landcover = tcold_options.get('landcover') or protocol.get('landcover_file')
+    validate_method(tcold_options['tcold_method'], landcover)
     if workers < 1 or not scene_files:
         raise ValueError('Positive workers and selected scenes required')
     start, end = parse_date_range(date_range)
@@ -192,6 +207,7 @@ def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
     context = dict(template=template, template_identity=dict(crs=str(template.rio.crs),
         transform=list(template.rio.transform())[:6], shape=list(template.shape)),
         cache=str(cache), met_paths=met_paths, gapfill_products=gapfill_products,
+        tcold_options=tcold_options, landcover=landcover,
         meteorology=dict(fields={k:meteorology[k] for k in ('tmax','tmin','rs','ea')},
             dem=str(dem), start=protocol['climatology_start'], end=protocol['climatology_end']),
         padding=protocol['padding'])
@@ -246,6 +262,8 @@ def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
     from pysweb.components import COMPONENT_SCHEMA
     result = result.rio.write_crs(template.rio.crs).rio.write_transform(template.rio.transform())
     result.attrs.update(component_schema=COMPONENT_SCHEMA, selected_scenes='\n'.join(map(str,scene_files)),
+        tcold_method=tcold_options['tcold_method'],
+        tcold_algorithm=FANO_VERSION if tcold_options['tcold_method'] == 'worldcover_fano' else 'legacy-local-fano',
         climatology_start=protocol['climatology_start'], climatology_end=protocol['climatology_end'],
         climatology_calendar='month/day; Feb29 uses Feb28/Mar1', development_end=boundary,
         same_day_selection='configured immutable catalogue: cloud cover then scene id',
@@ -268,6 +286,6 @@ def run_scene_workflow(*, date_range, scene_files, gapfill_products, dem,
             field.attrs.pop('_FillValue', None)
             encoding[name]['_FillValue'] = None
     atomic_netcdf(result,path,encoding=encoding)
-    save_output_manifest(path,input_manifest(dict(protocol=protocol,reconstruction=reconstruction),
-        [*scene_files,*met_paths,dem,*gapfill_products.values()]))
+    save_output_manifest(path,input_manifest(dict(protocol=protocol,reconstruction=reconstruction,tcold=tcold_options),
+        [*scene_files,*met_paths,dem,*gapfill_products.values(), *([landcover] if landcover else [])]))
     return path

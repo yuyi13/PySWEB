@@ -3,7 +3,7 @@ Script: workflow_native.py
 Objective: Orchestrate native downloads, GSSM calibration and shared Landsat-grid products.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Inputs: Validated workflow configuration and selected execution stages.
 Outputs: Two final NetCDFs, coarse calibration inputs, parameters and grid checks.
 Usage: pysweb workflow --config examples/workflow.toml
@@ -75,7 +75,7 @@ def native_plan(config, stages):
         raise ValueError('SSEBop climatology cannot include dates after the development boundary')
     if boundary is not None and boundary < start:
         raise ValueError('The run must include development meteorology before the holdout boundary')
-    if run.get('processing_buffer_m',6000) < 0:
+    if run.get('processing_buffer_m',14400) < 0:
         raise ValueError('processing_buffer_m must be non-negative')
     if calibration.get('sm_res') is not None:
         raise ValueError('Native calibration uses the GSSM affine grid; remove calibration.sm_res')
@@ -179,7 +179,7 @@ def run_native(config, stages, dry_run=False):
             write_dataarray(data,reference)
         reference_grid = subset_template(open_template(reference,soil.get('reference_var','reference_ssm')),extent)
         extent = list(transform_bounds(reference_grid.rio.crs,'EPSG:4326',*reference_grid.rio.bounds(),densify_pts=21))
-    download_extent = buffered_extent(extent,run.get('processing_buffer_m',6000))
+    download_extent = buffered_extent(extent,run.get('processing_buffer_m',14400))
     met = prepared/'met/era5land/stack'
     period = f'{start} to {end}'
     if 'prepare' in stages:
@@ -190,13 +190,17 @@ def run_native(config, stages, dry_run=False):
             job_directory = os.environ.get('PBS_JOBFS') or os.environ.get('TMPDIR')
             if not job_directory:
                 raise ValueError('Set TMPDIR for bounded temporary meteorology expansion')
+            retrieval = dict(retrieval)
+            if config.get('ssebop', {}).get('landcover'):
+                retrieval['landcover_file'] = config['ssebop']['landcover']
             prepare_native_sources(config['landsat']['manifest_file'],retrieval,
                 gee_project=run.get('gee_project',''),job_directory=job_directory)
         else:
             pysweb.ssebop.prepare_inputs(date_range=period,extent=download_extent,
                 met_source='era5land',gee_project=run.get('gee_project',''),
                 landsat_dir=str(prepared/'landsat'),met_raw_dir=str(prepared/'met/era5land/raw'),
-                met_stack_dir=str(met),dem_dir=str(prepared/'dem'),sensors=run['sensors'])
+                met_stack_dir=str(met),dem_dir=str(prepared/'dem'),sensors=run['sensors'],
+                landcover_file=config.get('ssebop',{}).get('landcover'))
     seb_internal = internal/f'et_daily_ssebop_{start}_{end}.nc'
     seb_final = products/'SSEBop_ET.nc'
     if 'ssebop' in stages:
@@ -204,6 +208,10 @@ def run_native(config, stages, dry_run=False):
                    'reference_et':str(met/f'et_tall_crop_daily_{start}_{end}.nc'),
                    'reference_et_var':'et_tall_crop','et_reference_type':'alfalfa'}
         options.update(config.get('ssebop',{}))
+        if options.get('tcold_method', 'worldcover_fano') == 'worldcover_fano':
+            retrieval = config.get('forcing', {}).get('retrieval', {})
+            options.setdefault('landcover', retrieval.get('landcover_file',
+                str(Path(retrieval.get('dem_file', prepared/'dem/nasadem.tif')).parent/'worldcover_v200_2021.tif')))
         if config.get('landsat'):
             from pysweb.ssebop.preprocessing import select_scenes, prepare_l7
             selection = config['landsat']
@@ -242,6 +250,7 @@ def run_native(config, stages, dry_run=False):
             run_scene_workflow(date_range=period,scene_files=options['scene_files'],
                 gapfill_products=options.get('gapfill_products',{}),dem=retrieval['dem_file'],
                 output_dir=internal,extent=extent,protocol=scene_protocol,
+                tcold_options={key:value for key,value in options.items() if key.startswith('tcold_') or key == 'landcover'},
                 reconstruction=config['forcing']['reconstruction'],workers=run['workers'])
         else:
             pysweb.ssebop.run(date_range=period,landsat_dir=str(prepared/'landsat'),met_dir=str(met),
