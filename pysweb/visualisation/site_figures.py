@@ -95,6 +95,20 @@ def finite_limits(values, zero=True):
     return [low-pad,high+pad]
 
 
+def daily_layer(operator):
+    """Find a daily panel with the same support as an evaluated soil operator."""
+    if operator['units'] != 'm3 m-3':
+        return None
+    if operator['layer'] in (1,2,3):
+        return operator['layer']
+    # Interval operators retain layer=None in evaluation. An exact layer interval
+    # has identical support; broader and partial intervals remain in scatters.
+    for layer,interval in enumerate(([0.,50.],[50.,150.],[150.,300.]),1):
+        if operator['interval_mm'] == interval:
+            return layer
+    return None
+
+
 def make_figures(plan):
     base = Path(plan['base'])
     data,out = base/'evaluation',base/'figures'
@@ -125,7 +139,8 @@ def make_figures(plan):
     fig.legend(handles=handles,ncol=3,loc='upper left',bbox_to_anchor=(.085,.945),frameon=False)
     # A point observation can exceed the model pixel's porosity. Preserve every
     # matched sample in the daily view and keep one scale across the three layers.
-    soil_operators = [op['operator_id'] for op in operators if op['layer'] in (1,2,3)]
+    daily_layers = {op['operator_id']:daily_layer(op) for op in operators}
+    soil_operators = [key for key,layer in daily_layers.items() if layer is not None]
     soil_observed = pairs.loc[pairs.operator_id.isin(soil_operators)&pairs.qc.eq('clean'),'observed'].to_numpy(dtype=float)
     soil_observed = soil_observed[np.isfinite(soil_observed)]
     soil_limits = [0.,max(hydraulic['porosity'][:3])+.02]
@@ -135,7 +150,7 @@ def make_figures(plan):
     for layer,ax in enumerate(axes[:3],1):
         ax.plot(frame.index,frame[f'aligned_layer_{layer}'].where(frame.paired_valid),color=COLOURS['default'],lw=.65)
         for op in operators:
-            if op['layer']==layer:
+            if daily_layers[op['operator_id']]==layer:
                 selected = pairs.loc[pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')]
                 ax.scatter(selected.date,selected.observed,s=2,c='black',rasterized=True)
         ax.set_ylim(*soil_limits)
@@ -264,6 +279,7 @@ def make_figures(plan):
         pages=checks,missing='NaNs preserved; unavailable observation panels omitted with evaluation coverage records',
         point_operator=point,daily_soil_limits=soil_limits,
         daily_soil_observation_count=int(soil_observed.size),
+        daily_soil_operator_layers=daily_layers,
         visual_review='pending; automatic rendering is not visual acceptance'))
     atomic_json(out/'scatter_statistics.json',statistics)
     atomic_json(out/'figure_validation.json',dict(passed=True,pages=len(checks),heatmap_exact_data=True,visual_review_passed=False))
