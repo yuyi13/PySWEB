@@ -42,11 +42,17 @@ def save_figure(fig, directory, name, checks):
             for tick in axis.get_major_ticks()+axis.get_minor_ticks():
                 if not low <= tick.get_loc() <= high:
                     undrawn_ticks.update((tick.label1,tick.label2))
-    for item in fig.findobj(Text):
-        if item not in undrawn_ticks and item.get_visible() and item.get_text():
+    drawn_text = [item for item in fig.findobj(Text)
+                  if item not in undrawn_ticks and item.get_visible() and item.get_text()]
+    for item in drawn_text:
             b = item.get_window_extent(renderer)
             if b.width and b.height and (b.x0 < -1 or b.y0 < -1 or b.x1 > width+1 or b.y1 > height+1):
                 raise ValueError(f'{name}: text outside canvas: {item.get_text()}')
+    for footer in (item for item in drawn_text if item.get_gid()=='sweb-footer'):
+        bounds = footer.get_window_extent(renderer)
+        for item in drawn_text:
+            if item is not footer and bounds.overlaps(item.get_window_extent(renderer)):
+                raise ValueError(f'{name}: footer overlaps text: {item.get_text()}')
     fig.savefig(directory/f'{name}.png',dpi=DPI,facecolor='white')
     fig.savefig(directory/f'{name}.pdf',facecolor='white')
     raw = (directory/f'{name}.pdf').read_bytes()
@@ -150,13 +156,14 @@ def make_figures(plan):
     basis = 'UTC' if plan['observation_operator']['source']=='ISMN' else f"Local standard time (UTC+{plan['observation_operator']['utc_offset_hours']:g})"
     note='Centre diagnostics only; station outside accepted support.' if point['diagnostic_only'] else 'Fixed station pixel; depth and temporal approximations are recorded in evaluation.'
     basis_note=basis+' daily means/totals.'+(' Cheverelis storage uses UTC.' if storage_ops else '')
-    fig.text(.09,.027,basis_note+'\n'+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS)
+    fig.text(.09,.027,basis_note+'\n'+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS,gid='sweb-footer')
     save_figure(fig,out,'daily',checks)
     supported = [op for op in operators if (pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')).any()]
     for page,begin in enumerate(range(0,len(supported),2),1):
         selected_ops=supported[begin:begin+2]
         fig,axes=plt.subplots(len(selected_ops),2,figsize=(12,6 if len(selected_ops)==1 else 11),squeeze=False)
-        fig.subplots_adjust(left=.09,right=.97,bottom=.12,top=.85,wspace=.34,hspace=.48)
+        fig.subplots_adjust(left=.09,right=.97,bottom=.22 if len(selected_ops)==1 else .12,
+                            top=.82 if len(selected_ops)==1 else .85,wspace=.34,hspace=.48)
         fig.text(.09,.96,label+' · matched observations',fontsize=TS,va='top')
         for row,op in enumerate(selected_ops):
             selected=pairs.loc[pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')]
@@ -182,7 +189,7 @@ def make_figures(plan):
                 ax.set_xlabel(f'Observed ({unit})');ax.set_ylabel(f'Model ({unit})')
                 interval='ET' if op['interval_mm'] is None else f"{'Storage' if op['units']=='mm' else 'SM'} {op['interval_mm'][0]/10:g}–{op['interval_mm'][1]/10:g} cm"
                 ax.set_title(f'{op["operator_id"]} · {interval}\n{phase.capitalize()}',fontsize=FS,pad=8)
-        fig.text(.09,.025,'Primary QC · each sensor/deployment has its own exact pairs. Strict-QC metrics and pairs are retained in evaluation.\nOrange: SWEB; blue: ET forcing. Unknown correlation is shown as NA.',fontsize=FS)
+        fig.text(.09,.025,'Primary QC · each sensor/deployment has its own exact pairs. Strict-QC metrics and pairs are retained in evaluation.\nOrange: SWEB; blue: ET forcing. Unknown correlation is shown as NA.',fontsize=FS,gid='sweb-footer')
         save_figure(fig,out,f'scatter_{page:02d}',checks)
     maps=dict(np.load(data/f'maps_{plan.get("map_year",2025)}.npz'))
     meta=json.loads((data/'map_metadata.json').read_text())
@@ -191,8 +198,9 @@ def make_figures(plan):
         ('et_maps',['et_forcing','actual_et'],['SSEBop ET forcing','Realised SWEB ET'],'ET (mm day⁻¹)','YlGnBu')]:
         limits=finite_limits([maps[v] for v in variables])
         limits[0]=max(0,limits[0])
-        fig,axes=plt.subplots(len(variables),4,figsize=(12,4*len(variables)+1.3),squeeze=False)
-        fig.subplots_adjust(left=.08,right=.98,bottom=.24,top=.81,wspace=.15,hspace=.55)
+        fig,axes=plt.subplots(len(variables),4,figsize=(12,6 if len(variables)==1 else 9.3),squeeze=False)
+        fig.subplots_adjust(left=.08,right=.98,bottom=.32 if len(variables)==1 else .24,
+                            top=.81,wspace=.15,hspace=.55)
         fig.text(.08,.975,label+f' · {meta["year"]}',fontsize=TS,va='top')
         for row,(variable,title) in enumerate(zip(variables,titles)):
             for col,month in enumerate(('January','April','July','October')):
@@ -212,9 +220,10 @@ def make_figures(plan):
                 else:ax.set_xticklabels([])
             pos=axes[row,0].get_position()
             fig.text(pos.x0,pos.y1+.065,title,fontsize=TS)
-        cax=fig.add_axes([.22,.13,.58,.025])
+        cax=fig.add_axes([.22,.18 if len(variables)==1 else .13,.58,.025])
         fig.colorbar(im,cax=cax,orientation='horizontal',label='Monthly mean '+unit)
-        fig.text(.5,.025,'Native 30 m grid · complete-month history support · grey = missing · + = fixed station\nCoordinates are offsets from the true station location; forcing and realised ET share one scale.',ha='center',fontsize=FS)
+        scale_note='All months share one storage scale.' if name=='storage_maps' else 'Forcing and realised ET share one scale.'
+        fig.text(.5,.025,'Native 30 m grid · complete-month history support · grey = missing · + = fixed station\nCoordinates are offsets from the true station location. '+scale_note,ha='center',fontsize=FS,gid='sweb-footer')
         save_figure(fig,out,name,checks)
     captured=[]
     original_close=plt.close
@@ -237,7 +246,7 @@ def make_figures(plan):
     for date in (run['analysis_start'],run['holdout_start']):ax.axvline(int(np.flatnonzero(frame.index==pd.Timestamp(date))[0]),color='black',lw=1)
     ax.collections[0].set_rasterized(True);ax.collections[0].cmap.set_bad('#E5E5E5')
     cax.set_xlabel('Start-of-day soil moisture (m³ m⁻³)')
-    fig.text(.5,.025,'Repository heatmap function · exact native pixel · physical layer thicknesses · grey = missing\nVertical lines mark the end of initialisation and the start of evaluation.',ha='center',fontsize=FS)
+    fig.text(.5,.025,'Repository heatmap function · exact native pixel · physical layer thicknesses · grey = missing\nVertical lines mark the end of initialisation and the start of evaluation.',ha='center',fontsize=FS,gid='sweb-footer')
     plotted=pd.read_csv(out/'heatmap_exact_data.csv',index_col=0,parse_dates=True,float_precision='round_trip')
     for layer in range(1,6):np.testing.assert_allclose(plotted[f'sweb_rzsm_layer_{layer}'],frame[f'start_layer_{layer}'].where(frame.continuous_trajectory_valid),atol=1e-14,rtol=0,equal_nan=True)
     save_figure(fig,out,'heatmap',checks)
