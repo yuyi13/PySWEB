@@ -74,3 +74,9 @@ Component outputs use `E_s` (soil evaporation), `E_t` (transpiration) and `f_t` 
 The current example uses the [native-grid workflow](native-grids.md): retain original download grids, calibrate on native GSSM cells, and simulate default/calibrated SWB on one Landsat UTM grid shared with the final SEB output. Its calibration scoring interval must be inside the continuous run interval. The earlier independent-window behavior described above remains the explicit legacy workflow for configurations with `run.resolution`.
 
 The [revised SWB contract](swb-formulation.md) defines fixed GSSM references, physical storage limits and explicit rejection of old four-parameter fits.
+
+## Resumable site composition
+
+See [the site workflow guide](../workflows/README.md) for portable individual stages, a local launcher and an explicit Gadi submission adapter. The existing numbered scripts remain compatible. The new composition adds verified restart receipts and observation/figure deliverables; all scientific kernels remain in the package. It prepares native soil caches during acquisition so subsequent computation can enforce offline execution.
+
+For an uncalibrated actual-prefix experiment, set `run.analysis_start` explicitly. The native planner retains earlier actual dates as initialisation and the simulation continues across `run.holdout_start`. Existing defaults are unchanged when the new setting is absent.

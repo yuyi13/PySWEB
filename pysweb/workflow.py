@@ -3,7 +3,7 @@ Script: workflow.py
 Objective: Run explicitly configured stages with shared paths and model settings.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-09-12
-Last updated: 2026-10-22
+Last updated: 2026-10-23
 Inputs: Study TOML configuration, requested stages and optional dry-run flag.
 Outputs: Resolved configuration and products from the selected model stages.
 Usage: pysweb workflow --config examples/workflow.toml --dry-run
@@ -34,7 +34,7 @@ def load_config(path):
     required = {"name", "root", "start", "end"}
     if required - set(run):
         raise ValueError(f"Missing run configuration: {sorted(required - set(run))}")
-    allowed = required | {"extent", "center", "chip_size_m", "resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start", "aoi_bounds", "aoi_crs"}
+    allowed = required | {"extent", "center", "chip_size_m", "resolution", "workers", "gee_project", "state_timing", "grid_mode", "sensors", "processing_buffer_m", "holdout_start", "analysis_start", "aoi_bounds", "aoi_crs"}
     if set(run) - allowed:
         raise ValueError(f"Unknown run settings: {sorted(set(run) - allowed)}")
     if Path(run["name"]).name != run["name"] or run["name"] in {".", ".."}:

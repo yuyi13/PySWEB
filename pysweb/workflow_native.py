@@ -3,7 +3,7 @@ Script: workflow_native.py
 Objective: Orchestrate native downloads, GSSM calibration and shared Landsat-grid products.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-22
+Last updated: 2026-10-23
 Inputs: Validated workflow configuration and selected execution stages.
 Outputs: Two final NetCDFs, coarse calibration inputs, parameters and grid checks.
 Usage: pysweb workflow --config examples/workflow.toml
@@ -115,6 +115,15 @@ def native_plan(config, stages):
     if config.get('forcing') and not boundary:
         raise ValueError('Forcing support requires a development boundary')
     analysis_start = first if enabled or compact else default_scoring_start
+    if run.get('analysis_start'):
+        explicit_start = pd.Timestamp(run['analysis_start'])
+        if not start <= explicit_start <= end:
+            raise ValueError('analysis_start must lie within run.start/end')
+        if (enabled or compact) and explicit_start != analysis_start:
+            raise ValueError('analysis_start conflicts with calibration or spin-up scoring')
+        if boundary is not None and explicit_start > boundary:
+            raise ValueError('analysis_start must precede the holdout boundary')
+        analysis_start = explicit_start
     warmup_end = min(end, analysis_start-pd.Timedelta(days=1))
     warmup = [str(start.date()), str(warmup_end.date())] if warmup_end >= start else None
     initialization = dict(initial_state='physical_field_capacity',
