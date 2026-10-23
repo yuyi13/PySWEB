@@ -196,6 +196,9 @@ def make_figures(plan):
                     ax.plot(0,0,marker='+',color='black',ms=9,mew=3)
                     ax.plot(0,0,marker='+',color='white',ms=8,mew=1.5)
                 ax.set_title(month,fontsize=FS,pad=6)
+                xmin,xmax,ymin,ymax=meta['extent_km']
+                ax.set_xticks(np.arange(np.ceil(xmin/2)*2,xmax+1e-9,2))
+                ax.set_yticks(np.arange(np.ceil(ymin/2)*2,ymax+1e-9,2))
                 if col:ax.set_yticklabels([])
                 else:ax.set_ylabel('North offset (km)')
                 if row==len(variables)-1:ax.set_xlabel('East offset (km)')
