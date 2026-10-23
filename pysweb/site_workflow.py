@@ -541,7 +541,13 @@ def run_plan(plan, stages):
     with site_lock(base), site_lock(plan['destination']):
         if plan.get('acquire_missing_sources') and 'acquire' in stages:
             from pysweb.site_sources import ensure_catalogue
-            ensure_catalogue(plan)
+            try:
+                ensure_catalogue(plan)
+            except BaseException as error:
+                atomic_json(base/'checkpoint.json',dict(stage='source_catalogue',passed=False,
+                    updated_at=now(),error_type=type(error).__name__,error=str(error),
+                    job_id=os.environ.get('PBS_JOBID')))
+                raise
         science = fingerprint(science_identity(plan))
         receipts = base/'receipts'
         receipts.mkdir(exist_ok=True)

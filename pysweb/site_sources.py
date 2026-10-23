@@ -34,6 +34,17 @@ def ensure_catalogue(plan):
         import ee
         ee.Initialize(project=cfg['run']['gee_project'])
         ee.data.setDeadline(180000)
+        dem = ee.Image('NASA/NASADEM_HGT/001').select('elevation')
+        support = dem.mask().unmask(0, False).reduceRegion(
+            reducer=ee.Reducer.first(), geometry=ee.Geometry.Point(query['centre']),
+            crs=dem.projection(), scale=30, maxPixels=16).getInfo()
+        available = support.get('elevation') == 1
+        atomic_json(Path(plan['base'])/'source_coverage.json', dict(
+            passed=available, asset='NASA/NASADEM_HGT/001', location=query['centre'],
+            native_dem_valid=support.get('elevation'),
+            scope='Native model-centre mask; complete grids checked in later source/retrieval stages'))
+        if not available:
+            raise ValueError('Baseline NASADEM has no native support at the model centre')
         properties = ['system:id', 'system:index', 'system:time_start', 'LANDSAT_PRODUCT_ID',
                       'WRS_PATH', 'WRS_ROW', 'CLOUD_COVER', 'PROCESSING_LEVEL']
         packet = {}
@@ -87,13 +98,85 @@ def cached_step(plan, name, contract, operation):
     return outputs
 
 
+def assemble_dem_tiles(paths, projection, extent, destination):
+    """Assemble integer native windows without resampling or filling source gaps."""
+    import numpy as np
+    import rasterio
+    from affine import Affine
+    from pysweb.io.native_grid import export_parameters, verify_native_grid
+    parameters = export_parameters(projection, extent)
+    transform = Affine(*parameters['crs_transform'])
+    width, height = parameters['dimensions']
+    with rasterio.open(paths[0]) as first:
+        dtype = first.dtypes[0]
+    values = np.zeros((height, width), dtype=dtype)
+    covered = np.zeros((height, width), dtype=bool)
+    for path in paths:
+        with rasterio.open(path) as source:
+            verify_native_grid(source, projection)
+            if source.count != 1 or source.dtypes != (dtype,):
+                raise ValueError('DEM tile type/bands differ')
+            offset = ~transform * source.transform
+            col, row = round(offset.c), round(offset.f)
+            if min(row, col) < 0 or row+source.height > height or col+source.width > width:
+                raise ValueError('DEM tile outside native window')
+            target = values[row:row+source.height, col:col+source.width]
+            seen = covered[row:row+source.height, col:col+source.width]
+            data = source.read(1)
+            if not np.array_equal(target[seen], data[seen], equal_nan=True):
+                raise ValueError('DEM tile overlap differs')
+            target[:] = data
+            seen[:] = True
+    if not covered.all():
+        raise ValueError('DEM assembly has missing source windows')
+    destination = Path(destination)
+    temporary = destination.with_suffix('.tif.partial')
+    with rasterio.open(temporary, 'w', driver='GTiff', width=width, height=height,
+                       count=1, dtype=dtype, crs=projection['crs'], transform=transform,
+                       nodata=None, compress='deflate') as output:
+        output.write(values, 1)
+        output.descriptions = ('elevation',)
+    with rasterio.open(temporary) as output:
+        verify_native_grid(output, projection)
+        np.testing.assert_array_equal(output.read(1), values)
+    temporary.replace(destination)
+
+
+def download_dem(plan, image, extent):
+    """Bound the unchanged NASADEM export to four exact native-grid requests."""
+    from pysweb.io.acquisition import _download
+    destination = Path(plan['config_values']['forcing']['retrieval']['dem_file'])
+    receipt = destination.with_suffix('.tif.native.json')
+    contract = dict(asset='NASA/NASADEM_HGT/001', extent=extent,
+                    transport='four geographic tiles; exact native assembly')
+    if receipt.exists() and destination.exists():
+        previous = json.loads(receipt.read_text())
+        if previous.get('contract') == contract and previous.get('sha256') == sha256(destination):
+            return
+    tiles = []
+    left, bottom, right, top = extent
+    xs, ys = [left, (left+right)/2, right], [bottom, (bottom+top)/2, top]
+    for row in range(2):
+        for col in range(2):
+            path = destination.parent/'nasadem_tiles'/f'r{row}_c{col}.tif'
+            bounds = [xs[col], ys[row], xs[col+1], ys[row+1]]
+            tiles.append(_download(image, path, ['elevation'], bounds,
+                dict(asset='NASA/NASADEM_HGT/001', purpose='native elevation covering complete exported meteorology cells')))
+    projection = tiles[0]['native_projection']
+    if any(t['native_projection'] != projection for t in tiles):
+        raise ValueError('DEM tile native projections differ')
+    assemble_dem_tiles([t['path'] for t in tiles], projection, extent, destination)
+    atomic_json(receipt, dict(passed=True, contract=contract, tiles=tiles,
+                             native_projection=projection, sha256=sha256(destination)))
+
+
 def prepare_auxiliary_sources(plan):
     """Apply the executed regional source recipe without calibration or fitting."""
     import ee
     import pandas as pd
     import rasterio
     from rasterio.warp import transform_bounds
-    from pysweb.io.acquisition import acquire_monthly_meteorology, unpack_monthly_meteorology, _download
+    from pysweb.io.acquisition import acquire_monthly_meteorology, unpack_monthly_meteorology
     from pysweb.io.grids import open_template, subset_template, centered_template
     from pysweb.met.era5land.stack import stack_era5land_daily_inputs
     from pysweb.soil.openlandmap import _load_openlandmap_predictors
@@ -121,8 +204,7 @@ def prepare_auxiliary_sources(plan):
         with rasterio.open(raw/next(iter(sorted(monthly['files'])))) as source:
             extent = list(transform_bounds(source.crs, 'EPSG:4326', *source.bounds, densify_pts=21))
         dem = ee.Image('NASA/NASADEM_HGT/001').select('elevation')
-        _download(dem, r['dem_file'], ['elevation'], extent, dict(asset='NASA/NASADEM_HGT/001',
-            purpose='native elevation covering complete exported meteorology cells'))
+        download_dem(plan, dem, extent)
         # Temporary daily expansion is bounded to this job/local invocation.
         with tempfile.TemporaryDirectory(prefix='sweb_met_') as temporary:
             daily = Path(temporary)/'daily'

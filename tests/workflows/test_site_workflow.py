@@ -245,6 +245,33 @@ def test_source_substep_reuses_only_valid_payload(tmp_path):
     assert len(calls) == 3
 
 
+def test_native_dem_transport_preserves_values_and_rejects_holes(tmp_path):
+    import rasterio
+    from affine import Affine
+    from pysweb.site_sources import assemble_dem_tiles
+    values = np.array([[-5, 0, 100, 200], [300, 400, 500, 600]], dtype='int16')
+    projection = dict(crs='EPSG:4326', transform=[1, 0, 0, 0, -1, 2])
+    paths = []
+    for col in (0, 2):
+        path = tmp_path/f'{col}.tif'
+        with rasterio.open(path, 'w', driver='GTiff', width=2, height=2, count=1,
+                           dtype='int16', crs='EPSG:4326',
+                           transform=Affine(1, 0, col, 0, -1, 2)) as output:
+            output.write(values[:, col:col+2], 1)
+        paths.append(path)
+    destination = tmp_path/'assembled.tif'
+    assemble_dem_tiles(paths, projection, [0, 0, 4, 2], destination)
+    with rasterio.open(destination) as source:
+        np.testing.assert_array_equal(source.read(1), values)
+        assert source.nodata is None
+    with pytest.raises(ValueError, match='missing source windows'):
+        assemble_dem_tiles(paths[:1], projection, [0, 0, 4, 2], destination)
+    with rasterio.open(paths[0], 'r+') as source:
+        source.write(np.zeros((2, 2), dtype='int16'), 1)
+    with pytest.raises(ValueError, match='overlap differs'):
+        assemble_dem_tiles([destination, paths[0]], projection, [0, 0, 4, 2], tmp_path/'bad.tif')
+
+
 def test_figure_bounds_check_only_drawn_ticks(tmp_path):
     from pysweb.visualisation.site_figures import save_figure
     import matplotlib.pyplot as plt
