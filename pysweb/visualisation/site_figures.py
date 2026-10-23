@@ -117,7 +117,8 @@ def make_figures(plan):
     storage_ops = [op for op in operators if op['units']=='mm']
     rows = 5 if storage_ops else 4
     fig,axes = plt.subplots(rows,1,figsize=(14,15 if storage_ops else 12),sharex=True)
-    fig.subplots_adjust(left=.09,right=.98,bottom=.095,top=.88,hspace=.50)
+    # Keep the same physical clearance for the footer on four- and five-panel pages.
+    fig.subplots_adjust(left=.09,right=.98,bottom=1.425/fig.get_figheight(),top=.88,hspace=.50)
     fig.text(.09,.975,label+' · uncalibrated',fontsize=TS,va='top')
     handles = [Line2D([],[],color=COLOURS[k],lw=2,label=v) for k,v in [('default','SWEB'),('forcing','SSEBop ET forcing')]]
     handles.append(Line2D([],[],color='black',ls='none',marker='o',ms=5,label='Matched primary-QC observations'))
