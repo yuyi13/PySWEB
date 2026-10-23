@@ -36,6 +36,8 @@ The default is a dry run. Execution JSON specifies the frozen `cohort`, `site_pl
 
 Each compute job has at most its own acquisition prerequisite. There are no cross-site chains or cohort-wide barriers. Select sites explicitly from the frozen cohort; dataset directory discovery never expands scope. The coordinator should limit acquisition concurrency to the project and service allowances, examine initial telemetry, and update resource requests before broad dispatch.
 
+At startup, the adapter verifies the small source archive and extracts its allocation checker before scientific execution. Scheduler lookup timeouts are retried up to four times, with ten seconds between attempts. Every report is retained in the site logs. Scientific stages start only after the checker verifies the allocated CPUs, memory, jobfs and required storage mounts; other verification failures stop immediately.
+
 ## Scientific and observational limits
 
 Refactoring does not change retrieval thresholds, hydraulics, meteorology, reconstruction, or the solver. The finite FANO cold-reference/clipping limitation remains; no ET floor or rainfall correction is added. Static WorldCover represents one epoch. ET forcing and realised ET are labelled separately. Evaluation uses exact exported finite pairs for each variable, sensor/deployment, QC and phase. Point probes are approximated by containing layers; depth intervals use overlap weights. Unknown depths and footprint measurements without an appropriate operator are excluded. Positive-offset local-day alignment approximates unresolved subdaily behaviour; the current operator supports UTC and offsets from zero to less than 24 hours. Additional global regions require their own explicit time/operator configurations.

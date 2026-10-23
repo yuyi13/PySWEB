@@ -72,14 +72,13 @@ SWEB_PLAN={quote(str(plan_path))}
 SWEB_SITE_LOGS={quote(str(Path(plan['destination'])/'logs'))}
 mkdir -p "$SWEB_SITE_LOGS"
 export SWEB_RESOURCE_FILE="$SWEB_SITE_LOGS/resources_${{PBS_JOBID}}.json"
-"$SWEB_PYTHON" -S {quote(execution['resource_helper'])} "$SWEB_RESOURCE_FILE"
-"$SWEB_PYTHON" -c 'import json,os; r=json.load(open(os.environ["SWEB_RESOURCE_FILE"])); assert r["allocation_verified"] and r["safe_for_compute"]; assert r["local_resources"]["ncpus"] >= {resources['ncpus']}; assert r["local_resources"]["memory_bytes"] >= {resources['mem_gib']}*1024**3; assert set({json.dumps(mounts)}) <= set(r["storage"].split("+"))'
 SWEB_SOURCE={quote(execution['source_archive'])}
 "$SWEB_PYTHON" -c 'import hashlib,sys; assert hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest() == sys.argv[2]' "$SWEB_SOURCE" {quote(execution['source_sha256'])}
 mkdir "$PBS_JOBFS/source"
 tar -xzf "$SWEB_SOURCE" -C "$PBS_JOBFS/source"
 export PYTHONPATH="$PBS_JOBFS/source"
 cd "$PBS_JOBFS/source"
+"$SWEB_PYTHON" workflows/hpc/gadi/verify_allocation.py --helper {quote(execution['resource_helper'])} --output "$SWEB_RESOURCE_FILE" --ncpus {resources['ncpus']} --memory-gib {resources['mem_gib']} --jobfs-gib {resources['jobfs_gib']} --storage {' '.join(quote(mount) for mount in mounts)}
 "$SWEB_PYTHON" workflows/run_site.py --plan "$SWEB_PLAN" --stages {stage} 2>&1 | tee "$SWEB_SITE_LOGS/${{PBS_JOBID}}.stages.log"
 '''
 
