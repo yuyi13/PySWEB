@@ -115,6 +115,7 @@ def submit(execution, sites, execute=False):
             plan_records.append(dict(site=site,stage=stage,script=str(script),script_sha256=digest(script),
                 config_sha256=digest(plan['config']),plan_sha256=digest(path),
                 source_sha256=execution['source_sha256'],implementation_commit=execution['implementation_commit'],
+                scientific_source_identity=execution.get('scientific_source_identity'),
                 resource_request=execution['resources'][stage],dependency_policy='same-site acquire only' if stage=='compute' else 'none'))
     atomic(output/'submission_plan.json',dict(submit=execute,sites=sites,jobs=plan_records))
     if not execute:
@@ -129,7 +130,7 @@ def submit(execution, sites, execute=False):
             for r in prior:
                 state=job_state(r['job_id'])
                 if state is not None:
-                    r['scheduler']=state
+                    r['scheduler']={key:state[key] for key in ('job_state','Exit_status','resources_used','Resource_List','stime','mtime','obittime','comment') if key in state}
                     if state.get('job_state') not in ('F','X'):
                         active.append(r)
             if active:
@@ -140,7 +141,8 @@ def submit(execution, sites, execute=False):
                 state=previous.get('scheduler',{})
                 if (state.get('job_state')=='F' and state.get('Exit_status')==0
                         and previous.get('config_sha256')==record['config_sha256']
-                        and previous.get('source_sha256')==record['source_sha256']):
+                        and previous.get('scientific_source_identity')
+                        and previous['scientific_source_identity']==record['scientific_source_identity']):
                     print('Reuse successful acquisition:',record['site'],previous['job_id'],flush=True)
                     continue
             plan=json.loads((Path(execution['site_plans'])/(record['site']+'.json')).read_text())
