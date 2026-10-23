@@ -22,6 +22,8 @@ A site plan supplies `config`, `destination`, `retained_soil`, `scientific_basel
 
 Stage receipts bind configuration, input contents, source identity, dependencies and output checksums. Kernel locks prevent concurrent site writers; failed attempts remain recorded. A retry reuses only receipts whose outputs still verify. Final dataset files are copied through temporary files and atomically promoted; previous runs remain external immutable evidence. A finalised site remains `numerically_validated_pending_visual_review` until its exported figure pages have been inspected and a separate review recorded. Missing observational support is recorded with reasons and zero sample counts.
 
+An individual downstream stage verifies its complete prerequisite chain, including external inputs, observation operators and relevant evaluation/figure code. A stale ancestor must be resumed first. Use `compute` for an ordinary compute restart, or `all` when acquisition inputs changed. Files are verified once per invocation under the site lock. Plot-only changes retain valid numerical receipts.
+
 ## Gadi adapter
 
 ```bash
@@ -39,3 +41,5 @@ Each compute job has at most its own acquisition prerequisite. There are no cros
 Refactoring does not change retrieval thresholds, hydraulics, meteorology, reconstruction, or the solver. The finite FANO cold-reference/clipping limitation remains; no ET floor or rainfall correction is added. Static WorldCover represents one epoch. ET forcing and realised ET are labelled separately. Evaluation uses exact exported finite pairs for each variable, sensor/deployment, QC and phase. Point probes are approximated by containing layers; depth intervals use overlap weights. Unknown depths and footprint measurements without an appropriate operator are excluded. Positive-offset local-day alignment approximates unresolved subdaily behaviour; the current operator supports UTC and offsets from zero to less than 24 hours. Additional global regions require their own explicit time/operator configurations.
 
 Missing physical references can be derived with `derive_physical_reference=true` using the baseline recipe: complete-development native GSSM support and native hydraulic predictors, temporal 2011–2020 p01/p99 per cell followed by area means. The preprocessing-only reference grid is generated without calibration or parameter fitting. Existing reference artifacts remain fixed. Derived artifacts are frozen before simulation and retained with source hashes.
+
+Yanco can explicitly include its documented Cheverelis storage comparison through `observation_operator.additional_storage`, supplying the accepted `contract`, `contract_sha256` and processed `observations` CSV. The contract and its native observation inputs are checksum-verified. The 0–90 cm profile is evaluated at the separate Cheverelis pixel in UTC, with primary/strict QC and exact pairs; it is not inherited by other sites.
