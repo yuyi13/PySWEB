@@ -120,7 +120,7 @@ def test_resume_after_failure_and_corruption(tmp_path,monkeypatch):
 def test_scheduler_scripts_and_frozen_scope(tmp_path):
     path=Path(__file__).resolve().parents[2]/'workflows/hpc/gadi/submit_sites.py'
     spec=importlib.util.spec_from_file_location('gadi_submit',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    plan=tmp_path/'site.json';plan.write_text(json.dumps(dict(site_key='AU_site',region='AU',config='config.toml')))
+    plan=tmp_path/'site.json';plan.write_text(json.dumps(dict(site_key='AU_site',region='AU',config='config.toml',destination=str(tmp_path/'dataset'))))
     execution=dict(resources={'compute':dict(queue='normalsr',ncpus=4,mem_gib=192,jobfs_gib=128,walltime='06:00:00')},
         storage=['gdata/project','scratch/project'],project='project',modules=['configured/1'],logs=str(tmp_path),
         python='/configured/python',resource_helper='/configured/resources.py',source_archive='/configured/source.tar.gz',source_sha256='abc')

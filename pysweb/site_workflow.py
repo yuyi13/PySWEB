@@ -24,7 +24,7 @@ import time
 from pysweb.io.provenance import atomic_json, sha256
 from pysweb.workflow import load_config
 
-STAGES = ('acquire', 'retrieve', 'preprocess', 'simulate', 'evaluate', 'figures', 'finalise')
+STAGES = ('acquire', 'retrieve', 'preprocess', 'references', 'simulate', 'evaluate', 'figures', 'finalise')
 
 
 def now():
@@ -117,7 +117,8 @@ def science_identity(plan):
     catalogue = json.loads(Path(plan['config_values']['landsat']['manifest_file']).read_text())
     scenes = [{k:v for k,v in row.items() if k not in ('file', 'gap_mask_file')}
               for row in catalogue['scenes']]
-    return dict(config=cfg, scenes=scenes, scientific_baseline=plan['scientific_baseline'])
+    return dict(config=cfg, scenes=scenes, scientific_baseline=plan['scientific_baseline'],
+                reference_policy='derive_missing_with_baseline_recipe' if plan.get('derive_physical_reference') else 'reuse_fixed')
 
 
 def source_identity():
@@ -129,7 +130,8 @@ def source_identity():
 def external_inputs(plan):
     cfg = plan['config_values']
     r = cfg['forcing']['retrieval']
-    return [Path(r['dem_file']), Path(cfg['model']['reference_file']), Path(cfg['soil']['reference_file']),
+    fixed = [] if plan.get('derive_physical_reference') else [Path(cfg['model']['reference_file'])]
+    return [Path(r['dem_file']), *fixed, Path(cfg['soil']['reference_file']),
             *map(Path, r['meteorology_files'].values()), *Path(plan['retained_soil']).glob('*.nc')]
 
 
@@ -170,7 +172,8 @@ def import_pilot(plan, stage):
             raise ValueError(f'Pilot {name} acceptance is stale')
     copied = []
     if stage == 'acquire':
-        files = [Path(s['file']) for s in b['scenes']]
+        catalogue = json.loads(Path(plan['config_values']['landsat']['manifest_file']).read_text())
+        files = [Path(s['file']) for s in catalogue['scenes']]
         files.append(Path(plan['config_values']['forcing']['retrieval']['landcover_file']))
         for path in files:
             receipt = json.loads(path.with_suffix(path.suffix+'.native.json').read_text())
@@ -191,6 +194,8 @@ def import_pilot(plan, stage):
             selected = [*list((old/'ssebop').rglob('*')),old/'selected-scenes.json']
         elif stage == 'preprocess':
             selected = [*(old/'run_inputs').glob('*'),old/'products/SSEBop_ET.nc',old/'chip-window.json']
+        elif stage == 'references':
+            return references(plan)
         elif stage == 'simulate':
             selected = [*(old/'products').glob('*'),*(old/'run_inputs/initialized').glob('*'),old/'simulation-acceptance.json']
         else:
@@ -249,6 +254,14 @@ def acquire(plan):
             dates = pd.DatetimeIndex(ds.time.values)
             if not dates.equals(pd.date_range(r['climatology_start'], r['meteorology_end'])):
                 raise ValueError(f'Incomplete meteorology calendar: {key}')
+            extent = transform_bounds(ds.rio.crs,r['padding']['crs'],*ds.rio.bounds(),densify_pts=21)
+            wanted = r['padding']['comparison_bounds']
+            if not (extent[0] <= wanted[0] and extent[1] <= wanted[1] and extent[2] >= wanted[2] and extent[3] >= wanted[3]):
+                raise ValueError(f'Meteorology does not cover the comparison window: {key}')
+    with rasterio.open(r['dem_file']) as ds:
+        extent = transform_bounds(ds.crs,r['padding']['crs'],*ds.bounds,densify_pts=21)
+    if not (extent[0] <= wanted[0] and extent[1] <= wanted[1] and extent[2] >= wanted[2] and extent[3] >= wanted[3]):
+        raise ValueError('DEM does not cover the comparison window')
     record = dict(passed=True, retained_inputs=file_records(inputs), worldcover=cover,
                   scene_count=len(catalogue['files']), comparison_extent_verified=True)
     atomic_json(base/'acquisition_inputs.json', record)
@@ -267,13 +280,19 @@ def retrieve(plan):
     selected = select_scenes(records, cfg['run']['sensors'], plan.get('catalogue_start','2013-01-01'),
                              cfg['run']['end'], wrs=cfg['landsat']['wrs'])
     grid = centered_template(open_template(r['template_file']), cfg['run']['center'], cfg['run']['chip_size_m'])
+    extent = cfg['run']['extent']
+    if plan.get('derive_physical_reference'):
+        from pysweb.io.grids import subset_template
+        from rasterio.warp import transform_bounds
+        reference_grid = subset_template(open_template(cfg['soil']['reference_file'],'reference_ssm'),extent)
+        extent = list(transform_bounds(reference_grid.rio.crs,'EPSG:4326',*reference_grid.rio.bounds(),densify_pts=21))
     r = {**r, 'development_end':plan['development_end'],
          'support_aoi':dict(bounds=list(grid.rio.bounds()), crs=str(grid.rio.crs))}
     workers = min(2, cfg['run']['workers'], plan.get('scene_workers',2))
     with rasterio.Env(GDAL_CACHEMAX=256*1024**2), xr.set_options(file_cache_maxsize=8):
         run_scene_workflow(date_range=f"{cfg['run']['start']} to {cfg['run']['end']}",
             scene_files=[s['file'] for s in selected], gapfill_products={}, dem=r['dem_file'],
-            output_dir=base/'ssebop', extent=cfg['run']['extent'], protocol=r,
+            output_dir=base/'ssebop', extent=extent, protocol=r,
             reconstruction=cfg['forcing']['reconstruction'], workers=workers, tcold_options=cfg['ssebop'])
     atomic_json(base/'selected-scenes.json', dict(scenes=selected))
     return [p for p in (base/'ssebop').rglob('*') if p.is_file()] + [base/'selected-scenes.json']
@@ -282,8 +301,73 @@ def retrieve(plan):
 def preprocess(plan):
     from pysweb.workflow_native import run_native
     cfg, base = plan['config_values'], Path(plan['base'])
-    run_native(cfg, ['preprocess'])
-    return [p for p in (base/'run_inputs').glob('*') if p.is_file()] + [base/'products/SSEBop_ET.nc', base/'chip-window.json']
+    preparation = copy.deepcopy(cfg)
+    if plan.get('derive_physical_reference'):
+        # The baseline uses native reference-grid complete-development support.
+        # Enable only that preprocessing grid; no calibration call or fit occurs.
+        preparation['calibration'] = dict(enabled=True,start=cfg['run']['analysis_start'],end=plan['development_end'])
+        preparation['model'].pop('reference_file')
+    run_native(preparation, ['preprocess'])
+    paths = [p for p in (base/'run_inputs').glob('*') if p.is_file()]
+    if plan.get('derive_physical_reference'):
+        paths += [p for p in (base/'calibration_inputs').glob('*') if p.is_file()]
+    return paths + [base/'products/SSEBop_ET.nc', base/'chip-window.json']
+
+
+def references(plan):
+    """Freeze missing references using the executed baseline native-grid recipe."""
+    from types import SimpleNamespace
+    import xarray as xr
+    import numpy as np
+    from pysweb.io.grids import spatial,open_template,centered_template,intersecting_cells
+    from pysweb.soil.openlandmap import process_soil_properties_from_openlandmap
+    from pysweb.swb.references import derive_reference
+    from pysweb.swb.formulation import load_reference
+    cfg,base = plan['config_values'],Path(plan['base'])
+    output = Path(cfg['model']['reference_file'])
+    if not plan.get('derive_physical_reference'):
+        load_reference(output)
+        atomic_json(base/'reference-validation.json',dict(passed=True,mode='reuse_fixed',path=str(output),sha256=sha256(output)))
+        return [base/'reference-validation.json']
+    reference = Path(cfg['soil']['reference_file'])
+    support = base/'calibration_inputs/development_support.nc'
+    with xr.open_dataset(support,decode_coords='all') as ds:
+        mask = spatial(ds.development_support).astype(bool).load()
+    with xr.open_dataset(reference,decode_coords='all') as ds:
+        gssm = spatial(ds.reference_ssm).sel(x=mask.x,y=mask.y).load()
+    predictors,inputs = {},[reference,support]
+    for key in ('clay','sand','soc'):
+        candidates = []
+        for path in (base/'inputs/soil_native').glob(key+'_*.nc'):
+            with xr.open_dataset(path,decode_coords='all') as ds:
+                candidates.append((ds[key].sizes['y']*ds[key].sizes['x'],path))
+        path = max(candidates)[1]
+        with xr.open_dataset(path,decode_coords='all') as ds:
+            predictors[key] = ds[key].load()
+        inputs.append(path)
+    xr.align(*predictors.values(),join='exact')
+    native = predictors['clay']
+    native_grid = SimpleNamespace(lat_dim='y',lon_dim='x',latitudes=native.y.values,longitudes=native.x.values)
+    hydraulics = process_soil_properties_from_openlandmap(
+        SimpleNamespace(dtype='float64',openlandmap_maximum_om_percent=8.),native_grid,
+        predictors,reproject_to_template=lambda da,*a,**k:da)
+    for key in hydraulics:
+        hydraulics[key] = hydraulics[key].rio.write_crs(native.rio.crs).rio.write_transform(native.rio.transform())
+    hydraulics['field_capacity'] = hydraulics['wilting_point']+hydraulics['available_water_capacity']
+    physical = derive_reference(gssm,mask,{k:spatial(v.isel(layer=0,drop=True)) for k,v in hydraulics.items()},
+        site=plan['site_key'],sources=[dict(path=str(p),sha256=sha256(p)) for p in inputs],
+        hydraulic_provenance=dict(method='Native Saxton–Rawls before area averaging',maximum_organic_matter_percent=8.,
+            soc_missing_g_per_kg=5.,source_module_sha256=sha256(Path(__import__('pysweb.soil.openlandmap',fromlist=['x']).__file__)),
+            predictor_crs=str(native.rio.crs),predictor_transform=list(native.rio.transform())[:6]))
+    fine = centered_template(open_template(cfg['forcing']['retrieval']['template_file']),cfg['run']['center'])
+    if np.any(mask.values & ~intersecting_cells(mask,fine.rio.bounds(),str(fine.rio.crs)).values):
+        raise ValueError('Physical reference includes cells outside the frozen site footprint')
+    atomic_json(output,physical)
+    load_reference(output)
+    atomic_json(base/'reference-validation.json',dict(passed=True,mode='derived_missing_with_baseline_recipe',
+        artifact_id=physical['artifact_id'],source_inputs=file_records(inputs),in_situ_used=False,
+        calibration_performed=False,sha256=sha256(output)))
+    return [output,base/'reference-validation.json']
 
 
 def simulate(plan):
@@ -352,11 +436,20 @@ def finalise(plan):
     copy_verified(plan['config'],destination/'provenance/config.toml')
     copy_verified(plan['config_values']['landsat']['manifest_file'],destination/'provenance/scenes.json')
     package_inputs(plan)
+    import xarray as xr
+    dictionary = {}
+    for name in ('SSEBop_ET.nc','SWEB_RZSM.nc'):
+        with xr.open_dataset(destination/'products'/name,decode_coords='all') as ds:
+            dictionary[name] = dict(dimensions=dict(ds.sizes),attributes={k:str(v) for k,v in ds.attrs.items()},
+                variables={key:dict(dimensions=list(v.dims),dtype=str(v.dtype),
+                    attributes={k:str(value) for k,value in v.attrs.items()},
+                    encoding={k:str(v.encoding[k]) for k in ('_FillValue','scale_factor','add_offset') if k in v.encoding})
+                    for key,v in ds.variables.items()})
+    atomic_json(destination/'provenance/data_dictionary.json',dictionary)
     atomic_json(destination/'provenance/input_dependencies.json',dict(
         external=file_records(external_inputs(plan)),work_directory=str(base),
         source_manifest=plan['config_values']['landsat']['manifest_file'],
         self_contained=False,retention='Scratch inputs remain external; public release not claimed'))
-    atomic_json(destination/'provenance/output_manifest.json',dict(passed=True,files=records))
     metadata_path = destination/'metadata.json'
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     metadata.update(status='numerically_validated_pending_visual_review',run_id=plan['run_id'],
@@ -364,6 +457,13 @@ def finalise(plan):
         actual_grid=json.loads((base/'product-validation.json').read_text())['grid'],
         observations=json.loads((base/'evaluation/observation_evaluation.json').read_text()),updated_at=now())
     atomic_json(metadata_path,metadata)
+    for folder in ('inputs','provenance'):
+        for path in (destination/folder).rglob('*'):
+            if path.is_file() and path.name != 'output_manifest.json':
+                records[str(path.relative_to(destination))] = dict(bytes=path.stat().st_size,sha256=sha256(path))
+    records['metadata.json'] = dict(bytes=metadata_path.stat().st_size,sha256=sha256(metadata_path))
+    atomic_json(destination/'provenance/output_manifest.json',dict(passed=True,files=records,
+        status='numerically_validated_pending_visual_review',scope='Products, evaluation, figures, inputs, provenance and site metadata; excludes this manifest and logs'))
     return [destination/'provenance/output_manifest.json']
 
 
@@ -449,7 +549,7 @@ def run_plan(plan, stages):
             clock = time.monotonic()
             try:
                 print(f'{stage}: starting attempt {attempt}',flush=True)
-                if plan.get('reuse_pilot') and stage in STAGES[:4]:
+                if plan.get('reuse_pilot') and stage in STAGES[:5]:
                     with offline():
                         paths = import_pilot(plan,stage)
                 elif stage == 'acquire':

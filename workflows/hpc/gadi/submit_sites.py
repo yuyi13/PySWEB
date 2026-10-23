@@ -69,7 +69,9 @@ export MPLBACKEND=Agg PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 export TMPDIR="$PBS_JOBFS" NUMBA_CACHE_DIR="$PBS_JOBFS/numba"
 SWEB_PYTHON={quote(execution['python'])}
 SWEB_PLAN={quote(str(plan_path))}
-export SWEB_RESOURCE_FILE={quote(execution['logs'])}/resources_${{PBS_JOBID}}.json
+SWEB_SITE_LOGS={quote(str(Path(plan['destination'])/'logs'))}
+mkdir -p "$SWEB_SITE_LOGS"
+export SWEB_RESOURCE_FILE="$SWEB_SITE_LOGS/resources_${{PBS_JOBID}}.json"
 "$SWEB_PYTHON" -S {quote(execution['resource_helper'])} "$SWEB_RESOURCE_FILE"
 "$SWEB_PYTHON" -c 'import json,os; r=json.load(open(os.environ["SWEB_RESOURCE_FILE"])); assert r["allocation_verified"] and r["safe_for_compute"]; assert r["local_resources"]["ncpus"] >= {resources['ncpus']}; assert r["local_resources"]["memory_bytes"] >= {resources['mem_gib']}*1024**3; assert set({json.dumps(mounts)}) <= set(r["storage"].split("+"))'
 SWEB_SOURCE={quote(execution['source_archive'])}
@@ -78,7 +80,7 @@ mkdir "$PBS_JOBFS/source"
 tar -xzf "$SWEB_SOURCE" -C "$PBS_JOBFS/source"
 export PYTHONPATH="$PBS_JOBFS/source"
 cd "$PBS_JOBFS/source"
-"$SWEB_PYTHON" workflows/run_site.py --plan "$SWEB_PLAN" --stages {stage} 2>&1 | tee {quote(execution['logs'])}/${{PBS_JOBID}}.stages.log
+"$SWEB_PYTHON" workflows/run_site.py --plan "$SWEB_PLAN" --stages {stage} 2>&1 | tee "$SWEB_SITE_LOGS/${{PBS_JOBID}}.stages.log"
 '''
 
 
@@ -133,6 +135,14 @@ def submit(execution, sites, execute=False):
             if active:
                 print('Already active:',record['site'],record['stage'],active[-1]['job_id'],flush=True)
                 continue
+            if record['stage']=='acquire' and prior:
+                previous=prior[-1]
+                state=previous.get('scheduler',{})
+                if (state.get('job_state')=='F' and state.get('Exit_status')==0
+                        and previous.get('config_sha256')==record['config_sha256']
+                        and previous.get('source_sha256')==record['source_sha256']):
+                    print('Reuse successful acquisition:',record['site'],previous['job_id'],flush=True)
+                    continue
             plan=json.loads((Path(execution['site_plans'])/(record['site']+'.json')).read_text())
             accepted=Path(plan['destination'])/'metadata.json'
             if accepted.exists() and json.loads(accepted.read_text()).get('status')=='accepted':
