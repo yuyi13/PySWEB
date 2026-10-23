@@ -101,7 +101,9 @@ def make_figures(plan):
     run = plan['config_values']['run']
     label = plan.get('label',run['name'])
     checks,statistics = [],[]
-    fig,axes = plt.subplots(4,1,figsize=(14,12),sharex=True)
+    storage_ops = [op for op in operators if op['units']=='mm']
+    rows = 5 if storage_ops else 4
+    fig,axes = plt.subplots(rows,1,figsize=(14,15 if storage_ops else 12),sharex=True)
     fig.subplots_adjust(left=.09,right=.98,bottom=.095,top=.88,hspace=.50)
     fig.text(.09,.975,label+' · uncalibrated',fontsize=TS,va='top')
     handles = [Line2D([],[],color=COLOURS[k],lw=2,label=v) for k,v in [('default','SWEB'),('forcing','SSEBop ET forcing')]]
@@ -117,7 +119,7 @@ def make_figures(plan):
         ax.set_ylabel('Soil moisture (m³ m⁻³)')
         ax.set_title(f'({chr(96+layer)}) Layer {layer} · '+['0–5 cm','5–15 cm','15–30 cm'][layer-1],loc='left',pad=10)
         time_axis(ax,run)
-    ax=axes[-1]
+    ax=axes[3]
     for col,key in [('actual_et_aligned','default'),('et_forcing_aligned','forcing')]:
         ax.plot(frame.index,frame[col].where(frame.paired_valid),color=COLOURS[key],lw=.65)
     for op in operators:
@@ -127,10 +129,21 @@ def make_figures(plan):
     ax.set_ylabel('ET (mm day⁻¹)')
     ax.set_title('(d) ET · forcing and realised flux',loc='left',pad=10)
     time_axis(ax,run)
-    ax.set_xlabel('Year · gold: initialisation; grey: evaluation')
+    if storage_ops:
+        ax=axes[4]
+        series=pd.read_csv(data/'additional_storage_series.csv',index_col=0,parse_dates=True,float_precision='round_trip').iloc[:,0]
+        ax.plot(series.index,series,color=COLOURS['default'],lw=.65)
+        for op in storage_ops:
+            selected=pairs.loc[pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')]
+            ax.scatter(selected.date,selected.observed,s=2,c='black',rasterized=True)
+        ax.set_ylabel('Profile storage (mm)')
+        ax.set_title('(e) Cheverelis · 0–90 cm storage · UTC',loc='left',pad=10)
+        time_axis(ax,run)
+    axes[-1].set_xlabel('Year · gold: initialisation; grey: evaluation')
     basis = 'UTC' if plan['observation_operator']['source']=='ISMN' else f"Local standard time (UTC+{plan['observation_operator']['utc_offset_hours']:g})"
     note='Centre diagnostics only; station outside accepted support.' if point['diagnostic_only'] else 'Fixed station pixel; depth and temporal approximations are recorded in evaluation.'
-    fig.text(.09,.027,basis+' daily means/totals. '+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS)
+    basis_note=basis+' daily means/totals.'+(' Cheverelis storage uses UTC.' if storage_ops else '')
+    fig.text(.09,.027,basis_note+' '+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS)
     save_figure(fig,out,'daily',checks)
     supported = [op for op in operators if (pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')).any()]
     for page,begin in enumerate(range(0,len(supported),2),1):
@@ -158,11 +171,11 @@ def make_figures(plan):
                 ax.text(.03,.97,'\n'.join(notes),transform=ax.transAxes,va='top',fontsize=FS,
                         bbox=dict(facecolor='white',edgecolor='none',alpha=.9))
                 ax.set_xlim(limits);ax.set_ylim(limits);ax.set_aspect('equal',adjustable='box')
-                unit='mm day⁻¹' if op['interval_mm'] is None else 'm³ m⁻³'
+                unit='mm day⁻¹' if op['interval_mm'] is None else ('mm' if op['units']=='mm' else 'm³ m⁻³')
                 ax.set_xlabel(f'Observed ({unit})');ax.set_ylabel(f'Model ({unit})')
-                interval='ET' if op['interval_mm'] is None else f"SM {op['interval_mm'][0]/10:g}–{op['interval_mm'][1]/10:g} cm"
+                interval='ET' if op['interval_mm'] is None else f"{'Storage' if op['units']=='mm' else 'SM'} {op['interval_mm'][0]/10:g}–{op['interval_mm'][1]/10:g} cm"
                 ax.set_title(f'{op["operator_id"]} · {interval}\n{phase.capitalize()}',fontsize=FS,pad=8)
-        fig.text(.09,.025,'Primary QC · each sensor/deployment has its own exact pairs. Strict-QC metrics and pairs are retained in evaluation.\nOrange: realised SWEB ET / soil moisture; blue: ET forcing. Unknown correlation is shown as NA.',fontsize=FS)
+        fig.text(.09,.025,'Primary QC · each sensor/deployment has its own exact pairs. Strict-QC metrics and pairs are retained in evaluation.\nOrange: SWEB; blue: ET forcing. Unknown correlation is shown as NA.',fontsize=FS)
         save_figure(fig,out,f'scatter_{page:02d}',checks)
     maps=dict(np.load(data/f'maps_{plan.get("map_year",2025)}.npz'))
     meta=json.loads((data/'map_metadata.json').read_text())

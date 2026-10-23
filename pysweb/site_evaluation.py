@@ -174,6 +174,34 @@ def evaluate_site(plan):
         observation_location=definition['location'],temporal_operator=definition,
         spatial_limitation='Fixed native pixel differs from tower or sensor footprint'))
     groups,excluded = observation_groups(raw,definition['source'])
+    additional = definition.get('additional_storage')
+    if additional:
+        # This explicit operator is local to its documented station and profile.
+        contract_path = Path(additional['contract'])
+        assert sha256(contract_path) == additional['contract_sha256']
+        contract = json.loads(contract_path.read_text())
+        assert contract['passed'] and contract['profile']['time_basis'] == 'UTC'
+        assert sha256(additional['observations']) == contract['output_sha256']
+        assert sha256(Path(contract['collection'])/'dataset_manifest.json') == contract['dataset_manifest_sha256']
+        for path,checksum in contract['inputs'].items():
+            assert sha256(path) == checksum
+        profile = contract['profile']
+        storage_frame,storage_operator = extract_point(product,longitude=profile['longitude'],
+            latitude=profile['latitude'],depth_interval_mm=profile['depth_interval_mm'],
+            admitted_mask=mask,scenario='default')
+        storage_model = storage_frame.storage_dailymean_mm.where(storage_frame.continuous_trajectory_valid)
+        storage_model.to_csv(destination/'additional_storage_series.csv',index_label='date',float_format='%.17g')
+        observed = pd.read_csv(additional['observations'],index_col=0,parse_dates=True,float_precision='round_trip')
+        values = observed[['cheverelis_storage0_90cm_clean','cheverelis_storage0_90cm_strict']].rename(
+            columns={'cheverelis_storage0_90cm_clean':'value_clean','cheverelis_storage0_90cm_strict':'value_strict'})
+        values.index.name = 'date'
+        groups.append(dict(variable=profile['site']+' profile storage',values=values.reset_index(),
+            interval_mm=profile['depth_interval_mm'],operator=profile['operator'],units='mm',layer=None,
+            location=[profile['longitude'],profile['latitude']],time_basis='UTC',
+            limitation=profile['primary_limitation'],model_series=storage_model))
+        atomic_json(destination/'additional_storage_operator.json',dict(profile=profile,model=storage_operator,
+            contract=str(contract_path),contract_sha256=additional['contract_sha256'],
+            observation_sha256=contract['output_sha256'],in_situ_used_for_calibration=False))
     if unavailable:
         excluded.append(dict(variable='all',reason=unavailable,n=0))
     rows,samples,operators,coverage = [],[],[],[]
@@ -183,15 +211,18 @@ def evaluate_site(plan):
         values = values.set_index('date').sort_index()
         if not values.index.is_unique:
             raise ValueError(f'Duplicate observation dates: {group["variable"]}')
-        spec = {k:v for k,v in group.items() if k!='values'}
+        spec = {k:v for k,v in group.items() if k not in ('values','model_series')}
         spec['operator_id'] = f'operator_{number:03d}'
         operators.append(spec)
         interval = group['interval_mm']
         weights = depth_weights(BOTTOMS,interval) if interval else None
         for qc in ('clean','strict'):
             pairs = values[[f'value_{qc}']].rename(columns={f'value_{qc}':'observed'})
-            model = frame.actual_et_aligned if interval is None else frame[[f'aligned_layer_{i}' for i in range(1,6)]] @ (weights/weights.sum())
-            pairs['default'] = model.where(frame.paired_valid & (not unavailable))
+            if 'model_series' in group:
+                pairs['default'] = group['model_series']
+            else:
+                model = frame.actual_et_aligned if interval is None else frame[[f'aligned_layer_{i}' for i in range(1,6)]] @ (weights/weights.sum())
+                pairs['default'] = model.where(frame.paired_valid & (not unavailable))
             if interval is None:
                 pairs['SSEBop_ET_forcing'] = frame.et_forcing_aligned.where(frame.paired_valid & (not unavailable))
             for phase,(start,end) in phases.items():
