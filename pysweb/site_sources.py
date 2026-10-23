@@ -10,7 +10,7 @@ Usage: Called by the acquire stage of workflows/run_site.py.
 Dependencies: pysweb, earthengine-api, pandas, rasterio; writable temporary directory.
 """
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import os
 import tempfile
@@ -24,7 +24,8 @@ def ensure_catalogue(plan):
     path = Path(cfg['landsat']['manifest_file'])
     query = dict(centre=cfg['run']['center'], wrs=cfg['landsat']['wrs'],
                  sensors=cfg['run']['sensors'], start=plan.get('catalogue_start', '2013-03-18'),
-                 end_exclusive='2026-01-01', processing_level='L2SP')
+                 end_exclusive=(datetime.fromisoformat(cfg['run']['end'])+timedelta(days=1)).date().isoformat(),
+                 processing_level='L2SP')
     if path.exists():
         catalogue = json.loads(path.read_text())
         if catalogue.get('query') != query:
@@ -64,7 +65,7 @@ def ensure_catalogue(plan):
         atomic_json(path, catalogue)
     scenes = catalogue['scenes']
     if not scenes or any(not any(row['date'].startswith(str(year)) for row in scenes)
-                         for year in range(2014, 2026)):
+                         for year in range(int(cfg['run']['start'][:4]), int(cfg['run']['end'][:4])+1)):
         raise ValueError('Scene catalogue does not cover every simulation year')
     cfg['forcing']['retrieval']['template_file'] = scenes[0]['file']
     return path

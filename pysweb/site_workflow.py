@@ -458,6 +458,9 @@ def finalise(plan):
         copy_verified(source,destination/'provenance'/source.name)
     copy_verified(plan['config'],destination/'provenance/config.toml')
     copy_verified(plan['config_values']['landsat']['manifest_file'],destination/'provenance/scenes.json')
+    atomic_json(destination/'provenance/site_plan.json',
+                {key:value for key,value in plan.items() if key not in ('config_values','base')})
+    atomic_json(destination/'provenance/resolved_config.json',plan['config_values'])
     package_inputs(plan)
     import xarray as xr
     dictionary = {}

@@ -178,7 +178,7 @@ def make_figures(plan):
         ax.set_title('(e) Cheverelis · 0–90 cm storage · UTC',loc='left',pad=10)
         time_axis(ax,run)
     axes[-1].set_xlabel('Year · gold: initialisation; grey: evaluation')
-    basis = 'UTC' if plan['observation_operator']['source']=='ISMN' else f"Local standard time (UTC+{plan['observation_operator']['utc_offset_hours']:g})"
+    basis = 'UTC' if plan['observation_operator']['source']=='ISMN' else f"Local standard time (UTC{plan['observation_operator']['utc_offset_hours']:+g})"
     note='Centre diagnostics only; station outside accepted support.' if point['diagnostic_only'] else 'Fixed station pixel; depth and temporal approximations are recorded in evaluation.'
     basis_note=basis+' daily means/totals.'+(' Cheverelis storage uses UTC.' if storage_ops else '')
     fig.text(.09,.027,basis_note+'\n'+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS,gid='sweb-footer')
