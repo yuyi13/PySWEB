@@ -123,13 +123,22 @@ def make_figures(plan):
     handles = [Line2D([],[],color=COLOURS[k],lw=2,label=v) for k,v in [('default','SWEB'),('forcing','SSEBop ET forcing')]]
     handles.append(Line2D([],[],color='black',ls='none',marker='o',ms=5,label='Matched primary-QC observations'))
     fig.legend(handles=handles,ncol=3,loc='upper left',bbox_to_anchor=(.085,.945),frameon=False)
+    # A point observation can exceed the model pixel's porosity. Preserve every
+    # matched sample in the daily view and keep one scale across the three layers.
+    soil_operators = [op['operator_id'] for op in operators if op['layer'] in (1,2,3)]
+    soil_observed = pairs.loc[pairs.operator_id.isin(soil_operators)&pairs.qc.eq('clean'),'observed'].to_numpy(dtype=float)
+    soil_observed = soil_observed[np.isfinite(soil_observed)]
+    soil_limits = [0.,max(hydraulic['porosity'][:3])+.02]
+    if soil_observed.size:
+        soil_limits = [min(0.,float(soil_observed.min())-.02) if soil_observed.min()<0 else 0.,
+                       max(soil_limits[1],float(soil_observed.max())+.02)]
     for layer,ax in enumerate(axes[:3],1):
         ax.plot(frame.index,frame[f'aligned_layer_{layer}'].where(frame.paired_valid),color=COLOURS['default'],lw=.65)
         for op in operators:
             if op['layer']==layer:
                 selected = pairs.loc[pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')]
                 ax.scatter(selected.date,selected.observed,s=2,c='black',rasterized=True)
-        ax.set_ylim(0,max(hydraulic['porosity'][:3])+.02)
+        ax.set_ylim(*soil_limits)
         ax.set_ylabel('Soil moisture (m³ m⁻³)')
         ax.set_title(f'({chr(96+layer)}) Layer {layer} · '+['0–5 cm','5–15 cm','15–30 cm'][layer-1],loc='left',pad=10)
         time_axis(ax,run)
@@ -253,6 +262,8 @@ def make_figures(plan):
     save_figure(fig,out,'heatmap',checks)
     atomic_json(out/'figure_contract.json',dict(font=font,ordinary_font_pt=FS,title_font_pt=TS,dpi=DPI,colours=COLOURS,
         pages=checks,missing='NaNs preserved; unavailable observation panels omitted with evaluation coverage records',
-        point_operator=point,visual_review='pending; automatic rendering is not visual acceptance'))
+        point_operator=point,daily_soil_limits=soil_limits,
+        daily_soil_observation_count=int(soil_observed.size),
+        visual_review='pending; automatic rendering is not visual acceptance'))
     atomic_json(out/'scatter_statistics.json',statistics)
     atomic_json(out/'figure_validation.json',dict(passed=True,pages=len(checks),heatmap_exact_data=True,visual_review_passed=False))
