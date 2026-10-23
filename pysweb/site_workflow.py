@@ -117,8 +117,11 @@ def science_identity(plan):
     catalogue = json.loads(Path(plan['config_values']['landsat']['manifest_file']).read_text())
     scenes = [{k:v for k,v in row.items() if k not in ('file', 'gap_mask_file')}
               for row in catalogue['scenes']]
-    return dict(config=cfg, scenes=scenes, scientific_baseline=plan['scientific_baseline'],
+    result = dict(config=cfg, scenes=scenes, scientific_baseline=plan['scientific_baseline'],
                 reference_policy='derive_missing_with_baseline_recipe' if plan.get('derive_physical_reference') else 'reuse_fixed')
+    if 'reference_coverage_policy' in plan:
+        result['reference_coverage_policy'] = plan['reference_coverage_policy']
+    return result
 
 
 def source_identity():
@@ -326,6 +329,8 @@ def references(plan):
     cfg,base = plan['config_values'],Path(plan['base'])
     output = Path(cfg['model']['reference_file'])
     if not plan.get('derive_physical_reference'):
+        if plan.get('reference_coverage_policy') is not None:
+            raise ValueError('A changed reference coverage policy requires deriving a new artifact')
         load_reference(output)
         atomic_json(base/'reference-validation.json',dict(passed=True,mode='reuse_fixed',path=str(output),sha256=sha256(output)))
         return [base/'reference-validation.json']
@@ -358,7 +363,8 @@ def references(plan):
         site=plan['site_key'],sources=[dict(path=str(p),sha256=sha256(p)) for p in inputs],
         hydraulic_provenance=dict(method='Native Saxton–Rawls before area averaging',maximum_organic_matter_percent=8.,
             soc_missing_g_per_kg=5.,source_module_sha256=sha256(Path(__import__('pysweb.soil.openlandmap',fromlist=['x']).__file__)),
-            predictor_crs=str(native.rio.crs),predictor_transform=list(native.rio.transform())[:6]))
+            predictor_crs=str(native.rio.crs),predictor_transform=list(native.rio.transform())[:6]),
+        coverage_policy=plan.get('reference_coverage_policy'))
     fine = centered_template(open_template(cfg['forcing']['retrieval']['template_file']),cfg['run']['center'])
     if np.any(mask.values & ~intersecting_cells(mask,fine.rio.bounds(),str(fine.rio.crs)).values):
         raise ValueError('Physical reference includes cells outside the frozen site footprint')

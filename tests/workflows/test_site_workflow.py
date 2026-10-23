@@ -93,6 +93,14 @@ def test_relocation_does_not_change_science(tmp_path):
     assert science_identity(a)!=science_identity(b)
 
 
+def test_reference_selection_policy_changes_science_identity(tmp_path):
+    manifest=tmp_path/'scenes.json';manifest.write_text(json.dumps({'scenes':[]}))
+    c=config(tmp_path);c['landsat']['manifest_file']=str(manifest)
+    a=dict(config_values=c,scientific_baseline='baseline',derive_physical_reference=True)
+    b={**a,'reference_coverage_policy':dict(minimum_valid_fraction=.99,minimum_area_fraction=.5)}
+    assert science_identity(a)!=science_identity(b)
+
+
 def test_resume_after_failure_and_corruption(tmp_path,monkeypatch):
     import pysweb.site_workflow as w
     c=config(tmp_path)

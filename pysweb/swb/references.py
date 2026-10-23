@@ -3,7 +3,7 @@ Script: references.py
 Objective: Freeze native-cell GSSM quantiles against area means of native hydraulic fields on identical support.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-18
+Last updated: 2026-10-23
 Inputs: Geographic GSSM, frozen complete-cell mask and native layer-1 soil hydraulic rasters.
 Outputs: Versioned reference artifact with per-cell statistics and exact spherical area integration.
 Usage: from pysweb.swb.references import derive_reference
@@ -13,7 +13,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from pysweb.io.grids import spatial
-from pysweb.swb.formulation import FORMULATION_VERSION, REFERENCE_VERSION, canonical_id
+from pysweb.swb.formulation import (
+    FORMULATION_VERSION, REFERENCE_VERSION, AVAILABLE_REFERENCE_VERSION, canonical_id)
 
 
 def _rectangles(template):
@@ -30,12 +31,15 @@ def _area(left, bottom, right, top):
         np.sin(np.deg2rad(top))-np.sin(np.deg2rad(bottom)), 0.)
 
 
-def derive_reference(gssm, mask, hydraulics, *, site, sources, hydraulic_provenance):
+def derive_reference(gssm, mask, hydraulics, *, site, sources, hydraulic_provenance,
+                     coverage_policy=None):
     """Temporal linear p01/p99 in each cell, then spatial area means.
 
     Hydraulic raster values must already have been derived on the native soil
     grid, before any aggregation. Intersections integrate partial native soil
     pixels analytically on a sphere over the union of complete GSSM cells.
+    An explicit coverage policy can exclude deficient cells, subject to a
+    minimum retained spherical area. The default preserves strict support.
     """
     gssm = spatial(gssm).transpose("time", "y", "x")
     mask = spatial(mask).astype(bool)
@@ -53,8 +57,44 @@ def derive_reference(gssm, mask, hydraulics, *, site, sources, hydraulic_provena
     if invalid.any():
         raise ValueError("Out-of-range GSSM values on frozen reference support")
     counts = np.isfinite(values).sum(axis=0)
-    if not len(counts) or np.any(counts < .99*len(expected)):
-        raise ValueError("Every frozen GSSM cell requires at least 99% climatology coverage")
+    selection = None
+    if coverage_policy is None:
+        if not len(counts) or np.any(counts < .99*len(expected)):
+            raise ValueError("Every frozen GSSM cell requires at least 99% climatology coverage")
+    else:
+        required = {"minimum_valid_fraction", "minimum_area_fraction"}
+        if not isinstance(coverage_policy, dict) or set(coverage_policy) != required:
+            raise ValueError("Coverage policy requires minimum_valid_fraction and minimum_area_fraction")
+        temporal, spatial_fraction = (coverage_policy[k] for k in
+                                      ("minimum_valid_fraction", "minimum_area_fraction"))
+        if any(isinstance(v, (bool, str)) or not np.isscalar(v) for v in (temporal, spatial_fraction)):
+            raise ValueError("Coverage fractions must be finite numbers")
+        if not (np.isfinite(temporal) and 0 < temporal <= 1 and
+                np.isfinite(spatial_fraction) and 0 <= spatial_fraction <= 1):
+            raise ValueError("Invalid temporal or spatial coverage fraction")
+        original_areas = _area(*_rectangles(mask))[mask.values]
+        keep = counts >= temporal * len(expected)
+        if not len(counts) or not keep.any():
+            raise ValueError("No GSSM cells meet the temporal coverage requirement")
+        retained_fraction = float(original_areas[keep].sum()/original_areas.sum())
+        if retained_fraction + 1e-12 < spatial_fraction:
+            raise ValueError(f"Retained GSSM area fraction {retained_fraction:.8f} is below "
+                             f"minimum {spatial_fraction:.8f}")
+        candidates = []
+        for i, (row, col) in enumerate(zip(*np.where(mask.values))):
+            candidates.append(dict(longitude=float(mask.x[col]), latitude=float(mask.y[row]),
+                area_m2=float(original_areas[i]), valid_days=int(counts[i]), retained=bool(keep[i]),
+                reason="retained" if keep[i] else "insufficient_temporal_coverage"))
+        selection = dict(policy_version="available-native-cells-v1",
+            minimum_valid_fraction=float(temporal), minimum_area_fraction=float(spatial_fraction),
+            candidate_cells=candidates, candidate_cell_count=len(counts),
+            retained_cell_count=int(keep.sum()), candidate_area_m2=float(original_areas.sum()),
+            retained_area_m2=float(original_areas[keep].sum()), retained_area_fraction=retained_fraction,
+            missing_values_filled=False, selection_basis="GSSM availability only; no in-situ or fit objective")
+        selected_mask = mask.values.copy()
+        selected_mask[mask.values] = keep
+        mask = mask.copy(data=selected_mask)
+        values, counts = values[:, keep], counts[keep]
     quantiles = np.nanquantile(values, [.01, .99], axis=0, method="linear")
     bounds = _rectangles(mask)
     areas = _area(*bounds)[mask.values]
@@ -106,6 +146,13 @@ def derive_reference(gssm, mask, hydraulics, *, site, sources, hydraulic_provena
             provenance=hydraulic_provenance, operation="hydraulics on native predictors before any averaging"),
         shallow_layers_mm=[50., 150.], wet_role="diagnostic only; physical saturation capacity unchanged",
         sources=sources)
+    if selection is not None:
+        record["schema_version"] = AVAILABLE_REFERENCE_VERSION
+        record["support_selection"] = selection
+        record["climatology"]["qc"] = (
+            f"finite volumetric values in [0,1]; no filling; "
+            f">={100*selection['minimum_valid_fraction']:g}% days per retained cell; "
+            f">={100*selection['minimum_area_fraction']:g}% candidate area retained")
     record["artifact_id"] = canonical_id(record)
     return record
 

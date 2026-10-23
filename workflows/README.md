@@ -44,4 +44,15 @@ Refactoring does not change retrieval thresholds, hydraulics, meteorology, recon
 
 Missing physical references can be derived with `derive_physical_reference=true` using the baseline recipe: complete-development native GSSM support and native hydraulic predictors, temporal 2011–2020 p01/p99 per cell followed by area means. The preprocessing-only reference grid is generated without calibration or parameter fitting. Existing reference artifacts remain fixed. Derived artifacts are frozen before simulation and retained with source hashes.
 
+An explicit `reference_coverage_policy` in the site JSON can relax the all-cells requirement for a new, versioned reference derivation:
+
+```json
+"reference_coverage_policy": {
+  "minimum_valid_fraction": 0.99,
+  "minimum_area_fraction": 0.50
+}
+```
+
+This example retains cells with at least 99% valid days over the unchanged 2011–2020 calendar (3,653 days), excludes deficient cells without filling them, and requires at least 50% of the original candidate spherical area to remain. GSSM quantiles and native hydraulic means use exactly the same retained footprint. Empty support always fails. The `gssm-native-p01-p99-support-v2` artifact records every candidate cell, valid-day count, exclusion and retained-area fraction. Existing strict v1 artifacts remain readable, and omitting the policy preserves the previous strict derivation byte for byte. This is an explicit scientific support-selection change, not calibration or a solver change. Freeze a new artifact and preserve the original run records; policy changes invalidate affected workflow receipts. It does not establish that the retained subset represents excluded land.
+
 Yanco can explicitly include its documented Cheverelis storage comparison through `observation_operator.additional_storage`, supplying the accepted `contract`, `contract_sha256` and processed `observations` CSV. The contract and its native observation inputs are checksum-verified. The 0–90 cm profile is evaluated at the separate Cheverelis pixel in UTC, with primary/strict QC and exact pairs; it is not inherited by other sites.
