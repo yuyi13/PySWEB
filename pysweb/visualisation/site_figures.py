@@ -143,12 +143,12 @@ def make_figures(plan):
     basis = 'UTC' if plan['observation_operator']['source']=='ISMN' else f"Local standard time (UTC+{plan['observation_operator']['utc_offset_hours']:g})"
     note='Centre diagnostics only; station outside accepted support.' if point['diagnostic_only'] else 'Fixed station pixel; depth and temporal approximations are recorded in evaluation.'
     basis_note=basis+' daily means/totals.'+(' Cheverelis storage uses UTC.' if storage_ops else '')
-    fig.text(.09,.027,basis_note+' '+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS)
+    fig.text(.09,.027,basis_note+'\n'+note+'\nOnly supported matched observations are overlaid; gaps remain missing.',fontsize=FS)
     save_figure(fig,out,'daily',checks)
     supported = [op for op in operators if (pairs.operator_id.eq(op['operator_id'])&pairs.qc.eq('clean')).any()]
     for page,begin in enumerate(range(0,len(supported),2),1):
         selected_ops=supported[begin:begin+2]
-        fig,axes=plt.subplots(len(selected_ops),2,figsize=(12,4.8*len(selected_ops)+1.4),squeeze=False)
+        fig,axes=plt.subplots(len(selected_ops),2,figsize=(12,6 if len(selected_ops)==1 else 11),squeeze=False)
         fig.subplots_adjust(left=.09,right=.97,bottom=.12,top=.85,wspace=.34,hspace=.48)
         fig.text(.09,.96,label+' · matched observations',fontsize=TS,va='top')
         for row,op in enumerate(selected_ops):
