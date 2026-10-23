@@ -95,6 +95,9 @@ def load_plan(path):
             value = Path(plan[key]).expanduser()
             plan[key] = str(value if value.is_absolute() else (path.parent/value).resolve())
     cfg = load_config(plan['config'])
+    if plan.get('acquire_missing_sources') and Path(cfg['landsat']['manifest_file']).exists():
+        catalogue = json.loads(Path(cfg['landsat']['manifest_file']).read_text())
+        cfg['forcing']['retrieval']['template_file'] = catalogue['scenes'][0]['file']
     plan['config_values'] = cfg
     plan['base'] = str(Path(cfg['run']['root'])/cfg['run']['name'])
     if Path(plan['base']).resolve() == Path(plan['destination']).resolve():
@@ -114,7 +117,10 @@ def science_identity(plan):
     for section in ('soil', 'model'):
         cfg[section].pop('reference_file', None)
     cfg['landsat'].pop('manifest_file', None)
-    catalogue = json.loads(Path(plan['config_values']['landsat']['manifest_file']).read_text())
+    manifest = Path(plan['config_values']['landsat']['manifest_file'])
+    catalogue = json.loads(manifest.read_text()) if manifest.exists() else {'scenes': []}
+    if not manifest.exists() and not plan.get('acquire_missing_sources'):
+        raise FileNotFoundError(manifest)
     scenes = [{k:v for k,v in row.items() if k not in ('file', 'gap_mask_file')}
               for row in catalogue['scenes']]
     result = dict(config=cfg, scenes=scenes, scientific_baseline=plan['scientific_baseline'],
@@ -228,6 +234,12 @@ def acquire(plan):
     import pandas as pd
     cfg, base = plan['config_values'], Path(plan['base'])
     r = cfg['forcing']['retrieval']
+    acquired = []
+    if plan.get('acquire_missing_sources'):
+        catalogue = acquire_landsat_manifest(cfg['landsat']['manifest_file'], r['acquisition_extent'],
+                                            gee_project=cfg['run']['gee_project'])
+        from pysweb.site_sources import prepare_auxiliary_sources
+        acquired = prepare_auxiliary_sources(plan)
     inputs = external_inputs(plan)
     missing = [str(p) for p in inputs if not p.is_file()]
     for variable in ('clay', 'sand', 'soc'):
@@ -235,8 +247,9 @@ def acquire(plan):
             missing.append(variable+' retained soil predictors')
     if missing:
         raise FileNotFoundError(str(missing))
-    catalogue = acquire_landsat_manifest(cfg['landsat']['manifest_file'], r['acquisition_extent'],
-                                        gee_project=cfg['run']['gee_project'])
+    if not plan.get('acquire_missing_sources'):
+        catalogue = acquire_landsat_manifest(cfg['landsat']['manifest_file'], r['acquisition_extent'],
+                                            gee_project=cfg['run']['gee_project'])
     cover = acquire_worldcover_tiled(r['landcover_file'],
         worldcover_extent(catalogue['files'], r['acquisition_extent']), gee_project=cfg['run']['gee_project'])
     soil = base/'inputs/soil_native'
@@ -268,7 +281,8 @@ def acquire(plan):
     record = dict(passed=True, retained_inputs=file_records(inputs), worldcover=cover,
                   scene_count=len(catalogue['files']), comparison_extent_verified=True)
     atomic_json(base/'acquisition_inputs.json', record)
-    return [base/'acquisition_inputs.json', *map(Path, catalogue['files']), Path(r['landcover_file']), *soil.glob('*.nc')]
+    return [base/'acquisition_inputs.json', *map(Path, catalogue['files']), Path(r['landcover_file']),
+            *soil.glob('*.nc'), *acquired]
 
 
 def retrieve(plan):
@@ -520,14 +534,19 @@ def run_plan(plan, stages):
     cfg, base = plan['config_values'], Path(plan['base'])
     if cfg['calibration']['enabled'] or cfg.get('spinup',{}).get('enabled',True):
         raise ValueError('Site workflow requires an uncalibrated actual-prefix trajectory')
-    science = fingerprint(science_identity(plan))
     software = source_identity()
     with site_lock(base), site_lock(plan['destination']):
+        if plan.get('acquire_missing_sources') and 'acquire' in stages:
+            from pysweb.site_sources import ensure_catalogue
+            ensure_catalogue(plan)
+        science = fingerprint(science_identity(plan))
         receipts = base/'receipts'
         receipts.mkdir(exist_ok=True)
         identity = dict(science=science,software=software)
         # Hash external dependencies in allocated execution; no existence-only reuse.
-        external = file_records(external_inputs(plan))
+        # Fresh inputs are outputs of acquisition and verified through that
+        # receipt. Pre-existing inputs retain the original external contract.
+        external = {} if plan.get('acquire_missing_sources') else file_records(external_inputs(plan))
         checked = {}
         def prerequisite(name):
             # An isolated downstream invocation must reject stale ancestors too.

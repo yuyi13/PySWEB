@@ -62,6 +62,39 @@ def test_linear_day_integral_and_gap():
     np.testing.assert_array_equal(align_day(f,0).actual_et_aligned,f.actual_et)
 
 
+@pytest.mark.parametrize('offset', [-8, -7, -6, -5, -3.5, 0, 1, 2, 9.5, 10])
+def test_station_day_matches_independent_subdaily_integral(offset):
+    dates = pd.date_range('2020-12-29', periods=6)
+    starts = np.array([.1, .3, .2, .5, .4, .6, .2])
+    flux = np.array([1., 7., 2., 8., 3., 9.])
+    frame = pd.DataFrame(dict(continuous_trajectory_valid=True,
+                             actual_et=flux, et_forcing=2*flux), index=dates)
+    for layer in range(1, 6):
+        frame[f'start_layer_{layer}'] = starts[:-1]
+        frame[f'dailymean_layer_{layer}'] = (starts[:-1]+starts[1:])/2
+    result = align_day(frame, offset)
+    # Exact midpoint quadrature for each linear segment, independently
+    # constructing the station-day interval on a half-hour UTC grid.
+    for day in range(1, 5):
+        points = day-offset/24+(np.arange(48)+.5)/48
+        indices = np.floor(points).astype(int)
+        weights = points-indices
+        sm = starts[indices]*(1-weights)+starts[indices+1]*weights
+        np.testing.assert_allclose(result.aligned_layer_1.iloc[day], sm.mean(), atol=1e-14)
+        np.testing.assert_allclose(result.actual_et_aligned.iloc[day], flux[indices].mean(), atol=1e-14)
+    if offset < 0:
+        assert not result.paired_valid.iloc[-1]
+        assert np.isnan(result.actual_et_aligned.iloc[-1])
+        frame.loc[dates[3], 'continuous_trajectory_valid'] = False
+        assert not align_day(frame, offset).paired_valid.iloc[2]
+
+
+@pytest.mark.parametrize('offset', [-24, 24, np.nan, np.inf])
+def test_invalid_station_offset(offset):
+    with pytest.raises(ValueError, match='offset'):
+        align_day(pd.DataFrame(), offset)
+
+
 def test_unknown_depth_and_footprint_excluded():
     raw=pd.DataFrame(dict(variable=['soil_moisture']*2,sensor_id=['cosmos','point'],
         depth_from_cm=[0,10],depth_to_cm=[100,10],support=['sensor_footprint_requires_review','nominal_point'],layer=['footprint_review','5-15cm']))
@@ -163,6 +196,53 @@ def test_isolated_stage_rejects_stale_ancestor(tmp_path,monkeypatch):
     with pytest.raises(ValueError,match='Prerequisite inputs changed: acquire'):run_plan(p,['preprocess'])
     run_plan(p,['acquire','retrieve','preprocess'])
     assert json.loads((Path(p['base'])/'receipts/preprocess.json').read_text())['passed']
+
+
+def test_new_site_acquisition_restart_and_offline_identity(tmp_path, monkeypatch):
+    import pysweb.site_workflow as workflow
+    import pysweb.site_sources as sources
+    c = config(tmp_path)
+    p = dict(config_values=c, base=str(tmp_path/'work'), destination=str(tmp_path/'dataset'),
+             implementation_commit='fixture', acquire_missing_sources=True)
+    native = tmp_path/'native.nc'
+    monkeypatch.setattr(sources, 'ensure_catalogue', lambda _: None)
+    monkeypatch.setattr(workflow, 'science_identity', lambda _: {'science': 'fixed'})
+    monkeypatch.setattr(workflow, 'source_identity', lambda: 'fixed')
+    monkeypatch.setattr(workflow, 'external_inputs', lambda _: [native])
+    calls = []
+    def acquire(plan):
+        calls.append('acquire')
+        native.write_text('source')
+        return [native]
+    def retrieve(plan):
+        out = Path(plan['base'])/'forcing'; out.write_text('forcing')
+        return [out]
+    monkeypatch.setattr(workflow, 'acquire', acquire)
+    monkeypatch.setattr(workflow, 'retrieve', retrieve)
+    workflow.run_plan(p, ['acquire'])
+    workflow.run_plan(p, ['acquire', 'retrieve'])
+    assert calls == ['acquire']
+    native.write_text('corrupt')
+    with pytest.raises(ValueError, match='Prerequisite outputs changed: acquire'):
+        workflow.run_plan(p, ['retrieve'])
+    workflow.run_plan(p, ['acquire', 'retrieve'])
+    assert calls == ['acquire', 'acquire']
+
+
+def test_source_substep_reuses_only_valid_payload(tmp_path):
+    from pysweb.site_sources import cached_step
+    plan = dict(base=str(tmp_path))
+    output = tmp_path/'met.nc'
+    calls = []
+    def operation():
+        calls.append(1); output.write_text('accepted'); return [output]
+    cached_step(plan, 'met', {'extent': [1, 2, 3, 4]}, operation)
+    cached_step(plan, 'met', {'extent': [1, 2, 3, 4]}, operation)
+    assert len(calls) == 1
+    output.write_text('corrupt')
+    cached_step(plan, 'met', {'extent': [1, 2, 3, 4]}, operation)
+    cached_step(plan, 'met', {'extent': [2, 2, 3, 4]}, operation)
+    assert len(calls) == 3
 
 
 def test_figure_bounds_check_only_drawn_ticks(tmp_path):

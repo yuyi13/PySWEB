@@ -24,18 +24,29 @@ BOTTOMS = np.array([50.,150.,300.,600.,1000.])
 def align_day(frame, offset_hours):
     """Integrate piecewise linear states and uniform UTC fluxes to station days."""
     a = float(offset_hours)/24
-    if not 0 <= a < 1:
-        raise ValueError('This operator supports UTC and positive standard-time offsets')
+    if not np.isfinite(a) or not -1 < a < 1:
+        raise ValueError('Standard-time offset must be finite and between -24 and 24 hours')
     frame = frame.copy()
     good = frame.continuous_trajectory_valid.eq(True)
-    frame['paired_valid'] = good & good.shift(1,fill_value=False) if a else good
+    neighbour = 1 if a > 0 else -1
+    frame['paired_valid'] = good & good.shift(neighbour,fill_value=False) if a else good
     for name in ('actual_et','et_forcing'):
-        frame[name+'_aligned'] = a*frame[name].shift(1)+(1-a)*frame[name] if a else frame[name]
+        frame[name+'_aligned'] = (abs(a)*frame[name].shift(neighbour)+(1-abs(a))*frame[name]
+                                  if a else frame[name])
     for layer in range(1,6):
         start = frame[f'start_layer_{layer}']
         end = 2*frame[f'dailymean_layer_{layer}']-start
-        frame[f'aligned_layer_{layer}'] = (.5*a*a*start.shift(1)+(.5+a-a*a)*start+
-                                          .5*(1-a)**2*end) if a else (start+end)/2
+        if a < 0:
+            b = -a
+            # The local date starts b days after its UTC midnight and ends
+            # b days into the next UTC date. Integrate both linear segments.
+            value = (.5*(1-b)**2*start + .5*(1-b*b)*end +
+                     (b-.5*b*b)*start.shift(-1) + .5*b*b*end.shift(-1))
+        else:
+            # Preserve the established AU/EA arithmetic exactly.
+            value = (.5*a*a*start.shift(1)+(.5+a-a*a)*start+
+                     .5*(1-a)**2*end) if a else (start+end)/2
+        frame[f'aligned_layer_{layer}'] = value
     return frame
 
 
