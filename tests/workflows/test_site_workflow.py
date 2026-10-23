@@ -135,7 +135,8 @@ def test_scheduler_scripts_and_frozen_scope(tmp_path):
     text=module.pbs_script(execution,plan,'compute')
     assert 'ncpus=4,mem=192GB,jobfs=128GB' in text
     assert '--stages compute' in text and 'depend=' not in text
-    assert 'set(["gdata/project", "scratch/project"])' in text
+    assert '#PBS -l storage=gdata/project+scratch/project' in text
+    assert '--storage gdata/project scratch/project' in text
     cohort=tmp_path/'cohort.json';cohort.write_text(json.dumps({'sites':[dict(name='AU_site',region='AU')]}))
     execution['cohort']=str(cohort)
     with pytest.raises(ValueError,match='outside'):module.submit(execution,['NA_site'])
