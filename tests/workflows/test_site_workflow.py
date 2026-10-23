@@ -131,3 +131,38 @@ def test_scheduler_scripts_and_frozen_scope(tmp_path):
     cohort=tmp_path/'cohort.json';cohort.write_text(json.dumps({'sites':[dict(name='AU_site',region='AU')]}))
     execution['cohort']=str(cohort)
     with pytest.raises(ValueError,match='outside'):module.submit(execution,['NA_site'])
+
+
+def test_isolated_stage_rejects_stale_ancestor(tmp_path,monkeypatch):
+    import pysweb.site_workflow as w
+    c=config(tmp_path)
+    p=dict(config_values=c,base=str(tmp_path/'work'),destination=str(tmp_path/'dataset'),implementation_commit='test')
+    dependency=tmp_path/'input';dependency.write_text('original')
+    monkeypatch.setattr(w,'science_identity',lambda _: {'scientific':'same'})
+    monkeypatch.setattr(w,'source_identity',lambda:'software')
+    monkeypatch.setattr(w,'external_inputs',lambda _: [dependency])
+    def output(name):
+        def stage(plan):
+            path=Path(plan['base'])/name;path.write_text('accepted');return [path]
+        return stage
+    for name in ('acquire','retrieve','preprocess'):monkeypatch.setattr(w,name,output(name))
+    run_plan(p,['acquire','retrieve'])
+    (Path(p['base'])/'acquire').write_text('corrupt ancestor')
+    with pytest.raises(ValueError,match='Prerequisite outputs changed: acquire'):run_plan(p,['preprocess'])
+    (Path(p['base'])/'acquire').write_text('accepted')
+    dependency.write_text('changed forcing')
+    with pytest.raises(ValueError,match='Prerequisite inputs changed: acquire'):run_plan(p,['preprocess'])
+    run_plan(p,['acquire','retrieve','preprocess'])
+    assert json.loads((Path(p['base'])/'receipts/preprocess.json').read_text())['passed']
+
+
+def test_figure_bounds_check_only_drawn_ticks(tmp_path):
+    from pysweb.visualisation.site_figures import save_figure
+    import matplotlib.pyplot as plt
+    with plt.rc_context({'pdf.fonttype':42,'font.family':'DejaVu Sans'}):
+        fig,ax=plt.subplots(figsize=(4,3))
+        ax.set_xticks([0,1,2]);ax.set_xlim(0,1.1)
+        save_figure(fig,tmp_path,'ticks',[])
+        fig,ax=plt.subplots(figsize=(4,3));fig.text(2,1,'outside')
+        with pytest.raises(ValueError,match='outside canvas'):save_figure(fig,tmp_path,'invalid',[])
+        plt.close(fig)

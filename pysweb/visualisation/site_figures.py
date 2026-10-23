@@ -35,8 +35,15 @@ def save_figure(fig, directory, name, checks):
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     width,height = fig.canvas.get_width_height()
+    undrawn_ticks = set()
+    for ax in fig.axes:
+        for axis in (ax.xaxis,ax.yaxis):
+            low,high = sorted(axis.get_view_interval())
+            for tick in axis.get_major_ticks()+axis.get_minor_ticks():
+                if not low <= tick.get_loc() <= high:
+                    undrawn_ticks.update((tick.label1,tick.label2))
     for item in fig.findobj(Text):
-        if item.get_visible() and item.get_text():
+        if item not in undrawn_ticks and item.get_visible() and item.get_text():
             b = item.get_window_extent(renderer)
             if b.width and b.height and (b.x0 < -1 or b.y0 < -1 or b.x1 > width+1 or b.y1 > height+1):
                 raise ValueError(f'{name}: text outside canvas: {item.get_text()}')

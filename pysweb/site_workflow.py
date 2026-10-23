@@ -519,15 +519,37 @@ def run_plan(plan, stages):
         identity = dict(science=science,software=software)
         # Hash external dependencies in allocated execution; no existence-only reuse.
         external = file_records(external_inputs(plan))
+        checked = {}
+        def prerequisite(name):
+            # An isolated downstream invocation must reject stale ancestors too.
+            # Memoisation avoids hashing the same accepted files repeatedly while
+            # this process holds the exclusive site lock.
+            if name in checked:
+                return checked[name]
+            record = json.loads((receipts/(name+'.json')).read_text())
+            if not record.get('passed') or record['identity'] != identity:
+                raise ValueError(f'Missing or stale prerequisite: {name}')
+            prior = STAGES.index(name)
+            parents = [prerequisite(STAGES[prior-1])['fingerprint']] if prior else []
+            inputs = record['inputs']
+            if inputs['external'] != external or inputs['parents'] != parents:
+                raise ValueError(f'Prerequisite inputs changed: {name}; resume from the affected stage')
+            if 'observations' in inputs:
+                if (inputs['observations'] != file_records([plan['observation_file'],plan['observation_manifest']])
+                        or inputs['operator'] != plan['observation_operator']
+                        or inputs['evaluation_code'] != sha256(Path(__file__).with_name('site_evaluation.py'))):
+                    raise ValueError(f'Prerequisite evaluation changed: {name}')
+            if 'figure_code' in inputs and inputs['figure_code'] != file_records((Path(__file__).parent/'visualisation').glob('*.py')):
+                raise ValueError(f'Prerequisite figure code changed: {name}')
+            if not verified_records(record['outputs']):
+                raise ValueError(f'Prerequisite outputs changed: {name}')
+            checked[name] = record
+            return record
         for stage in stages:
             index = STAGES.index(stage)
             parents = []
             if index:
-                parent = json.loads((receipts/(STAGES[index-1]+'.json')).read_text())
-                if not parent.get('passed') or parent['identity'] != identity:
-                    raise ValueError(f'Missing or stale prerequisite for {stage}')
-                if not verified_records(parent['outputs']):
-                    raise ValueError(f'Prerequisite outputs changed for {stage}')
+                parent = prerequisite(STAGES[index-1])
                 parents.append(parent['fingerprint'])
             inputs = dict(identity=identity,external=external,parents=parents)
             if stage in ('evaluate','figures','finalise'):
@@ -541,6 +563,7 @@ def run_plan(plan, stages):
             old = json.loads(target.read_text()) if target.exists() else {}
             if old.get('passed') and old.get('fingerprint') == key and verified_records(old['outputs']):
                 print(f'{stage}: reuse verified receipt',flush=True)
+                checked[stage] = old
                 continue
             attempt = int(old.get('attempt',0))+1
             record = dict(stage=stage,attempt=attempt,identity=identity,fingerprint=key,inputs=inputs,
@@ -558,6 +581,7 @@ def run_plan(plan, stages):
                     with offline():
                         paths = globals()[stage](plan)
                 record.update(passed=True,outputs=file_records(paths))
+                checked[stage] = record
             except BaseException as error:
                 record.update(error_type=type(error).__name__,error=str(error))
                 raise
