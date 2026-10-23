@@ -136,6 +136,21 @@ def source_identity():
                         if p.name != 'site_evaluation.py' and 'visualisation' not in p.parts})
 
 
+def stage_options(plan, stage):
+    """Bind non-scientific options to the first stage that consumes them."""
+    if stage == 'evaluate':
+        return dict(map_year=plan.get('map_year', 2025))
+    if stage == 'figures':
+        return dict(map_year=plan.get('map_year', 2025),
+                    label=plan.get('label', plan['config_values']['run']['name']))
+    if stage == 'finalise':
+        # Exported provenance contains the full resolved plan and original TOML,
+        # including paths and execution metadata excluded from science identity.
+        return dict(plan=fingerprint(plan), config_file=sha256(plan['config']),
+                    destination=str(Path(plan['destination']).resolve()))
+    return {}
+
+
 def external_inputs(plan):
     cfg = plan['config_values']
     r = cfg['forcing']['retrieval']
@@ -571,6 +586,8 @@ def run_plan(plan, stages):
             inputs = record['inputs']
             if inputs['external'] != external or inputs['parents'] != parents:
                 raise ValueError(f'Prerequisite inputs changed: {name}; resume from the affected stage')
+            if inputs.get('stage_options', {}) != stage_options(plan, name):
+                raise ValueError(f'Prerequisite options changed: {name}; resume from the affected stage')
             if 'observations' in inputs:
                 if (inputs['observations'] != file_records([plan['observation_file'],plan['observation_manifest']])
                         or inputs['operator'] != plan['observation_operator']
@@ -589,6 +606,9 @@ def run_plan(plan, stages):
                 parent = prerequisite(STAGES[index-1])
                 parents.append(parent['fingerprint'])
             inputs = dict(identity=identity,external=external,parents=parents)
+            options = stage_options(plan, stage)
+            if options:
+                inputs['stage_options'] = options
             if stage in ('evaluate','figures','finalise'):
                 inputs['observations'] = file_records([plan['observation_file'],plan['observation_manifest']])
                 inputs['operator'] = plan['observation_operator']

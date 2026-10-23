@@ -175,6 +175,87 @@ def test_scheduler_scripts_and_frozen_scope(tmp_path):
     with pytest.raises(ValueError,match='outside'):module.submit(execution,['NA_site'])
 
 
+@pytest.mark.parametrize('change,expected', [
+    ('label', ['figures', 'finalise']),
+    ('map_year', ['evaluate', 'figures', 'finalise']),
+    ('destination', ['finalise']),
+    ('config_comment', ['finalise']),
+    ('provenance_note', ['finalise']),
+])
+def test_resume_updates_only_affected_exports(tmp_path, monkeypatch, change, expected):
+    import pysweb.site_workflow as workflow
+    source = tmp_path/'input'; source.write_text('immutable forcing')
+    config_file = tmp_path/'config.toml'; config_file.write_text('# original provenance\n')
+    observation = tmp_path/'observations'; observation.write_text('observations')
+    manifest = tmp_path/'observation_manifest'; manifest.write_text('manifest')
+    plan = dict(config_values=config(tmp_path), config=str(config_file),
+                base=str(tmp_path/'work'), destination=str(tmp_path/'dataset'),
+                implementation_commit='fixture', label='Original', map_year=2025,
+                observation_file=str(observation), observation_manifest=str(manifest),
+                observation_operator={})
+    monkeypatch.setattr(workflow, 'science_identity', lambda _: {'science': 'fixed'})
+    monkeypatch.setattr(workflow, 'source_identity', lambda: 'fixed')
+    monkeypatch.setattr(workflow, 'external_inputs', lambda _: [source])
+    calls = []
+    def operation(name):
+        def execute(current):
+            calls.append(name)
+            root = Path(current['destination'] if name == 'finalise' else current['base'])
+            path = root/(name+'.json')
+            value = dict(stage=name)
+            if name in ('evaluate', 'figures', 'finalise'):
+                value['map_year'] = current['map_year']
+            if name in ('figures', 'finalise'):
+                value['label'] = current['label']
+            if name == 'finalise':
+                value['configuration'] = Path(current['config']).read_text()
+                value['provenance_note'] = current.get('provenance_note')
+            path.write_text(json.dumps(value))
+            return [path]
+        return execute
+    for name in workflow.STAGES:
+        monkeypatch.setattr(workflow, name, operation(name))
+    run_plan(plan, list(workflow.STAGES))
+    assert calls == list(workflow.STAGES)
+    numerical = file_records([Path(plan['base'])/'simulate.json'])
+    calls.clear(); run_plan(plan, list(workflow.STAGES)); assert not calls
+    if change == 'label':
+        plan['label'] = 'Revised'
+    elif change == 'map_year':
+        plan['map_year'] = 2024
+    elif change == 'destination':
+        plan['destination'] = str(tmp_path/'relocated_export')
+    elif change == 'config_comment':
+        config_file.write_text('# revised provenance, same scientific values\n')
+    else:
+        plan['provenance_note'] = 'Updated provenance'
+    if change in ('label', 'map_year'):
+        with pytest.raises(ValueError, match='Prerequisite options changed'):
+            run_plan(plan, ['finalise'])
+        assert not calls
+    run_plan(plan, list(workflow.STAGES))
+    assert calls == expected
+    assert verified_records(numerical)
+    exported = json.loads((Path(plan['destination'])/'finalise.json').read_text())
+    assert exported['map_year'] == plan['map_year']
+    assert exported['label'] == plan['label']
+    assert exported['configuration'] == config_file.read_text()
+    assert exported['provenance_note'] == plan.get('provenance_note')
+    calls.clear(); run_plan(plan, list(workflow.STAGES)); assert not calls
+
+
+def test_scheduler_rejects_mixed_implementation_before_generating_jobs(tmp_path):
+    path=Path(__file__).resolve().parents[2]/'workflows/hpc/gadi/submit_sites.py'
+    spec=importlib.util.spec_from_file_location('gadi_submit_versions',path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    cohort=tmp_path/'cohort.json';cohort.write_text(json.dumps({'sites':[dict(name='site',region='NA')]}))
+    (tmp_path/'site.json').write_text(json.dumps(dict(site_key='site',region='NA',implementation_commit='old')))
+    execution=dict(cohort=str(cohort),site_plans=str(tmp_path),operations=str(tmp_path/'jobs'),implementation_commit='new')
+    with pytest.raises(ValueError,match='implementation differs'):
+        module.submit(execution,['site'])
+    assert not list((tmp_path/'jobs').glob('*.pbs'))
+
+
 def test_isolated_stage_rejects_stale_ancestor(tmp_path,monkeypatch):
     import pysweb.site_workflow as w
     c=config(tmp_path)

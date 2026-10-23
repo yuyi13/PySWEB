@@ -107,6 +107,8 @@ def submit(execution, sites, execute=False):
         plan=json.loads(path.read_text())
         if plan['site_key']!=site or plan['region']!=selected[site]['region']:
             raise ValueError('Site plan identity differs from frozen cohort')
+        if plan.get('implementation_commit') != execution['implementation_commit']:
+            raise ValueError('Site plan implementation differs from execution archive; select its matching execution configuration')
         for stage in (['compute'] if plan.get('reuse_pilot') else ['acquire','compute']):
             script=output/f'{site}_{stage}.pbs'
             script.write_text(pbs_script(execution,path,stage))
