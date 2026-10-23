@@ -424,7 +424,10 @@ def finalise(plan):
     base, destination = Path(plan['base']), Path(plan['destination'])
     records = {}
     for folder in ('products','evaluation','figures'):
-        for source in sorted((base/folder).rglob('*')):
+        # Solver intermediates remain in work; export final products and their
+        # companion manifests without duplicating the intermediate trajectory.
+        paths = (base/folder).glob('*') if folder == 'products' else (base/folder).rglob('*')
+        for source in sorted(paths):
             if source.is_file():
                 target = destination/source.relative_to(base)
                 copy_verified(source,target)
