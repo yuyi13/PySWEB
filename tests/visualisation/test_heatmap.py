@@ -50,8 +50,8 @@ def test_fluxes_share_scale_and_events_affect_only_storage():
     _, axes, data = plot_heatmap(frame, [100, 900], fluxes=fluxes, events=[event], flux_limits=(0, 50))
     mesh = axes["flux"].collections[0]
     assert mesh.cmap.name == "YlGnBu"
-    np.testing.assert_allclose(mesh.norm([0, 12.5, 25, 37.5, 50]), [0, 0.25, 0.5, 0.75, 1])
-    np.testing.assert_allclose(mesh.colorbar.get_ticks(), [0, 25, 50])
+    np.testing.assert_allclose(mesh.norm([0, 2, 8, 18, 32, 50]), [0, 0.2, 0.4, 0.6, 0.8, 1])
+    np.testing.assert_allclose(mesh.colorbar.get_ticks(), [0, 2, 10, 50])
     np.testing.assert_allclose(mesh.get_array().filled(np.nan),
                                [[50, np.nan, 0, 2], [3, np.nan, 4, 1]], equal_nan=True)
     assert len(axes["storage"].patches) == 1

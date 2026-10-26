@@ -16,7 +16,7 @@ def plot_heatmap(
     layers, layer_thickness_mm=None, *, fluxes=None, phases=(), events=(),
     title="SWEB water balance", subtitle="", reference_period=None,
     state_timing=None, cmap="esa_soil", soil_limits=(0, 0.5),
-    flux_cmap="YlGnBu", flux_limits=(0, None), flux_gamma=1.0,
+    flux_cmap="YlGnBu", flux_limits=(0, None), flux_gamma=0.5,
     storage_limits=None, storage_ticks=None, forcing=None, forcing_label="SSEBop forcing",
     figsize=(15, 8.6), dpi=300, font_size=11, title_size=22,
 ):

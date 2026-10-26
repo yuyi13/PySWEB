@@ -85,7 +85,7 @@ def test_heatmap_parse_args_accepts_explicit_argv(tmp_path):
     assert args.sweb_path == str(tmp_path / "input.nc")
     assert args.domain_mean is True
     assert args.output == str(output)
-    assert args.flux_gamma == 1.0
+    assert args.flux_gamma == 0.5
 
 
 @pytest.mark.parametrize(

@@ -335,7 +335,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--no-fluxes", action="store_true", help="Omit available effective rainfall and SWEB ET strips.")
     parser.add_argument("--flux-cmap", default="YlGnBu", help="Shared daily-flux colour scheme.")
     parser.add_argument("--flux-vmax", type=float, help="Flux maximum in mm/day (default: data maximum rounded up).")
-    parser.add_argument("--flux-gamma", type=float, default=1.0, help="Flux power scale; default 1 is linear, 0.5 is square root.")
+    parser.add_argument("--flux-gamma", type=float, default=0.5, help="Flux power scale; default 0.5 is square root, 1 is linear.")
     parser.add_argument("--annotations", help="Optional JSON with phases, events and reference_period; no events by default.")
     parser.add_argument("--output", default="sweb_heatmap.png", help="Output figure path.")
     parser.add_argument("--csv-out", help="Optional CSV output for extracted series.")
