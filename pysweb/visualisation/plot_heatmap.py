@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Script: plot_heatmap.py
-Objective: Plot SWEB layer heatmaps with an optional SSEBop forcing panel for a point or domain mean.
+Objective: Plot aligned daily water fluxes, layer moisture and soil water storage for a point or domain mean.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-02-20
-Last updated: 2026-05-03
+Last updated: 2026-10-26
 Inputs: SWEB/SSEBop NetCDF paths (or run_subdir), variable selections, optional lat/lon and date filters.
 Outputs: Saved heatmap figure and optional CSV of extracted plotting data.
 Usage: pysweb heatmap --help
@@ -13,6 +13,7 @@ Dependencies: matplotlib, numpy, pandas, xarray; pysweb
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -53,6 +54,8 @@ from pysweb.visualisation.plot_time_series import (
     _resolve_product_path,
     extract_product_series,
 )
+
+from pysweb.visualisation.heatmap_figure import plot_heatmap
 
 _configure_plot_font(pyplot=plt)
 
@@ -102,7 +105,7 @@ def _to_float(value: object) -> Optional[float]:
     return casted
 
 
-def _layer_layout_from_attrs(nc_path: Path, layer_vars: Sequence[str]) -> tuple[List[str], np.ndarray]:
+def _layer_layout_from_attrs(nc_path: Path, layer_vars: Sequence[str]) -> tuple[List[str], Optional[np.ndarray]]:
     numpy = _require_numpy()
     xarray = _require_xarray()
 
@@ -110,22 +113,22 @@ def _layer_layout_from_attrs(nc_path: Path, layer_vars: Sequence[str]) -> tuple[
         bottoms = [_to_float(ds[var].attrs.get("depth_bottom_mm")) for var in layer_vars]
         thicknesses = [_to_float(ds[var].attrs.get("layer_thickness_mm")) for var in layer_vars]
 
+    # Depth integration is only valid for a contiguous profile beginning at zero.
+    indices = [_layer_index(name) for name in layer_vars]
+    if indices != list(range(1, len(layer_vars) + 1)):
+        return list(layer_vars), None
     if all(value is not None and value > 0 for value in thicknesses):
         layer_thickness_mm = numpy.asarray(thicknesses, dtype=float)
     elif all(value is not None for value in bottoms):
-        derived = numpy.diff(numpy.array([0.0] + bottoms, dtype=float))
-        if numpy.any(derived <= 0):
-            layer_thickness_mm = numpy.ones(len(layer_vars), dtype=float)
-        else:
-            layer_thickness_mm = derived
+        layer_thickness_mm = numpy.diff(numpy.array([0.0] + bottoms, dtype=float))
+        if numpy.any(layer_thickness_mm <= 0):
+            raise ValueError("Layer bottom depths must increase from zero.")
     else:
-        layer_thickness_mm = numpy.ones(len(layer_vars), dtype=float)
-
+        return list(layer_vars), None
     y_edges = numpy.concatenate(([0.0], numpy.cumsum(layer_thickness_mm)))
-    labels = [
-        f"{int(round(y_edges[idx]))}-{int(round(y_edges[idx + 1]))} mm"
-        for idx in range(len(layer_vars))
-    ]
+    if all(value is not None for value in bottoms) and not numpy.allclose(y_edges[1:], bottoms):
+        raise ValueError("Layer thickness and bottom-depth metadata disagree.")
+    labels = [f"{a:g}–{b:g}" for a, b in zip(y_edges[:-1], y_edges[1:])]
     return labels, y_edges
 
 
@@ -287,7 +290,7 @@ def _default_title(args: argparse.Namespace) -> str:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot SWEB layer heatmaps with optional SSEBop panel (point mode by default)."
+        description="Plot daily fluxes, soil moisture and soil water storage (point mode by default)."
     )
     parser.add_argument("--run-subdir", help="Run subdirectory under default output roots.")
 
@@ -320,19 +323,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--sample-step", type=int, default=1, help="Keep every Nth timestep for plotting.")
     parser.add_argument(
         "--cmap",
-        default="custom_sm",
+        default="esa_soil",
         help=(
             "Colormap for SWEB heatmap. Supports visualise.py names "
             "(nasa_soil, esa_soil, fao_soil, custom_sm, etc.) and matplotlib colormaps."
         ),
     )
-    parser.add_argument("--vmin", type=float, help="Optional lower bound for heatmap colour scale.")
-    parser.add_argument("--vmax", type=float, help="Optional upper bound for heatmap colour scale.")
+    parser.add_argument("--vmin", type=float, default=0.0, help="Optional lower bound for heatmap colour scale.")
+    parser.add_argument("--vmax", type=float, default=0.5, help="Optional upper bound for heatmap colour scale.")
 
+    parser.add_argument("--no-fluxes", action="store_true", help="Omit available effective rainfall and SWEB ET strips.")
+    parser.add_argument("--flux-cmap", default="YlGnBu", help="Shared daily-flux colour scheme.")
+    parser.add_argument("--flux-vmax", type=float, help="Flux maximum in mm/day (default: data maximum rounded up).")
+    parser.add_argument("--flux-gamma", type=float, default=0.5, help="Flux power scale; 0.5 is square root, 1 is linear.")
+    parser.add_argument("--annotations", help="Optional JSON with phases, events and reference_period; no events by default.")
     parser.add_argument("--output", default="sweb_heatmap.png", help="Output figure path.")
     parser.add_argument("--csv-out", help="Optional CSV output for extracted series.")
     parser.add_argument("--title", help="Custom plot title.")
-    parser.add_argument("--figsize", nargs=2, type=float, default=(14.0, 8.0), metavar=("WIDTH", "HEIGHT"))
+    parser.add_argument("--figsize", nargs=2, type=float, default=(15.0, 8.6), metavar=("WIDTH", "HEIGHT"))
     parser.add_argument("--dpi", type=int, default=300, help="Figure DPI.")
     parser.add_argument("--show", action="store_true", help="Display plot interactively after saving.")
 
@@ -408,104 +416,57 @@ def main(argv: Optional[Sequence[str]] = None):
             ssebop_series = ssebop.data[column].reindex(heatmap_df.index)
             ssebop_units = _read_units(ssebop_path, column)
 
-    layer_labels, y_edges = _layer_layout_from_attrs(sweb_path, layer_vars)
-    matrix = heatmap_df.to_numpy(dtype=float).T
-    x_edges = numpy.arange(len(heatmap_df.index) + 1, dtype=float)
-    x_centers = x_edges[:-1] + 0.5
-
-    if ssebop_series is not None:
-        fig, (ax_top, ax_heat) = pyplot.subplots(
-            2,
-            1,
-            figsize=tuple(args.figsize),
-            sharex=True,
-            gridspec_kw={"height_ratios": [1.1, 3.2], "hspace": 0.18},
+    _, y_edges = _layer_layout_from_attrs(sweb_path, layer_vars)
+    fluxes = None
+    with _require_xarray().open_dataset(sweb_path) as ds:
+        state_timing = ds.attrs.get("state_timing")
+        flux_names = []
+        if not args.no_fluxes:
+            for name in ("effective_precipitation", "actual_et"):
+                if name not in ds:
+                    continue
+                units = str(ds[name].attrs.get("units", "")).strip().lower()
+                daily_rate = units in {"mm/day", "mm day-1", "mm day^-1", "mm d-1"}
+                daily_amount = units == "mm" and ds[name].attrs.get("time_support") == "interval starting at time, duration 1 day"
+                if not (daily_rate or daily_amount):
+                    raise ValueError(f"Cannot label {name} as mm/day: units/time support are not daily flux metadata.")
+                flux_names.append(name)
+    if flux_names:
+        extracted = extract_product_series(
+            nc_path=sweb_path, product="sweb", requested_vars=flux_names,
+            start_date=args.start_date, end_date=args.end_date, lat=extract_lat, lon=extract_lon,
         )
-        valid = ~ssebop_series.isna()
-        if valid.any():
-            values = ssebop_series.values.astype(float)
-            ax_top.plot(
-                x_centers,
-                values,
-                color="#2B5876",
-                linewidth=1.8,
-                label=_format_var_label(args.ssebop_var),
-            )
-            ax_top.fill_between(x_centers, values, 0.0, color="#6FA7C9", alpha=0.22)
-        else:
-            ax_top.text(
-                0.02,
-                0.86,
-                "No SSEBop values in selected period.",
-                transform=ax_top.transAxes,
-                ha="left",
-                va="top",
-            )
-        unit_text = f" ({ssebop_units})" if ssebop_units else ""
-        ax_top.set_ylabel(f"{_format_var_label(args.ssebop_var)}{unit_text}")
-        ax_top.set_title("SSEBop forcing panel")
-        ax_top.grid(alpha=0.3)
-    else:
-        fig, ax_heat = pyplot.subplots(1, 1, figsize=tuple(args.figsize))
-        ax_top = None
-
-    heatmap = ax_heat.pcolormesh(
-        x_edges,
-        y_edges,
-        matrix,
-        cmap=_get_custom_colormap(args.cmap),
-        shading="flat",
-        vmin=args.vmin,
-        vmax=args.vmax,
+        fluxes = extracted.data.reindex(heatmap_df.index).rename(
+            columns={"effective_precipitation": "Effective rainfall", "actual_et": "SWEB ET"})
+    annotations = {}
+    if args.annotations:
+        annotations = json.loads(Path(args.annotations).expanduser().read_text())
+        allowed = {"phases", "events", "reference_period"}
+        if not isinstance(annotations, dict) or set(annotations) - allowed:
+            raise ValueError("Annotation JSON accepts only phases, events and reference_period.")
+    timing_label = {"start": "Start-of-day states", "end": "End-of-day states"}.get(state_timing)
+    fig, _, plotted = plot_heatmap(
+        heatmap_df, None if y_edges is None else numpy.diff(y_edges), fluxes=fluxes,
+        title=_default_title(args), state_timing=timing_label,
+        cmap=args.cmap, soil_limits=(args.vmin, args.vmax), flux_cmap=args.flux_cmap,
+        flux_limits=(0, args.flux_vmax), flux_gamma=args.flux_gamma,
+        forcing=ssebop_series,
+        forcing_label=f"SSEBop {_format_var_label(args.ssebop_var)}" + (f" ({ssebop_units})" if ssebop_units else ""),
+        figsize=tuple(args.figsize), dpi=args.dpi, **annotations,
     )
-    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-    ax_heat.set_yticks(y_centers)
-    ax_heat.set_yticklabels(layer_labels)
-    ax_heat.set_ylabel("SWEB soil layers (depth)")
-    ax_heat.set_xlabel("Date")
-    ax_heat.invert_yaxis()
-    _apply_time_ticks(ax_heat, heatmap_df.index, center_offset=0.5)
-
-    cbar = fig.colorbar(heatmap, ax=ax_heat, orientation="horizontal", shrink=0.8, pad=0.16)
-    cbar.set_label("RZSM (m3 m-3)")
-
-    stats = (
-        f"Points: {matrix.shape[1]}\n"
-        f"Layers: {matrix.shape[0]}\n"
-        f"Range: {numpy.nanmin(matrix):.3f} to {numpy.nanmax(matrix):.3f}"
-    )
-    if args.sample_step > 1:
-        stats += f"\nSample step: every {args.sample_step} points"
-    if sweb.mode == "point":
-        stats += f"\nNearest: lat={sweb.selected_lat:.6f}, lon={sweb.selected_lon:.6f}"
-    else:
-        stats += "\nMode: domain mean"
-    ax_heat.text(
-        0.01,
-        0.99,
-        stats,
-        transform=ax_heat.transAxes,
-        ha="left",
-        va="top",
-        fontsize=9,
-        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
-    )
-
-    fig.suptitle(_default_title(args), fontsize=13, fontweight="bold")
-    if ax_top is not None:
-        fig.subplots_adjust(top=0.90, bottom=0.12, hspace=0.20)
-    else:
-        fig.subplots_adjust(top=0.90, bottom=0.12)
 
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=args.dpi, bbox_inches="tight")
+    fig.savefig(output_path, dpi=args.dpi, facecolor="white")
     print(f"Wrote figure: {output_path}")
 
     if args.csv_out:
-        export_df = heatmap_df.add_prefix("sweb_")
+        export_df = plotted[layer_vars].add_prefix("sweb_")
+        for name in plotted.columns.difference(layer_vars):
+            if name != "ssebop_forcing":
+                export_df[name] = plotted[name]
         if ssebop_series is not None:
-            export_df.insert(0, f"ssebop_{args.ssebop_var}", ssebop_series.values)
+            export_df.insert(0, f"ssebop_{args.ssebop_var}", ssebop_series.reindex(plotted.index).values)
         csv_path = Path(args.csv_out).expanduser().resolve()
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         export_df.to_csv(csv_path, index_label="time")

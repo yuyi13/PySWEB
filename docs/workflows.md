@@ -34,6 +34,9 @@ pysweb heatmap --help
 
 The corresponding public APIs are `pysweb.ssebop.prepare_inputs`, `pysweb.ssebop.run`, `pysweb.swb.preprocess`, `pysweb.swb.calibrate` and `pysweb.swb.run`. API keyword arguments use underscores in place of CLI hyphens. Individual stages accept existing paths, so older prepared-data layouts can be reused when they satisfy the current contracts.
 
+See [daily water-balance heatmaps](heatmaps.md) for the aligned flux, soil-moisture
+and storage panels, the Python figure API, and optional study-phase/event shading.
+
 ```python
 import pysweb
 
