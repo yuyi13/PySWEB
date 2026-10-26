@@ -3,7 +3,7 @@ Script: formulation.py
 Objective: Define the versioned two-parameter SWB contract and reject incompatible calibrations.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-18
-Last updated: 2026-10-21
+Last updated: 2026-10-23
 Inputs: Fixed reference artifacts, model settings and calibration CSV files.
 Outputs: Validated fixed settings, artifact identities and fitted coefficients.
 Usage: import pysweb.swb.formulation
@@ -23,6 +23,7 @@ EXTRACTION_PROFILE = "gssm-wp-depth-blend-0-150-300mm-v1"
 REFERENCE_COMPATIBLE_FORMULATIONS = {
     "swb-conservative-2p-v1", "swb-daily-conservative-2p-v2", FORMULATION_VERSION}
 REFERENCE_VERSION = "gssm-native-p01-p99-v1"
+AVAILABLE_REFERENCE_VERSION = "gssm-native-p01-p99-support-v2"
 PARAMETER_NAMES = ("diff_factor", "root_beta")
 DEFAULT_ROOT_BETA = 0.96
 TAU_DAYS = 3.0
@@ -51,7 +52,8 @@ def load_reference(path):
     if path is None:
         return dict(artifact_id="physical-unadjusted", dry_reference_factor=1., wet_reference_factor=1.)
     record = json.loads(Path(path).read_text())
-    if record.get("schema_version") != REFERENCE_VERSION or record.get("artifact_id") != canonical_id(record):
+    if (record.get("schema_version") not in {REFERENCE_VERSION, AVAILABLE_REFERENCE_VERSION}
+            or record.get("artifact_id") != canonical_id(record)):
         raise ValueError("Incompatible or modified GSSM reference artifact")
     if record.get("formulation_version") not in REFERENCE_COMPATIBLE_FORMULATIONS:
         raise ValueError("Reference formulation version differs; derive a new reference")
@@ -61,6 +63,12 @@ def load_reference(path):
     for key in ("climatology", "spatial_support", "hydraulic_support", "sources"):
         if not record.get(key):
             raise ValueError(f"Reference artifact missing {key}")
+    if record["schema_version"] == AVAILABLE_REFERENCE_VERSION:
+        selection = record.get("support_selection", {})
+        if (selection.get("policy_version") != "available-native-cells-v1"
+                or not selection.get("candidate_cells")
+                or not selection.get("retained_cell_count")):
+            raise ValueError("Reference artifact missing available-cell support selection")
     return record
 
 

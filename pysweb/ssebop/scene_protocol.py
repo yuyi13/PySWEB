@@ -3,7 +3,7 @@ Script: scene_protocol.py
 Objective: Retrieve padded native scenes using bounded development climatology and acceptance gates.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-10-17
-Last updated: 2026-10-22
+Last updated: 2026-10-23
 Inputs: Native meteorology, DEM, Landsat fields and configured padding/climatology rules.
 Outputs: Calendar-day dT, local-anchor fractions and independently screened retrievals.
 Usage: from pysweb.ssebop.scene_protocol import calendar_day_dt, screened_fraction
@@ -111,6 +111,25 @@ def _initialize_context(context):
 
 
 def _retrieve_scene(path):
+    """Release temporary arrays after every scene, including failed retrievals."""
+    try:
+        return _retrieve_scene_impl(path)
+    finally:
+        import gc
+        import ctypes
+        gc.collect()
+        # glibc can retain large freed arrays; other platforms need only GC.
+        try:
+            trim = ctypes.CDLL(None).malloc_trim
+        except (AttributeError, OSError):
+            pass
+        else:
+            trim.argtypes = [ctypes.c_size_t]
+            trim.restype = ctypes.c_int
+            trim(0)
+
+
+def _retrieve_scene_impl(path):
     from pathlib import Path
     import json
     from pysweb.io.provenance import input_manifest, atomic_json, sha256
