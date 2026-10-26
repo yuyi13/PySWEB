@@ -2,7 +2,7 @@
 
 `pysweb heatmap` uses aligned panels for available daily water fluxes, layered
 soil moisture and soil water storage. The defaults are Arial (when installed),
-`esa_soil` for moisture, and `YlGnBu` with a shared square-root scale for fluxes.
+`esa_soil` for moisture, and `YlGnBu` with a shared linear scale for fluxes.
 Use `--cmap custom_sm` to retain the earlier soil palette. There is no drought,
 fire or study-period annotation unless explicitly supplied.
 Soil colourbar extensions identify values outside the selected `--vmin`/`--vmax`
@@ -23,7 +23,9 @@ them **Effective rainfall** and **SWEB ET**, and checks their units/time support
 A daily amount in mm is equivalent to mm/day only when its metadata identifies
 a one-day interval. `--no-fluxes` omits both strips. `--flux-vmax` selects a
 shared upper limit (otherwise rounded up from the data); values outside an
-explicit flux scale cause an error. `--flux-gamma 1` selects a linear scale.
+explicit flux scale cause an error. The linear scale uses three evenly spaced
+ticks (for example 0, 25 and 50 mm/day). `--flux-gamma 0.5` explicitly restores
+the previous square-root scale.
 An explicitly supplied SSEBop file still gets an independent forcing line
 panel in its own units; it is never relabelled as SWEB ET.
 
@@ -53,7 +55,7 @@ For example, the Yanco illustration uses:
   "reference_period": [2011, 2020],
   "events": [
     {"start": "2017-01-01", "end": "2019-11-01", "label": "NSW drought", "colour": "#E5E5E5"},
-    {"start": "2019-11-01", "end": "2020-02-01", "label": "NSW Black Summer", "colour": "#BC3C29", "alpha": 0.14, "text_colour": "#BC3C29", "leader": true}
+    {"start": "2019-11-01", "end": "2020-02-01", "label": "Black Summer", "colour": "#BC3C29", "alpha": 0.14, "text_colour": "#BC3C29", "leader": true}
   ]
 }
 ```

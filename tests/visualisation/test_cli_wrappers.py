@@ -4,7 +4,7 @@ Script: test_cli_wrappers.py
 Objective: Verify the package visualisation modules import and expose help cleanly.
 Author: Yi Yu (with assistance from Codex)
 Created: 2026-04-19
-Last updated: 2026-10-11
+Last updated: 2026-10-26
 Inputs: Module imports and subprocess CLI help invocations.
 Outputs: Test assertions.
 Usage: python -m pytest tests/visualisation/test_cli_wrappers.py
@@ -85,6 +85,7 @@ def test_heatmap_parse_args_accepts_explicit_argv(tmp_path):
     assert args.sweb_path == str(tmp_path / "input.nc")
     assert args.domain_mean is True
     assert args.output == str(output)
+    assert args.flux_gamma == 1.0
 
 
 @pytest.mark.parametrize(

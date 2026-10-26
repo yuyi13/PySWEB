@@ -16,7 +16,7 @@ def plot_heatmap(
     layers, layer_thickness_mm=None, *, fluxes=None, phases=(), events=(),
     title="SWEB water balance", subtitle="", reference_period=None,
     state_timing=None, cmap="esa_soil", soil_limits=(0, 0.5),
-    flux_cmap="YlGnBu", flux_limits=(0, None), flux_gamma=0.5,
+    flux_cmap="YlGnBu", flux_limits=(0, None), flux_gamma=1.0,
     storage_limits=None, storage_ticks=None, forcing=None, forcing_label="SSEBop forcing",
     figsize=(15, 8.6), dpi=300, font_size=11, title_size=22,
 ):
@@ -45,7 +45,7 @@ def plot_heatmap(
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
     from matplotlib import font_manager
-    from matplotlib.colors import PowerNorm
+    from matplotlib.colors import Normalize, PowerNorm
     import numpy as np
     import pandas as pd
     from pysweb.visualisation.plot_heatmap import _get_custom_colormap
@@ -154,7 +154,8 @@ def plot_heatmap(
     for i, (key, weight) in enumerate(panels):
         height = weight * scale
         axes[key] = fig.add_axes([left, y_top - height, right - left, height])
-        fig.text(0.022, y_top, f"({chr(97 + i)})", fontsize=title_size, va="top")
+        fig.text(left - 0.085, y_top, f"({chr(97 + i)})", fontsize=title_size,
+                 ha="right", va="top")
         y_top -= height + gap
 
     def colourbar(mesh, key, label, ticks=None, extend="neither"):
@@ -179,15 +180,18 @@ def plot_heatmap(
         colours = plt.get_cmap(flux_cmap).copy()
         colours.set_bad("#E5E5E5")
         ax = axes["flux"]
+        norm = Normalize(vmin=low, vmax=high) if flux_gamma == 1 else PowerNorm(flux_gamma, vmin=low, vmax=high)
         mesh = ax.pcolormesh(x_edges, np.arange(len(values) + 1), np.ma.masked_invalid(values),
-                            cmap=colours, norm=PowerNorm(flux_gamma, vmin=low, vmax=high),
+                            cmap=colours, norm=norm,
                             shading="flat", rasterized=True)
         ax.set_ylim(len(values), 0)
         ax.set_yticks(np.arange(len(values)) + 0.5, list(flux_data.columns))
         ax.tick_params(axis="y", length=0, pad=8)
         for boundary in range(1, len(values)):
             ax.axhline(boundary, color="white", lw=1.5)
-        ticks = [0, 2, 10, 50] if low == 0 and high == 50 and flux_gamma == 0.5 else None
+        ticks = np.linspace(low, high, 3) if flux_gamma == 1 else None
+        if low == 0 and high == 50 and flux_gamma == 0.5:
+            ticks = [0, 2, 10, 50]
         colourbar(mesh, "flux", r"Flux (mm day$^{-1}$)", ticks)
     edges = np.r_[0, np.cumsum(thickness)] if thickness is not None else np.arange(layers.shape[1] + 1)
     colours = _get_custom_colormap(cmap).copy()
